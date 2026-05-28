@@ -15,11 +15,11 @@
 
 ## Currently in progress
 
-**A.3 — Domain models** (backend; ARCH-005 C# records + shared camelCase serialization + Clock/Result). Brief: `docs/briefs/003-A.3-domain-models.md`. _(A.3's TS mirror types `web/src/types/*` re-sequenced to Phase D — see brief.)_
+**A.4 — Pricing config + loader** (backend; populate `config/pricing.json` per ARCH-014 + extend `PricingOptions` + file loader with degrade-not-crash). Brief: `docs/briefs/004-A.4-pricing-config.md`.
 
-**Last landed:** `A.2` config/secrets/Options (code `4e4d11f` + docs `fda80f0`); `A.1` scaffold (`ef05ccb`) + foundation docs (`38e57a4`..`fac93af`). **Commit cadence:** commit-as-we-go on `main` per logical unit (push deferred to `/orchestrate-end`; no remote configured).
+**Last landed:** `A.3` domain models (code `3d0f7d7` + docs `63df8f0`); `A.2` config/Options (`4e4d11f` + `fda80f0`); `A.1` scaffold (`ef05ccb`) + foundation docs (`38e57a4`..`fac93af`). **Commit cadence:** commit-as-we-go on `main` per logical unit (push deferred to `/orchestrate-end`; no remote configured).
 
-**Next after A.3:** `A.4` (pricing config + binding), then `A.5` (host, CORS, health).
+**Next after A.4:** `A.5` (host, CORS, health) — closes Phase A.
 
 ---
 
