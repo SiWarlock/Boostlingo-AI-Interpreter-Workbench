@@ -1,0 +1,24 @@
+# --- Pre-existing (scaffolding source artifacts) ---
+scaffolding/
+boostlingo-prd.pdf
+docs/notes.md
+
+# --- Secrets / env (ARCH-006, ARCH-019) — never commit real keys ---
+.env
+.env.local
+
+# --- .NET build output ---
+server/**/bin/
+server/**/obj/
+
+# --- Node / web ---
+web/node_modules/
+web/dist/
+web/coverage/
+
+# --- Persisted sessions: ignore session JSON, keep the dir via .gitkeep (ARCH-016) ---
+data/sessions/*.json
+!data/sessions/.gitkeep
+
+# --- OS / editor cruft ---
+.DS_Store

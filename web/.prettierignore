@@ -1,0 +1,8 @@
+node_modules
+dist
+coverage
+package-lock.json
+
+# Orchestrator-owned area docs — never reformat (implementer must not touch these)
+CLAUDE.md
+LESSONS.md
