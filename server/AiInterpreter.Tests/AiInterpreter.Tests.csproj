@@ -20,10 +20,25 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+
+    <!-- A.2: the Options<->config-section binding tests need the configuration packages.
+         AiInterpreter.Api is a Web SDK project; its shared-framework
+         Microsoft.Extensions.Configuration.* does NOT flow transitively to this non-web test
+         project, so reference them explicitly (8.0 band, matching the net8.0 target). -->
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.0.0" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\AiInterpreter.Api\AiInterpreter.Api.csproj" />
+  </ItemGroup>
+
+  <!-- A.2 test #6 (ARCH-019 defense-in-depth): copy the committed appsettings.json next to the
+       test assembly so the test can load it and assert no ApiKey section carries a value. -->
+  <ItemGroup>
+    <None Include="..\AiInterpreter.Api\appsettings.json" Link="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\AiInterpreter.Api\appsettings.Development.json" Link="appsettings.Development.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
