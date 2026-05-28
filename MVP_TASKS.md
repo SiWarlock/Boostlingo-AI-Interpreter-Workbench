@@ -15,11 +15,11 @@
 
 ## Currently in progress
 
-**A.4 — Pricing config + loader** (backend; populate `config/pricing.json` per ARCH-014 + extend `PricingOptions` + file loader with degrade-not-crash). Brief: `docs/briefs/004-A.4-pricing-config.md`.
+**A.5 — Host, CORS, health** (backend; `Program.cs` DI + flat-env→section bridge + `JsonDefaults` HTTP pipeline + pricing loader + CORS + WebSockets + port 5179 + `GET /api/health`; first integration tests). Brief: `docs/briefs/005-A.5-host-cors-health.md`. _(A.5's web Vite dev-config re-sequenced to D.1 — see brief. Closes Phase A.)_
 
-**Last landed:** `A.3` domain models (code `3d0f7d7` + docs `63df8f0`); `A.2` config/Options (`4e4d11f` + `fda80f0`); `A.1` scaffold (`ef05ccb`) + foundation docs (`38e57a4`..`fac93af`). **Commit cadence:** commit-as-we-go on `main` per logical unit (push deferred to `/orchestrate-end`; no remote configured).
+**Last landed:** `A.4` pricing config + loader (code `4ed26a6` + docs `d19cc01`); `A.3` domain (`3d0f7d7` + `63df8f0`); `A.2` config/Options (`4e4d11f` + `fda80f0`); `A.1` scaffold (`ef05ccb`) + foundation docs (`38e57a4`..`fac93af`). **Commit cadence:** commit-as-we-go on `main` per logical unit (push deferred to `/orchestrate-end`; no remote).
 
-**Next after A.4:** `A.5` (host, CORS, health) — closes Phase A.
+**Next after A.5:** Phase B — backend core seams + tests against fakes (B.1 provider interfaces → B.10 boundary tests).
 
 ---
 
