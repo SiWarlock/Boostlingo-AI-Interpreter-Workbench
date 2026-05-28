@@ -610,6 +610,8 @@ ai-interpreter-workbench/
 ## §6 — API Contracts
 
 > **Convention:** all JSON field names are **camelCase serializations of the ARCH-005 records**. Examples below must stay in sync with those records.
+>
+> **Timestamp format (A.3):** `DateTimeOffset` fields serialize as ISO-8601 via System.Text.Json's default — UTC instants render with an explicit `+00:00` offset (e.g. `2026-05-28T15:30:00+00:00`), equivalent to the `Z` shorthand used illustratively in the examples here / ARCH-013 / ARCH-016. No custom converter; the contract is the *instant* (parse + round-trip), not the literal `Z`.
 
 ### Session APIs
 

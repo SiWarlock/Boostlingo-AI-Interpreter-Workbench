@@ -29,6 +29,8 @@ _Entries carry an origin marker `(origin: YYYY-MM-DD <slice-id>)`. Triaged every
 
 - **WAE scope decision** — A.1 set `TreatWarningsAsErrors` on `AiInterpreter.Api` only. Decide whether to enforce solution-wide (incl. `AiInterpreter.Tests`) via a `server/Directory.Build.props`. Root typing posture enables nullable solution-wide; warnings-as-errors on test projects is often relaxed deliberately (xUnit analyzer noise). Resolve in a toolchain pass (A.2 or A.5). _(origin: 2026-05-28 A.1)_
 - **A.5 template reconciliation** — A.1 left `dotnet new webapi` template defaults beyond the strip-list: `launchSettings.json` dev ports 5243/7074 (A.5 target is 5179) + `launchUrl: "swagger"`, and the Swashbuckle/OpenAPI packages in the Api csproj. A.5 (host wiring) must reconcile: set port 5179, decide keep/remove OpenAPI, wire `GET /api/health`. _(origin: 2026-05-28 A.1)_
+- **Collection-size bounding (B.7 / B.9)** — `InterpretationTurn.Transcripts`/`LatencyEvents`, `LatencyEvent.Metadata`, `CostEstimate.Units` are unbounded at the model level (can't cap without breaking the ARCH-005 immutable-record contract). Persistence (B.7) + endpoints (B.9) must enforce sane bounds. _(origin: 2026-05-28 A.3)_
+- **`Result<T>` never serialized at the API boundary (B.9)** — `Result`/`Result<T>` are control-flow types with `[JsonIgnore]` on `Error`/`Value` (defense-in-depth). Controllers must map `Result` → a response DTO, never return/serialize `Result` directly. _(origin: 2026-05-28 A.3)_
 
 ---
 
@@ -110,12 +112,12 @@ The project is "done" (ARCH-025 + PRD success criteria) when:
 - [x] Anchors: `ARCH-028`, `ARCH-012`, `ARCH-019`. Cross-doc invariant: extended (Options mirror env contract) — rows in Appendix A + `server/CLAUDE.md`.
 
 ### A.3 — Domain models (enums + records)
-- [ ] All enums + records from `ARCH-005` implemented exactly (`InterpretationMode`, `LanguageCode`, `TurnStatus`, `SessionStatus`, `LatencyStage`, `ClockSource`; `LanguageDirection`, `ProviderProfile`, `SessionConfig`, `InterpretationSession`, `ModeTransitionEvent`, `InterpretationTurn`, `TranscriptSegment`, `LatencyEvent`, `CostEstimate`, `SessionSummary`, `ModeSummary`, `WerSummary`, `EvaluationPhrase`, `WerResult`, `ProviderError`).
-- [ ] JSON serialization is **camelCase** (System.Text.Json options) so API/persisted JSON matches `ARCH-009`/`ARCH-016` examples.
-- [ ] `Common/Clock.cs` (`IClock` abstraction returning `DateTimeOffset` — injectable for deterministic tests) + `Common/Result.cs`.
-- [ ] Mirror the TS domain types in `web/src/types/domain.ts` (`UiSessionState`, `TurnViewModel`, `UiError`, mode/direction unions per `ARCH-007`).
-- [ ] Files: NEW — `Sessions/SessionModels.cs`, `Providers/Abstractions/ProviderErrors.cs`, `Common/Clock.cs`, `Common/Result.cs`, `web/src/types/domain.ts`, `web/src/types/metrics.ts` (metric view types used by D.6/F.3).
-- [ ] Anchors: `ARCH-005`, `ARCH-007`. Cross-doc invariant: **NEW** (these are the Appendix A contract models — register all).
+- [x] All enums + records from `ARCH-005` implemented exactly (`InterpretationMode`, `LanguageCode`, `TurnStatus`, `SessionStatus`, `LatencyStage`, `ClockSource`; `LanguageDirection`, `ProviderProfile`, `SessionConfig`, `InterpretationSession`, `ModeTransitionEvent`, `InterpretationTurn`, `TranscriptSegment`, `LatencyEvent`, `CostEstimate`, `SessionSummary`, `ModeSummary`, `WerSummary`, `EvaluationPhrase`, `WerResult`, `ProviderError`). _(verified zero drift vs ARCH-005/Appendix A; impl + code-quality reviewer diffed.)_
+- [x] JSON serialization is **camelCase** (System.Text.Json options) so API/persisted JSON matches `ARCH-009`/`ARCH-016` examples. _(shared `Common/JsonDefaults`: camelCase + enum-as-camelCase-string + explicit-null; ISO-8601 `+00:00` ≡ `Z` — see ARCH-009 timestamp annotation.)_
+- [x] `Common/Clock.cs` (`IClock` abstraction returning `DateTimeOffset` — injectable for deterministic tests) + `Common/Result.cs`.
+- [ ] ~~Mirror the TS domain types in `web/src/types/domain.ts`~~ — **RE-SEQUENCED to Phase D** (D.1 typed-contract prereq; `web/` area + frontend build phase). See brief 003.
+- [x] Files: NEW (backend) — `Sessions/SessionModels.cs`, `Providers/Abstractions/ProviderErrors.cs`, `Common/Clock.cs`, `Common/Result.cs`, `Common/JsonDefaults.cs`, + tests. _(`web/src/types/{domain,metrics}.ts` re-sequenced to Phase D.)_
+- [x] Anchors: `ARCH-005`, `ARCH-007`. Cross-doc invariant: **NEW** — registered (domain-model row in `server/CLAUDE.md` cross-doc table; full inventory in Appendix A).
 
 ### A.4 — Pricing config + binding
 - [ ] `config/pricing.json` populated with the starting block from `ARCH-014` (Deepgram streaming `$0.0058`/min; both Realtime models; both translation models incl. `gpt-5.4-mini` marked CONFIRM-at-build; TTS bases); `version: "2026-05-28-payg-estimates"`; disclaimer present.

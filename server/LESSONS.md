@@ -39,3 +39,16 @@ The provider `Options` classes (`DeepgramOptions`, `OpenAiTranslationOptions`, `
 **Test-project gotcha:** the `Microsoft.Extensions.Configuration.*` framework references flow in via `Microsoft.NET.Sdk.Web` on the API project but do **not** reach a non-web test project (`Microsoft.NET.Sdk`). The test project must reference `Microsoft.Extensions.Configuration`, `.Binder`, and `.Json` explicitly to bind config in tests.
 
 **Rule:** Config Options are bindable types (settable props + parameterless ctor) with inline defaults as the single source of truth (appsettings does not duplicate them); bind via `Bind(new T())`, expose a `const SectionName`, and reference `Microsoft.Extensions.Configuration.*` explicitly in non-web test projects.
+
+---
+
+## <a id="2"></a>2. One shared JsonSerializerOptions for API + persisted JSON; round-trip tests use JSON-string equality
+
+**Date:** 2026-05-28.
+**Source slice:** A.3 (domain models).
+
+The domain records (ARCH-005) serialize to both API responses (ARCH-009) and persisted session JSON (ARCH-016) — and those two surfaces **must not diverge**. So there is exactly **one** `JsonSerializerOptions` source: `Common/JsonDefaults` exposes `Options` (a pre-built instance for direct serialize/deserialize in persistence + tests) and `Apply(JsonSerializerOptions)` (called by the A.5 HTTP pipeline via `ConfigureHttpJsonOptions`). Both paths get camelCase property naming + `JsonStringEnumConverter(JsonNamingPolicy.CamelCase)` + explicit-null writing (`"summary": null` per ARCH-016, NOT `WhenWritingNull`). `Apply` is idempotent (guards against double-registering the enum converter when the framework hands it pre-seeded options). Never hand-roll a second options object for a new serialization site — reuse `JsonDefaults`.
+
+**Record `==` is a trap for round-trip tests.** C# positional records get compiler-generated value equality, but for reference-type members (`List<T>`, `Dictionary<K,V>`) that equality is **reference-based** — so `original == Deserialize(Serialize(original))` is `false` even when every value matches. Round-trip fidelity tests therefore assert **JSON-string equality** (serialize → deserialize → re-serialize, compare the two JSON strings) plus targeted nested-field spot-checks, never record `==`. Keep the records exactly as ARCH-005 (mutable `List<T>` members) — don't switch to value-equal collections just to satisfy a test.
+
+**Rule:** One shared `JsonSerializerOptions` (`Common/JsonDefaults`: camelCase + enum-as-camelCase-string + explicit-null) is the single source for API + persisted JSON; round-trip tests assert JSON-string equality, not record `==` (reference-based over collection members).
