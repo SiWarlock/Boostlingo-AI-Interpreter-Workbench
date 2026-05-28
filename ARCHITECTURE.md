@@ -1050,6 +1050,8 @@ Load `pricing.json`; accept usage units per turn/stage; estimate per-turn + per-
 }
 ```
 
+> **Shape note (A.4):** in `openai.realtime`, `estimatorNote` is a **string sibling** of the per-model entries (`gpt-realtime`/`gpt-realtime-mini`). The `PricingOptions` binding reflects this — `realtime` is an explicit class (`[JsonPropertyName]` per model + `EstimatorNote`), while `translation`/`tts` (no sibling strings) are model-keyed dictionaries. Loaded via `PRICING_CONFIG_PATH` with degrade-don't-crash (ARCH-018), not an appsettings section.
+
 ### Cost estimate output
 
 ```json
@@ -1300,7 +1302,7 @@ Canonical home for every cross-doc-invariant model. A field change on any row re
 | `OpenAiTranslationOptions` (§`"OpenAiTranslation"`) | ARCH-012, ARCH-028 | ApiKey (backend-only), Model, ReasoningEffort=minimal, Verbosity=low, Stream, TimeoutSeconds |
 | `OpenAiTtsOptions` (§`"OpenAiTts"`) | ARCH-012, ARCH-028 | ApiKey (backend-only), Model, Voice, VoiceByLanguage?, ResponseFormat=mp3, Stream, Instructions?, TimeoutSeconds |
 | `RealtimeOptions` (§`"Realtime"`) | ARCH-012, ARCH-028, ARCH-019 | ApiKey (backend-only), Model, Voice, InstructionsTemplate, ExpirySeconds=600, TokenTimeoutSeconds, TranscriptionModel=gpt-4o-transcribe |
-| `PricingOptions` (§`"Pricing"`) | ARCH-014, ARCH-028 | Version (minimal in A.2; A.4 extends to the pricing.json shape) |
+| `PricingOptions` | ARCH-014, ARCH-028 | Full `pricing.json` shape (A.4); file-loaded via `PRICING_CONFIG_PATH` (not section-bound); `realtime` explicit class (estimatorNote string sibling), `translation`/`tts` model-keyed dicts |
 | `UiSessionState` / `TurnViewModel` / `UiError` (TS) | ARCH-007 | frontend projections |
 | API DTOs: CreateSession, CreateTurn, CompleteTurn, ClientSecret, CascadeStream msgs, Transcribe, Wer, ConfigResponse | ARCH-009 | camelCase serializations of the above |
 

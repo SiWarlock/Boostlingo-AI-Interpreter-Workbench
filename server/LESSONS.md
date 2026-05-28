@@ -52,3 +52,16 @@ The domain records (ARCH-005) serialize to both API responses (ARCH-009) and per
 **Record `==` is a trap for round-trip tests.** C# positional records get compiler-generated value equality, but for reference-type members (`List<T>`, `Dictionary<K,V>`) that equality is **reference-based** — so `original == Deserialize(Serialize(original))` is `false` even when every value matches. Round-trip fidelity tests therefore assert **JSON-string equality** (serialize → deserialize → re-serialize, compare the two JSON strings) plus targeted nested-field spot-checks, never record `==`. Keep the records exactly as ARCH-005 (mutable `List<T>` members) — don't switch to value-equal collections just to satisfy a test.
 
 **Rule:** One shared `JsonSerializerOptions` (`Common/JsonDefaults`: camelCase + enum-as-camelCase-string + explicit-null) is the single source for API + persisted JSON; round-trip tests assert JSON-string equality, not record `==` (reference-based over collection members).
+
+---
+
+## <a id="3"></a>3. Degrade, don't crash, on optional external config (ARCH-018)
+
+**Date:** 2026-05-28.
+**Source slice:** A.4 (pricing config + loader).
+
+Optional external config (here `pricing.json` via `PRICING_CONFIG_PATH`) must **never** take the app down when it is missing, unreadable, or malformed — it degrades to a documented "unavailable" state (ARCH-018) and the caller renders that gracefully ("estimate unavailable"). The resilient load order: (1) a `File.Exists` guard for the missing case; (2) a **size guard** (1 MB here) *before* `File.ReadAllText`, so a misconfigured huge-file path can't trigger an `OutOfMemoryException` — which must NOT be swallowed; (3) a **filtered** catch (`IOException`, `JsonException`, `UnauthorizedAccessException`, `SecurityException`, `ArgumentException`, `NotSupportedException`) — never a bare `catch (Exception)`, so fatal/programmer errors (OOM, NRE) still surface; (4) treat a null/empty deserialization result as a failure too.
+
+The loader returns `Result<PricingOptions>` (the `Result` type from A.3); `Failure` carries a reason, but `Result.Error` is `[JsonIgnore]` (A.3) so the path or exception text can't leak to a client. Deserialize the file with the **shared `Common/JsonDefaults.Options`** ([§2](#2)) — the same camelCase/enum/explicit-null contract used for API + persistence — so a standalone config file binds identically. Don't hand-roll a second options object for a new load site.
+
+**Rule:** Load optional external config with a missing-file guard + a size guard (before read) + a *filtered* catch (never bare; never swallow OOM/`SecurityException`) + null-result→`Failure`, returning `Result<T>` so the caller degrades to "unavailable"; deserialize via the shared `JsonDefaults`.

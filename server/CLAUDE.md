@@ -129,7 +129,7 @@ Several typed models in this codebase are **contracts** mirrored in `ARCHITECTUR
 | `OpenAiTranslationOptions` | ARCH-012 / ARCH-028 (Appendix A) | Section `"OpenAiTranslation"` |
 | `OpenAiTtsOptions` | ARCH-012 / ARCH-028 (Appendix A) | Section `"OpenAiTts"`; optional `VoiceByLanguage` map |
 | `RealtimeOptions` | ARCH-012 / ARCH-028 / ARCH-019 (Appendix A) | Section `"Realtime"`; ApiKey backend-only |
-| `PricingOptions` | ARCH-014 (Appendix A) | Section `"Pricing"`; minimal (Version) in A.2 — A.4 extends |
+| `PricingOptions` | ARCH-014 (Appendix A) | Full ARCH-014 shape (A.4); **file-loaded via `PRICING_CONFIG_PATH`** (not section-bound; no SectionName); `realtime` explicit class (estimatorNote string sibling), `translation`/`tts` model-keyed dicts |
 | ARCH-005 domain model — 6 enums + 15 records | ARCH-005 / Appendix A | `InterpretationSession`/`InterpretationTurn`/`TranscriptSegment`/`LatencyEvent`(+ARCH-013)/`CostEstimate`(+ARCH-014)/`SessionSummary`·`ModeSummary`·`WerSummary`(+ARCH-009)/`ProviderError`(+ARCH-012)/`EvaluationPhrase`·`WerResult`(+ARCH-015)/enums/etc. Full field inventory in Appendix A; a field change pairs with the ARCH-005 edit. Serialized via `Common/JsonDefaults` (camelCase + enum-as-string + explicit-null). |
 
 > The canonical contract-model inventory is `ARCHITECTURE.md` **Appendix A** (e.g. `InterpretationSession`, `InterpretationTurn`, `TranscriptSegment`, `LatencyEvent`, `CostEstimate`, `SessionSummary`/`ModeSummary`, `ProviderError`, the three provider interfaces + event types, and the API DTOs). When a slice first implements one of those models, the orchestrator adds its row here (model → §) so a field change is paired with the matching `ARCHITECTURE.md` edit in the same round.
@@ -180,6 +180,7 @@ Lessons start at §1.
 |--:|---|---|---|
 | 1 | 2026-05-28 | [IOptions config-binding pattern](LESSONS.md#1) | Options are bindable types (class + get/set, or record w/ init + parameterless ctor), NOT ARCH-005 immutable records; inline defaults = single source of truth; expose `const string SectionName`; bind via `Bind(new T())` not `Get<T>()`; non-web test projects need explicit `Microsoft.Extensions.Configuration.*` refs. |
 | 2 | 2026-05-28 | [Shared JSON contract + record-`==` gotcha](LESSONS.md#2) | One shared `JsonSerializerOptions` (`Common/JsonDefaults`: camelCase + enum-as-camelCase-string + explicit-null) is the single source for API + persisted JSON; record `==` is reference-based over `List<>`/`Dictionary<>` members, so round-trip tests assert JSON-string equality, not record `==`. |
+| 3 | 2026-05-28 | [Degrade-don't-crash on optional config](LESSONS.md#3) | Load optional external config (e.g. `pricing.json`) with a missing-file guard + size guard (pre-read, no OOM) + a *filtered* catch (never bare; never swallow OOM/`SecurityException`) + null-result→`Failure`, returning `Result<T>` so the caller degrades to "unavailable"; deserialize via the shared `JsonDefaults`. |
 
 <!-- Starts empty. Each row links to its `LESSONS.md` anchor. -->
 

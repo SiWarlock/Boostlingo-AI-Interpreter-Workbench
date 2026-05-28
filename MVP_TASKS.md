@@ -120,10 +120,10 @@ The project is "done" (ARCH-025 + PRD success criteria) when:
 - [x] Anchors: `ARCH-005`, `ARCH-007`. Cross-doc invariant: **NEW** — registered (domain-model row in `server/CLAUDE.md` cross-doc table; full inventory in Appendix A).
 
 ### A.4 — Pricing config + binding
-- [ ] `config/pricing.json` populated with the starting block from `ARCH-014` (Deepgram streaming `$0.0058`/min; both Realtime models; both translation models incl. `gpt-5.4-mini` marked CONFIRM-at-build; TTS bases); `version: "2026-05-28-payg-estimates"`; disclaimer present.
-- [ ] `PricingOptions` binds it via `PRICING_CONFIG_PATH`; missing config degrades to "estimate unavailable" (ARCH-018), never a crash.
-- [ ] Files: extended — `config/pricing.json`, `Cost/PricingOptions.cs`.
-- [ ] Anchors: `ARCH-014`, `ARCH-018`. Cross-doc invariant: extended.
+- [x] `config/pricing.json` populated with the starting block from `ARCH-014` (Deepgram streaming `$0.0058`/min; both Realtime models; both translation models incl. `gpt-5.4-mini` marked CONFIRM-at-build; TTS bases); `version: "2026-05-28-payg-estimates"`; disclaimer present.
+- [x] `PricingOptions` binds it via `PRICING_CONFIG_PATH`; missing config degrades to "estimate unavailable" (ARCH-018), never a crash. _(`Cost/PricingLoader` → `Result<PricingOptions>`; `File.Exists` + 1MB size guard + filtered catch; DI wiring of the path is A.5.)_
+- [x] Files: extended — `config/pricing.json`, `Cost/PricingOptions.cs` (full shape, `SectionName` removed); NEW — `Cost/PricingLoader.cs`, `AiInterpreter.Tests/PricingConfigTests.cs`.
+- [x] Anchors: `ARCH-014`, `ARCH-018`. Cross-doc invariant: extended (`PricingOptions` minimal→full; file-loaded).
 
 ### A.5 — Backend host, CORS, health + build/run wiring
 - [ ] `Program.cs` wires DI, camelCase JSON, **CORS restricted to the local frontend origin** (dev), WebSocket support enabled, and a listen port (e.g. `5179`).
