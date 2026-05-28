@@ -103,11 +103,11 @@ The project is "done" (ARCH-025 + PRD success criteria) when:
 - [x] Anchors: `ARCH-006`. Cross-doc invariant: none.
 
 ### A.2 — Configuration, secrets & Options classes
-- [ ] `.env.example` lists every variable from `ARCH-028` with comments, no real keys.
-- [ ] `Options` classes bound via `IOptions`: `RealtimeOptions`, `DeepgramOptions`, `OpenAiTranslationOptions`, `OpenAiTtsOptions`, `PricingOptions` — fields per `ARCH-012` "Provider Options (enumerated)".
-- [ ] Standard API keys load **server-side only**; nothing in this layer is exposed to the SPA.
-- [ ] Files: NEW — `Realtime/RealtimeOptions.cs`, `Providers/Deepgram/DeepgramOptions.cs`, `Providers/OpenAI/OpenAiOptions.cs` (translation + tts), `Cost/PricingOptions.cs`, `.env.example`, `appsettings*.json`.
-- [ ] Anchors: `ARCH-028`, `ARCH-012`, `ARCH-019`. Cross-doc invariant: extended (Options mirror env contract).
+- [x] `.env.example` lists every variable from `ARCH-028` with comments, no real keys.
+- [x] `Options` classes bound via `IOptions`: `RealtimeOptions`, `DeepgramOptions`, `OpenAiTranslationOptions`, `OpenAiTtsOptions`, `PricingOptions` — fields per `ARCH-012` "Provider Options (enumerated)".
+- [x] Standard API keys load **server-side only**; nothing in this layer is exposed to the SPA.
+- [x] Files: NEW — `Realtime/RealtimeOptions.cs`, `Providers/Deepgram/DeepgramOptions.cs`, `Providers/OpenAI/OpenAiOptions.cs` (translation + tts), `Cost/PricingOptions.cs`, `.env.example`. (`appsettings*.json` deliberately **unchanged** — inline defaults are the single source of truth; binding wired in A.5.)
+- [x] Anchors: `ARCH-028`, `ARCH-012`, `ARCH-019`. Cross-doc invariant: extended (Options mirror env contract) — rows in Appendix A + `server/CLAUDE.md`.
 
 ### A.3 — Domain models (enums + records)
 - [ ] All enums + records from `ARCH-005` implemented exactly (`InterpretationMode`, `LanguageCode`, `TurnStatus`, `SessionStatus`, `LatencyStage`, `ClockSource`; `LanguageDirection`, `ProviderProfile`, `SessionConfig`, `InterpretationSession`, `ModeTransitionEvent`, `InterpretationTurn`, `TranscriptSegment`, `LatencyEvent`, `CostEstimate`, `SessionSummary`, `ModeSummary`, `WerSummary`, `EvaluationPhrase`, `WerResult`, `ProviderError`).

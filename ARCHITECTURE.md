@@ -1294,6 +1294,11 @@ Canonical home for every cross-doc-invariant model. A field change on any row re
 | `ISttProvider` + `SttEvent`/`SttRequest`/`AudioFrame` | ARCH-012 | streaming STT contract |
 | `ITranslationProvider` + `TranslationEvent`/`TranslationRequest` | ARCH-012 | streaming translation contract |
 | `ITtsProvider` + `TtsEvent`/`TtsRequest` | ARCH-012 | streaming TTS contract |
+| `DeepgramOptions` (§`"Deepgram"`) | ARCH-012, ARCH-028 | ApiKey (backend-only), BaseUrl/WebSocketUrl, Model=nova-3, Language=multi, SmartFormat, Encoding=linear16, SampleRate, Channels=1, InterimResults, UtteranceEndMs, TimeoutSeconds |
+| `OpenAiTranslationOptions` (§`"OpenAiTranslation"`) | ARCH-012, ARCH-028 | ApiKey (backend-only), Model, ReasoningEffort=minimal, Verbosity=low, Stream, TimeoutSeconds |
+| `OpenAiTtsOptions` (§`"OpenAiTts"`) | ARCH-012, ARCH-028 | ApiKey (backend-only), Model, Voice, VoiceByLanguage?, ResponseFormat=mp3, Stream, Instructions?, TimeoutSeconds |
+| `RealtimeOptions` (§`"Realtime"`) | ARCH-012, ARCH-028, ARCH-019 | ApiKey (backend-only), Model, Voice, InstructionsTemplate, ExpirySeconds=600, TokenTimeoutSeconds, TranscriptionModel=gpt-4o-transcribe |
+| `PricingOptions` (§`"Pricing"`) | ARCH-014, ARCH-028 | Version (minimal in A.2; A.4 extends to the pricing.json shape) |
 | `UiSessionState` / `TurnViewModel` / `UiError` (TS) | ARCH-007 | frontend projections |
 | API DTOs: CreateSession, CreateTurn, CompleteTurn, ClientSecret, CascadeStream msgs, Transcribe, Wer, ConfigResponse | ARCH-009 | camelCase serializations of the above |
 

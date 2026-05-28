@@ -125,7 +125,11 @@ Several typed models in this codebase are **contracts** mirrored in `ARCHITECTUR
 
 | Model | `ARCHITECTURE.md` section | Notes |
 |---|---|---|
-| _(none yet)_ | — | Populate as contract models land in code. |
+| `DeepgramOptions` | ARCH-012 / ARCH-028 (Appendix A) | Section `"Deepgram"`; inline defaults are source of truth; ApiKey backend-only (ARCH-019) |
+| `OpenAiTranslationOptions` | ARCH-012 / ARCH-028 (Appendix A) | Section `"OpenAiTranslation"` |
+| `OpenAiTtsOptions` | ARCH-012 / ARCH-028 (Appendix A) | Section `"OpenAiTts"`; optional `VoiceByLanguage` map |
+| `RealtimeOptions` | ARCH-012 / ARCH-028 / ARCH-019 (Appendix A) | Section `"Realtime"`; ApiKey backend-only |
+| `PricingOptions` | ARCH-014 (Appendix A) | Section `"Pricing"`; minimal (Version) in A.2 — A.4 extends |
 
 > The canonical contract-model inventory is `ARCHITECTURE.md` **Appendix A** (e.g. `InterpretationSession`, `InterpretationTurn`, `TranscriptSegment`, `LatencyEvent`, `CostEstimate`, `SessionSummary`/`ModeSummary`, `ProviderError`, the three provider interfaces + event types, and the API DTOs). When a slice first implements one of those models, the orchestrator adds its row here (model → §) so a field change is paired with the matching `ARCHITECTURE.md` edit in the same round.
 
@@ -173,7 +177,7 @@ Lessons start at §1.
 
 | # | Date | Topic | Rule (one-liner) |
 |--:|---|---|---|
-| | | | |
+| 1 | 2026-05-28 | [IOptions config-binding pattern](LESSONS.md#1) | Options are bindable types (class + get/set, or record w/ init + parameterless ctor), NOT ARCH-005 immutable records; inline defaults = single source of truth; expose `const string SectionName`; bind via `Bind(new T())` not `Get<T>()`; non-web test projects need explicit `Microsoft.Extensions.Configuration.*` refs. |
 
 <!-- Starts empty. Each row links to its `LESSONS.md` anchor. -->
 
