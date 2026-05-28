@@ -15,11 +15,11 @@
 
 ## Currently in progress
 
-**A.5 — Host, CORS, health** (backend; `Program.cs` DI + flat-env→section bridge + `JsonDefaults` HTTP pipeline + pricing loader + CORS + WebSockets + port 5179 + `GET /api/health`; first integration tests). Brief: `docs/briefs/005-A.5-host-cors-health.md`. _(A.5's web Vite dev-config re-sequenced to D.1 — see brief. Closes Phase A.)_
+**B.1 — Provider interfaces + event types** (backend; `ISttProvider`/`ITranslationProvider`/`ITtsProvider` + event hierarchies + request records + `AudioFrame` + `ProviderError` mapping helpers, per ARCH-012). Brief: `docs/briefs/006-B.1-provider-interfaces.md`.
 
-**Last landed:** `A.4` pricing config + loader (code `4ed26a6` + docs `d19cc01`); `A.3` domain (`3d0f7d7` + `63df8f0`); `A.2` config/Options (`4e4d11f` + `fda80f0`); `A.1` scaffold (`ef05ccb`) + foundation docs (`38e57a4`..`fac93af`). **Commit cadence:** commit-as-we-go on `main` per logical unit (push deferred to `/orchestrate-end`; no remote).
+**Last landed:** **Phase A COMPLETE** (A.1–A.5; through `a4ebe71`; 17 commits, 28 tests, runnable host on 5179). **Commit cadence:** commit-as-we-go on `main` per logical unit (push deferred to `/orchestrate-end`; no remote).
 
-**Next after A.5:** Phase B — backend core seams + tests against fakes (B.1 provider interfaces → B.10 boundary tests).
+**Next after B.1:** B.2 (fake providers) → B.3 (metrics) → … → B.10 (provider boundary tests). Phase B = backend core seams + tests against **fake** providers (no real keys).
 
 ---
 
