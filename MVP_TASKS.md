@@ -15,9 +15,11 @@
 
 ## Currently in progress
 
-**Bootstrap.** Architecture finalized + approved (`ARCHITECTURE.md`). First slice not yet started.
+**A.2 — Configuration, secrets & Options classes** (backend). Brief: `docs/briefs/002-A.2-config-secrets-options.md`.
 
-**Next session target:** `A.1` (solution + repo scaffold).
+**Last landed:** `A.1` solution + repo scaffold (commit `ef05ccb`); foundation docs committed (`38e57a4`..`fac93af`). **Commit cadence:** commit-as-we-go on `main` per logical unit (push deferred to `/orchestrate-end`; no remote configured).
+
+**Next after A.2:** `A.3` (domain models — the Appendix A contract records).
 
 ---
 
