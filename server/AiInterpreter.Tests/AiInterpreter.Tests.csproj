@@ -21,13 +21,16 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
 
-    <!-- A.2: the Options<->config-section binding tests need the configuration packages.
-         AiInterpreter.Api is a Web SDK project; its shared-framework
-         Microsoft.Extensions.Configuration.* does NOT flow transitively to this non-web test
-         project, so reference them explicitly (8.0 band, matching the net8.0 target). -->
-    <PackageReference Include="Microsoft.Extensions.Configuration" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.0.0" />
+    <!-- A.5: WebApplicationFactory HTTP integration tests. Mvc.Testing + the FrameworkReference
+         below bring the ASP.NET Core shared framework into this test project, which ALSO supplies
+         Microsoft.Extensions.Configuration.* (AddInMemoryCollection/AddJsonFile/Bind used by the
+         A.2 Options tests) — so the standalone Configuration packages added in A.2 are no longer
+         needed and were removed. -->
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
   <ItemGroup>
