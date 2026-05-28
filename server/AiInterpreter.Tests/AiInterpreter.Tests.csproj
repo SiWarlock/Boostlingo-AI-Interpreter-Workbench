@@ -39,6 +39,8 @@
   <ItemGroup>
     <None Include="..\AiInterpreter.Api\appsettings.json" Link="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\AiInterpreter.Api\appsettings.Development.json" Link="appsettings.Development.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- A.4: the committed pricing.json (repo-root config/) feeds PricingConfigTests' valid-file load. -->
+    <None Include="..\..\config\pricing.json" Link="pricing.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
