@@ -1,5 +1,6 @@
 using AiInterpreter.Api.Common;
 using AiInterpreter.Api.Cost;
+using AiInterpreter.Api.Metrics;
 using AiInterpreter.Api.Providers.Deepgram;
 using AiInterpreter.Api.Providers.OpenAI;
 using AiInterpreter.Api.Realtime;
@@ -26,6 +27,13 @@ builder.Services.Configure<RealtimeOptions>(builder.Configuration.GetSection(Rea
 // startup (ARCH-018). B.5's CostEstimator consumes the Result.
 var pricingPath = builder.Configuration["PRICING_CONFIG_PATH"] ?? "../../config/pricing.json";
 builder.Services.AddSingleton(PricingLoader.Load(pricingPath));
+
+// Metrics layer (B.3) — injectable clock + the latency factory/aggregator (ARCH-013). The factory
+// is the first IClock consumer; the production consumer of the trio is the B.4 cascade orchestrator
+// (available-in-DI now, entry-point wiring deferred — named, not a silent gap).
+builder.Services.AddSingleton<IClock, SystemClock>();
+builder.Services.AddSingleton<LatencyEventFactory>();
+builder.Services.AddSingleton<MetricsAggregator>();
 
 // Shared JSON contract (A.3) on the HTTP pipeline — camelCase + enum-as-string + explicit null,
 // the same contract persistence uses, so API and persisted JSON cannot diverge.
