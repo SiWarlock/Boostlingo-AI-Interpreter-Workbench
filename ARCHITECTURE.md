@@ -1229,6 +1229,8 @@ ASPNETCORE_ENVIRONMENT=Development
 
 Each provider has an `Options` class bound via `IOptions` (ARCH-012). Rule: **standard keys stay backend-only; the browser gets only the ephemeral credential.** Config-missing behavior cross-links ARCH-018. `ConfigService` reports configured booleans from key presence only.
 
+> **Env→section bridge (A.5).** The flat operator env vars above are mapped to the PascalCase Options sections in one place in `Program.cs` (an explicit map → `AddInMemoryCollection` → `Configure<T>(GetSection(SectionName))`), setting **only keys that are present** so the inline Options defaults stand. `OPENAI_API_KEY` fans out to all three OpenAI services (`OpenAiTranslation`/`OpenAiTts`/`Realtime`). `PRICING_CONFIG_PATH` is read directly by the pricing loader (file-load, not section-bound); `SESSION_DATA_DIR` is consumed by persistence (B.7).
+
 <a id="arch-029"></a>
 
 ### Build & Run Contract

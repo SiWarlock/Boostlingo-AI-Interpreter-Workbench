@@ -25,12 +25,9 @@
 
 ## Carry-forward to upcoming briefs
 
-_Entries carry an origin marker `(origin: YYYY-MM-DD <slice-id>)`. Triaged every `/orchestrate-end`._
+_Entries carry an origin marker `(origin: YYYY-MM-DD <slice-id>)`. Items that belong to a specific phase are inlined as task checkboxes there (not held here); only next-1–2-slice items live here._
 
-- **WAE scope decision** — A.1 set `TreatWarningsAsErrors` on `AiInterpreter.Api` only. Decide whether to enforce solution-wide (incl. `AiInterpreter.Tests`) via a `server/Directory.Build.props`. Root typing posture enables nullable solution-wide; warnings-as-errors on test projects is often relaxed deliberately (xUnit analyzer noise). Resolve in a toolchain pass (A.2 or A.5). _(origin: 2026-05-28 A.1)_
-- **A.5 template reconciliation** — A.1 left `dotnet new webapi` template defaults beyond the strip-list: `launchSettings.json` dev ports 5243/7074 (A.5 target is 5179) + `launchUrl: "swagger"`, and the Swashbuckle/OpenAPI packages in the Api csproj. A.5 (host wiring) must reconcile: set port 5179, decide keep/remove OpenAPI, wire `GET /api/health`. _(origin: 2026-05-28 A.1)_
-- **Collection-size bounding (B.7 / B.9)** — `InterpretationTurn.Transcripts`/`LatencyEvents`, `LatencyEvent.Metadata`, `CostEstimate.Units` are unbounded at the model level (can't cap without breaking the ARCH-005 immutable-record contract). Persistence (B.7) + endpoints (B.9) must enforce sane bounds. _(origin: 2026-05-28 A.3)_
-- **`Result<T>` never serialized at the API boundary (B.9)** — `Result`/`Result<T>` are control-flow types with `[JsonIgnore]` on `Error`/`Value` (defense-in-depth). Controllers must map `Result` → a response DTO, never return/serialize `Result` directly. _(origin: 2026-05-28 A.3)_
+_(Empty at Phase-A close — all items closed or inlined to their phase. **Closed:** WAE-scope (decided A.5 — Api-only WAE, no `Directory.Build.props`); A.1 template reconciliation (done A.5 — port 5179, template profiles dropped, Swagger Dev-only). **Inlined to B.9:** collection-size bounding + `Result`→DTO mapping (origin A.3) + global sanitizing exception handler (origin A.5, safety). **Inlined to C.4:** cascade WS `Origin` validation (origin A.5).)_
 
 ---
 
@@ -126,14 +123,14 @@ The project is "done" (ARCH-025 + PRD success criteria) when:
 - [x] Anchors: `ARCH-014`, `ARCH-018`. Cross-doc invariant: extended (`PricingOptions` minimal→full; file-loaded).
 
 ### A.5 — Backend host, CORS, health + build/run wiring
-- [ ] `Program.cs` wires DI, camelCase JSON, **CORS restricted to the local frontend origin** (dev), WebSocket support enabled, and a listen port (e.g. `5179`).
-- [ ] `GET /api/health` → `{ "status": "ok" }`.
-- [ ] `web` dev server config: `VITE_API_BASE_URL` + Vite proxy (or CORS) so the SPA reaches the API + the cascade WebSocket; secure-context note captured in README backlog.
-- [ ] Files: extended — `Program.cs`; NEW — `Controllers/ConfigController.cs` (health here or in config), `web/vite.config.ts`, `web/.env.example`.
-- [ ] Anchors: `ARCH-029`, `ARCH-019`. Cross-doc invariant: none.
+- [x] `Program.cs` wires DI (Options + flat-env→section bridge + pricing-loader singleton + `JsonDefaults.Apply`), camelCase JSON, **CORS restricted to the local frontend origin** (`localhost:5173`, `WithOrigins` — never `AllowAnyOrigin`), WebSocket support enabled, listen port `5179`. Swagger Development-only.
+- [x] `GET /api/health` → `{ "status": "ok" }` (minimal-API).
+- [ ] ~~`web` dev server config (`VITE_API_BASE_URL` + Vite proxy)~~ — **RE-SEQUENCED to D.1** (frontend area/phase; D.1 builds the API clients + needs the proxy then). Secure-context note → README backlog (G.1). A.5's CORS already allows `localhost:5173`.
+- [x] Files: extended — `Program.cs`, `Properties/launchSettings.json` (port 5179; template profiles dropped), `AiInterpreter.Tests.csproj`; NEW — `AiInterpreter.Tests/HostIntegrationTests.cs` (6, WebApplicationFactory). _(`/api/health` is minimal-API; `ConfigController` `/api/config` is B.9; `web/vite.config.ts` + `web/.env.example` → D.1.)_
+- [x] Anchors: `ARCH-029`, `ARCH-019`. Cross-doc invariant: none.
 
 ### Acceptance criteria (A)
-- [ ] All A.X ticked. `dotnet build` + `npm run build` succeed. Domain types compile in both languages. `GET /api/health` returns ok. No secrets in any committed file.
+- [x] All A.X ticked (A.5's web Vite-config sub-item re-sequenced to D.1). `dotnet build` 0W/0E ✓; `npm run build` green (A.1; web unchanged since). Backend C# domain types compile ✓ (TS mirror re-sequenced to D, per A.3). `GET /api/health` returns ok ✓ (real host on 5179). No secrets in any committed file ✓ (security-confirmed). **Phase A COMPLETE.**
 
 ---
 
@@ -194,6 +191,7 @@ The project is "done" (ARCH-025 + PRD success criteria) when:
 ### B.9 — Session + Config HTTP endpoints (+ config tests)
 - [ ] `SessionsController`: `POST /api/sessions`, `GET /api/sessions/{id}`, `POST …/end`, `GET …/summary`, `POST …/turns`, `POST …/turns/{turnId}/complete`, `POST …/turns/{turnId}/events` — request/response JSON exactly per `ARCH-009` (camelCase, nested config/direction/providerProfile). Backend owns `turnId` for all modes.
 - [ ] `ConfigController`: `GET /api/config` reports configured booleans + model lists from **key presence only** (never values) per `ARCH-009`.
+- [ ] **Global sanitizing exception handler (safety; origin A.5).** Wire `UseExceptionHandler` → normalized `UiError` via B.8's `ErrorSanitizer` (no stack traces / no secrets; ARCH-018/019), with/before these endpoints (A.5 has no throwing route yet, so no current exposure). Map `Result`/`Result<T>` → response DTOs (never serialize `Result` directly; origin A.3). Enforce sane collection-size bounds on request bodies (`Transcripts`/`LatencyEvents`/`Metadata`/`Units` are unbounded at the model level; origin A.3).
 - [ ] Tests: `ConfigEndpointTests` (IMPORTANT) — `configured=false` when a key is absent; no secret echo.
 - [ ] Files: NEW — `Controllers/SessionsController.cs`, `Config/ConfigService.cs`, `AiInterpreter.Tests/ConfigEndpointTests.cs`; extended — `Controllers/ConfigController.cs`.
 - [ ] Anchors: `ARCH-009`, `ARCH-018`, `ARCH-019`, `ARCH-020`. Cross-doc invariant: extended (DTOs → Appendix A).
@@ -237,6 +235,7 @@ The project is "done" (ARCH-025 + PRD success criteria) when:
 - [ ] `WS /api/cascade/stream` implements the exact protocol in `ARCH-009`: client `start` (sessionId, turnId, direction, encoding, sampleRate, translationModel, ttsVoice) → binary PCM frames → `stop`; server emits `transcript`/`latency`/`audio`/`cost`/`error`/`done`. Wires real providers into `CascadeStreamingOrchestrator`; persists the turn.
 - [ ] DI swaps fakes → real providers via config; the orchestrator code is unchanged from Phase B (seam proven).
 - [ ] Two cascade entry points are explicit: `CascadeWebSocketEndpoint.cs` hosts `WS /api/cascade/stream`; `CascadeController.cs` hosts the blob HTTP route (C.5).
+- [ ] **`Origin` validation (origin A.5).** The WS upgrade bypasses the CORS middleware, so `CascadeWebSocketEndpoint` validates the `Origin` header itself (reject non-allowed origins) rather than relying on the CORS policy.
 - [ ] Files: NEW — `Cascade/CascadeWebSocketEndpoint.cs`, `Controllers/CascadeController.cs`; extended — `Program.cs` (DI binding real vs fake by env).
 - [ ] Anchors: `ARCH-009`, `ARCH-011`. Cross-doc invariant: extended (WS message DTOs → Appendix A).
 
@@ -439,4 +438,6 @@ Owner decisions are **resolved** (reflected in ARCHITECTURE.md): full streaming 
 
 ## Log
 
-_(Append-only, date-stamped. Populated at each round close-out.)_
+_(Append-only, date-stamped.)_
+
+- **2026-05-28 — Phase A COMPLETE** (`ef05ccb` → A.5). Stood up: .NET solution + Vite scaffold (A.1); provider config Options + `.env.example` (A.2); ARCH-005 domain model + shared `JsonDefaults` + Clock/Result (A.3); ARCH-014 pricing + degrade-safe loader (A.4); ASP.NET host wiring — DI/env-bridge/JSON/CORS/WebSockets/port 5179/`GET /api/health` (A.5). Backend builds 0W/0E (WAE), **28 tests green**, real host serves `/api/health`. Lessons §1–§4 banked; cross-doc invariants (Options + domain models + pricing) registered in Appendix A + `server/CLAUDE.md`. Re-sequenced to later phases: TS mirror types + Vite dev-config → D.1; global sanitizing exception handler → B.9 (safety, no current exposure); cascade WS `Origin` validation → C.4. Commit cadence: commit-as-we-go on `main`, local-only (no remote). **Next: Phase B** (backend core seams + tests against fakes).

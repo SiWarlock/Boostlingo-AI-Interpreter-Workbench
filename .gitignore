@@ -22,3 +22,6 @@ data/sessions/*.json
 
 # --- OS / editor cruft ---
 .DS_Store
+
+# --- Tool caches (code-index daemon, etc.) ---
+.codegraph/

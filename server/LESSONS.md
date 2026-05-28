@@ -65,3 +65,18 @@ Optional external config (here `pricing.json` via `PRICING_CONFIG_PATH`) must **
 The loader returns `Result<PricingOptions>` (the `Result` type from A.3); `Failure` carries a reason, but `Result.Error` is `[JsonIgnore]` (A.3) so the path or exception text can't leak to a client. Deserialize the file with the **shared `Common/JsonDefaults.Options`** ([§2](#2)) — the same camelCase/enum/explicit-null contract used for API + persistence — so a standalone config file binds identically. Don't hand-roll a second options object for a new load site.
 
 **Rule:** Load optional external config with a missing-file guard + a size guard (before read) + a *filtered* catch (never bare; never swallow OOM/`SecurityException`) + null-result→`Failure`, returning `Result<T>` so the caller degrades to "unavailable"; deserialize via the shared `JsonDefaults`.
+
+---
+
+## <a id="4"></a>4. Wire host config in one place: flat-env→section bridge + single HTTP-JSON point
+
+**Date:** 2026-05-28.
+**Source slice:** A.5 (host wiring).
+
+The ARCH-028 operator env vars are flat screaming-snake (`DEEPGRAM_API_KEY`); the A.2 Options bind from PascalCase config sections (`Deepgram:ApiKey`). Bridge them in **one place** in `Program.cs`: a single map from each flat var to its `Section:Property`, applied via `AddInMemoryCollection(...)` *before* `Configure<T>(GetSection(SectionName))`. Two rules make it safe: (1) **set only keys that are present** — an absent/blank env var must not write an empty override, or it would clobber the inline Options default (lesson §1); use `IsNullOrWhiteSpace` to skip; (2) a single shared key can **fan out** to several sections (`OPENAI_API_KEY` → `OpenAiTranslation`/`OpenAiTts`/`Realtime` ApiKey). Keep the bridge inline (not a new file) so the whole host-config story reads in one scroll.
+
+Wire the **HTTP JSON pipeline through the single `JsonDefaults.Apply`** (`ConfigureHttpJsonOptions`) — never a second hand-rolled `JsonSerializerOptions` for HTTP — so API responses carry the identical camelCase/enum/explicit-null contract as persistence (lesson §2). Test it cheaply by asserting the resolved `Microsoft.AspNetCore.Http.Json.JsonOptions` has the expected naming policy + `JsonStringEnumConverter`, rather than spinning up a domain endpoint.
+
+Integration tests of the host that depend on a **process env var** (e.g. proving the bridge) must set the real env var *before* constructing the `WebApplicationFactory` (its `ConfigureAppConfiguration` layers too late for top-level `CreateBuilder`-time code) and unset it in a `finally`. Serialize such tests (own xUnit collection / disable parallelization) so they can't race other env-reading test classes (e.g. B.9 config-presence).
+
+**Rule:** Map flat operator env vars → Options sections in one `Program.cs` bridge (set only present keys so inline defaults stand; a shared key may fan out); wire HTTP JSON through the single `JsonDefaults.Apply`; host tests touching process env vars set-before-factory + finally-unset + run serialized.
