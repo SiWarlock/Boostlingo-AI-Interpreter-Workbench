@@ -96,3 +96,18 @@ The exception→`ProviderError` mapping table (ARCH-012) lives in exactly one pl
 Non-exception outcomes the orchestrator raises directly get explicit factories (`EmptyTranscript` → `cascade.empty_transcript` with `Stage="cascade"`, the cascade short-circuit; `Timeout` → `<stage>.timeout`), rather than synthesising a fake exception to feed `Map`.
 
 **Rule:** Keep the exception→`ProviderError` table in one mapper; `SafeMessage` is fixed-per-code and never echoes the exception text/stack; validate the closed `stage` set by caller-contract (no throw inside the mapper); raise non-exception outcomes via explicit factories.
+
+---
+
+## <a id="6"></a>6. Streaming-fake pattern — paced async iterator with one cancellation point
+
+**Date:** 2026-05-28.
+**Source slice:** B.2 (fake providers).
+
+The fake providers (and any streaming double) follow one shape: `async IAsyncEnumerable<TEvent> X(..., [EnumeratorCancellation] CancellationToken ct)`, choosing a behaviour by a constructor `enum` (e.g. `FakeSttBehavior.SuccessWithPartials`), with optional scripted payloads + a `delayPerEvent` (default `TimeSpan.Zero`). The `[EnumeratorCancellation]` attribute is what lets `await foreach (… .WithCancellation(token))` flow the caller's token into the iterator.
+
+Pacing + cancellation live in **one** helper called before each `yield`: `FakeStreaming.PaceAsync(delay, ct)` = `ct.ThrowIfCancellationRequested(); await Task.Delay(delay, ct);`. The explicit `ThrowIfCancellationRequested` guarantees a deterministic `OperationCanceledException` **even at `Zero` delay** (where `Task.Delay(0)` may complete before observing the token), and the single `await` keeps the iterator from tripping the `CS1998` "async method without await" warning (a build error under warnings-as-errors). Error variants `yield return` a `*Failed(ProviderError)` then `yield break` (short-circuit — no `Final`/`Complete` after); the `ProviderError` uses a **real** ARCH-012 code (default `<stage>.upstream_unavailable`, scriptable), never an invented one.
+
+Don't unit-assert the *wall-clock* delay (flaky); assert the **event ordering** + that cancellation throws. The same async-iterator + single-cancellation-point shape carries over to the real C providers consuming vendor streams.
+
+**Rule:** Streaming fakes/providers are `async IAsyncEnumerable<TEvent>` with `[EnumeratorCancellation]`; route every per-event delay through one `PaceAsync(delay, ct)` (`ThrowIfCancellationRequested` + `await Task.Delay`) for deterministic cancellation + no CS1998; error variants `yield` a real-code `*Failed` then `yield break`; test ordering + cancellation, not wall-clock timing.

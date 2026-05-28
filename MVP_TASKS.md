@@ -147,9 +147,9 @@ The project is "done" (ARCH-025 + PRD success criteria) when:
 - [x] Anchors: `ARCH-012`. Cross-doc invariant: **NEW** (interface contracts → Appendix A) — registered in `server/CLAUDE.md` cross-doc table.
 
 ### B.2 — Fake providers (all variants)
-- [ ] `FakeSttProvider` (success-with-partials, empty-final, partials-then-error), `FakeTranslationProvider` (token-stream-then-final, immediate-final-only, error), `FakeTtsProvider` (chunked-then-complete, complete-only, error) — each emits ordered events with a **configurable delay before each event** via `yield return` + awaited delays and **honors `CancellationToken`** per `ARCH-012`.
-- [ ] Files: NEW — `Providers/Fakes/Fake{Stt,Translation,Tts}Provider.cs`.
-- [ ] Anchors: `ARCH-012`, `ARCH-020`. Cross-doc invariant: none.
+- [x] `FakeSttProvider` (success-with-partials, empty-final, partials-then-error), `FakeTranslationProvider` (token-stream-then-final, immediate-final-only, error), `FakeTtsProvider` (chunked-then-complete, complete-only, error) — each emits ordered events with a **configurable delay before each event** via `yield return` + awaited delays and **honors `CancellationToken`** per `ARCH-012`. _(variant-by-enum ctor + `delayPerEvent`/scripted payloads + scriptable real-code `ProviderError`; pacing+cancellation via shared `FakeStreaming.PaceAsync`.)_
+- [x] Files: NEW — `Providers/Fakes/Fake{Stt,Translation,Tts}Provider.cs` + `Providers/Fakes/FakeStreaming.cs` (shared `PaceAsync`) + `AiInterpreter.Tests/FakeProvidersTests.cs` (13).
+- [x] Anchors: `ARCH-012`, `ARCH-020`. Cross-doc invariant: none. _(lesson §6 — streaming-fake pattern.)_
 
 ### B.3 — Latency model + MetricsAggregator (+ tests)
 - [ ] `LatencyEventFactory` stamps `LatencyEvent` with `clockSource` + `relativeMs` from the documented origin (ARCH-013 clock rules); `MetricsAggregator` computes universal + cascade + realtime metrics and the MUST/nice tiers (nice → `n/a`, never error).
