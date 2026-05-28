@@ -15,11 +15,13 @@
 
 ## Currently in progress
 
-**B.2 — Fake providers** (backend; `Fake{Stt,Translation,Tts}Provider` — variants + configurable per-event delay + `CancellationToken`, per ARCH-012; test doubles in `Providers/Fakes/`). Brief: `docs/briefs/007-B.2-fake-providers.md`.
+**Phase B — B.3 (latency model + `MetricsAggregator`)** is the next slice. **⏸ Team wound down at the B.2 boundary (context cycle, impl 76% ACTION); a FRESH team resumes here** (no successors spawned this round — human restarts the team).
 
-**Last landed:** `B.1` provider interfaces + `ProviderErrorMapper` (code `e65e13e` + docs `f4efd9a`); **Phase A COMPLETE** (A.1–A.5). **Commit cadence:** commit-as-we-go on `main` per logical unit (push deferred to `/orchestrate-end`; no remote).
+**Last landed:** `B.2` fake providers (code `ba4d3bf` + docs `b53f58a`); session doc `001` (`05401ee`). **Phase A COMPLETE (A.1–A.5) + Phase B B.1–B.2.** 24 commits, **50 tests green**, runnable host on `:5179`. **Commit cadence:** commit-as-we-go on `main` per logical unit (push deferred; no remote configured).
 
-**Next after B.2:** B.3 (metrics) → B.4 (cascade orchestrator) → B.5 (cost) → … → B.10 (provider boundary tests). Phase B = backend seams + tests against **fake** providers (no real keys).
+**Open safety/handoff items for the fresh team** (full detail in session doc `001` + lessons §1–§6): **B.9** global sanitizing exception-handler (safety, ARCH-018/019, no current exposure — wire with the first real endpoints via B.8); **B.7** `TtsAudioChunk` raw-audio cross-check; **B.4/B.5/C.4** deferred consumers (provider DI swap, pricing-`Result` consumer, WS-`Origin` validation); **D.1** TS mirror types + Vite dev-config (re-sequenced); `gpt-5.4-mini` pricing build-confirm.
+
+**Next after B.3:** B.4 (cascade orchestrator) → B.5 (cost) → … → B.10 (boundary tests). Phase B = backend seams + tests against **fake** providers (no real keys).
 
 ---
 
@@ -441,3 +443,11 @@ Owner decisions are **resolved** (reflected in ARCHITECTURE.md): full streaming 
 _(Append-only, date-stamped.)_
 
 - **2026-05-28 — Phase A COMPLETE** (`ef05ccb` → A.5). Stood up: .NET solution + Vite scaffold (A.1); provider config Options + `.env.example` (A.2); ARCH-005 domain model + shared `JsonDefaults` + Clock/Result (A.3); ARCH-014 pricing + degrade-safe loader (A.4); ASP.NET host wiring — DI/env-bridge/JSON/CORS/WebSockets/port 5179/`GET /api/health` (A.5). Backend builds 0W/0E (WAE), **28 tests green**, real host serves `/api/health`. Lessons §1–§4 banked; cross-doc invariants (Options + domain models + pricing) registered in Appendix A + `server/CLAUDE.md`. Re-sequenced to later phases: TS mirror types + Vite dev-config → D.1; global sanitizing exception handler → B.9 (safety, no current exposure); cascade WS `Origin` validation → C.4. Commit cadence: commit-as-we-go on `main`, local-only (no remote). **Next: Phase B** (backend core seams + tests against fakes).
+
+- **2026-05-28 — Phase B opened (B.1–B.2); team wound down at B.2 (context cycle).**
+  - Planning-level: provider contracts + `ProviderErrorMapper` (B.1) and the three fake providers (B.2) landed against the B.1 interfaces — the deterministic substrate the rest of Phase B builds + tests against. **24 commits across A.1→B.2; 50 tests green; runnable host.**
+  - Decisions: the error-mapper is the single owner of the ARCH-012 table with `SafeMessage` never echoing `ex.Message` (lesson §5); fakes emit **real** ARCH-012 error codes (not invented `*.failed`); the paced-async-iterator streaming-fake pattern (lesson §6).
+  - Scope shifts: none new — earlier re-sequences hold (TS types + Vite → D.1; B.9 exception-handler + C.4 WS-`Origin` + B.7 `TtsAudioChunk` cross-check inlined to their phases).
+  - **Cycle:** impl context hit **ACTION (76%)** at the B.2 boundary → **full team wind-down** (no successors spawned; the human restarts the team fresh). Clean break — nothing in flight, B.2 fully committed + documented.
+  - Next session target: **B.3 (latency model + `MetricsAggregator`)**.
+  - Reference: implementer session doc `001-2026-05-28-phase-a-plus-b1-b2.md`; briefs `001`–`007`; lessons §1–§6.
