@@ -17,6 +17,8 @@
 
 **Phase B — B.3 (latency model + `MetricsAggregator`)** is the next slice. **⏸ Team wound down at the B.2 boundary (context cycle, impl 76% ACTION); a FRESH team resumes here** (no successors spawned this round — human restarts the team).
 
+- **Team paused 2026-05-28** — handoff doc: `docs/team-handoffs/001-2026-05-28-context-cycle-phase-b.md` · last round-seal: `4be9397` · next-slice target: **B.3** (latency model + `MetricsAggregator`).
+
 **Last landed:** `B.2` fake providers (code `ba4d3bf` + docs `b53f58a`); session doc `001` (`05401ee`). **Phase A COMPLETE (A.1–A.5) + Phase B B.1–B.2.** 24 commits, **50 tests green**, runnable host on `:5179`. **Commit cadence:** commit-as-we-go on `main` per logical unit (push deferred; no remote configured).
 
 **Open safety/handoff items for the fresh team** (full detail in session doc `001` + lessons §1–§6): **B.9** global sanitizing exception-handler (safety, ARCH-018/019, no current exposure — wire with the first real endpoints via B.8); **B.7** `TtsAudioChunk` raw-audio cross-check; **B.4/B.5/C.4** deferred consumers (provider DI swap, pricing-`Result` consumer, WS-`Origin` validation); **D.1** TS mirror types + Vite dev-config (re-sequenced); `gpt-5.4-mini` pricing build-confirm.
