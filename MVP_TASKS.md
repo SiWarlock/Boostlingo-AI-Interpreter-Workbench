@@ -15,11 +15,11 @@
 
 ## Currently in progress
 
-**A.2 — Configuration, secrets & Options classes** (backend). Brief: `docs/briefs/002-A.2-config-secrets-options.md`.
+**A.3 — Domain models** (backend; ARCH-005 C# records + shared camelCase serialization + Clock/Result). Brief: `docs/briefs/003-A.3-domain-models.md`. _(A.3's TS mirror types `web/src/types/*` re-sequenced to Phase D — see brief.)_
 
-**Last landed:** `A.1` solution + repo scaffold (commit `ef05ccb`); foundation docs committed (`38e57a4`..`fac93af`). **Commit cadence:** commit-as-we-go on `main` per logical unit (push deferred to `/orchestrate-end`; no remote configured).
+**Last landed:** `A.2` config/secrets/Options (code `4e4d11f` + docs `fda80f0`); `A.1` scaffold (`ef05ccb`) + foundation docs (`38e57a4`..`fac93af`). **Commit cadence:** commit-as-we-go on `main` per logical unit (push deferred to `/orchestrate-end`; no remote configured).
 
-**Next after A.2:** `A.3` (domain models — the Appendix A contract records).
+**Next after A.3:** `A.4` (pricing config + binding), then `A.5` (host, CORS, health).
 
 ---
 
