@@ -141,10 +141,10 @@ The project is "done" (ARCH-025 + PRD success criteria) when:
 **Spec anchors:** `ARCH-012`, `ARCH-011`, `ARCH-013`, `ARCH-014`, `ARCH-015`, `ARCH-016`, `ARCH-008`, `ARCH-009`, `ARCH-018`, `ARCH-019`, `ARCH-020`.
 
 ### B.1 — Provider interfaces + event types
-- [ ] `ISttProvider`, `ITranslationProvider`, `ITtsProvider` and their event hierarchies + request records + `AudioFrame` exactly per `ARCH-012` (IAsyncEnumerable streaming contracts; `CancellationToken` on each).
-- [ ] `ProviderError` mapping helpers (exception/HTTP-status → code/retryable) per the `ARCH-012` mapping table (logic only; real providers wire it in C).
-- [ ] Files: NEW — `Providers/Abstractions/ISttProvider.cs`, `ITranslationProvider.cs`, `ITtsProvider.cs`, `ProviderEvents.cs`, `AudioFrame.cs`.
-- [ ] Anchors: `ARCH-012`. Cross-doc invariant: **NEW** (interface contracts → Appendix A).
+- [x] `ISttProvider`, `ITranslationProvider`, `ITtsProvider` and their event hierarchies + request records + `AudioFrame` exactly per `ARCH-012` (IAsyncEnumerable streaming contracts; `CancellationToken` on each). _(verified exact-match vs ARCH-012 §9; impl + code-quality reviewer diffed.)_
+- [x] `ProviderError` mapping helpers (exception/HTTP-status → code/retryable) per the `ARCH-012` mapping table (logic only; real providers wire it in C). _(`ProviderErrorMapper` — `Map`/`EmptyTranscript`/`Timeout`; SafeMessage fixed-per-code, never echoes `ex.Message`.)_
+- [x] Files: NEW — `Providers/Abstractions/ISttProvider.cs`, `ITranslationProvider.cs`, `ITtsProvider.cs`, `ProviderEvents.cs`, `AudioFrame.cs`, `ProviderErrorMapper.cs`, `AiInterpreter.Tests/ProviderErrorMappingTests.cs`. (`ProviderErrors.cs` reused from A.3.)
+- [x] Anchors: `ARCH-012`. Cross-doc invariant: **NEW** (interface contracts → Appendix A) — registered in `server/CLAUDE.md` cross-doc table.
 
 ### B.2 — Fake providers (all variants)
 - [ ] `FakeSttProvider` (success-with-partials, empty-final, partials-then-error), `FakeTranslationProvider` (token-stream-then-final, immediate-final-only, error), `FakeTtsProvider` (chunked-then-complete, complete-only, error) — each emits ordered events with a **configurable delay before each event** via `yield return` + awaited delays and **honors `CancellationToken`** per `ARCH-012`.
@@ -178,7 +178,7 @@ The project is "done" (ARCH-025 + PRD success criteria) when:
 
 ### B.7 — Session store, persistence writer, summary (+ tests)
 - [ ] `SessionStore` (in-memory), `SessionPersistenceWriter` (write-on-end MUST + best-effort per-turn; filename `session_YYYYMMDDTHHMMSSZ_<short-id>.json`; **path-traversal guard** — server-generated id `^[A-Za-z0-9_-]+$`, resolved path stays under `SESSION_DATA_DIR`), `SessionSummaryService` (computes `SessionSummary` on demand).
-- [ ] Tests: `SessionPersistenceTests` (IMPORTANT) — round-trip; **sentinel assertion that JSON contains neither standard key, nor ephemeral secret, nor raw audio** (invariants 6/6b/8); transcripts/latency present; `../` sessionId rejected.
+- [ ] Tests: `SessionPersistenceTests` (IMPORTANT) — round-trip; **sentinel assertion that JSON contains neither standard key, nor ephemeral secret, nor raw audio** (invariants 6/6b/8); transcripts/latency present; `../` sessionId rejected. _(Defense-in-depth cross-check, origin B.1 security review: the writer must never serialize streaming `TtsAudioChunk.Bytes` audio — structurally safe today since the session model has no audio field, but the sentinel + writer review should confirm it explicitly.)_
 - [ ] Files: NEW — `Sessions/SessionStore.cs`, `Sessions/SessionPersistenceWriter.cs`, `Sessions/SessionSummaryService.cs`, `AiInterpreter.Tests/SessionPersistenceTests.cs`.
 - [ ] Anchors: `ARCH-016`, `ARCH-008`, `ARCH-019`, `ARCH-020`. Cross-doc invariant: none.
 

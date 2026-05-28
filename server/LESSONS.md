@@ -80,3 +80,19 @@ Wire the **HTTP JSON pipeline through the single `JsonDefaults.Apply`** (`Config
 Integration tests of the host that depend on a **process env var** (e.g. proving the bridge) must set the real env var *before* constructing the `WebApplicationFactory` (its `ConfigureAppConfiguration` layers too late for top-level `CreateBuilder`-time code) and unset it in a `finally`. Serialize such tests (own xUnit collection / disable parallelization) so they can't race other env-reading test classes (e.g. B.9 config-presence).
 
 **Rule:** Map flat operator env vars → Options sections in one `Program.cs` bridge (set only present keys so inline defaults stand; a shared key may fan out); wire HTTP JSON through the single `JsonDefaults.Apply`; host tests touching process env vars set-before-factory + finally-unset + run serialized.
+
+---
+
+## <a id="5"></a>5. Error-mapper boundary pattern — one owner; SafeMessage never echoes the exception
+
+**Date:** 2026-05-28.
+**Source slice:** B.1 (provider interfaces).
+
+The exception→`ProviderError` mapping table (ARCH-012) lives in exactly one place — `Providers/Abstractions/ProviderErrorMapper.cs` — so the boundary error semantics (code, retryability, HTTP status) are defined once and every real provider (C) + the cascade orchestrator (B.4) routes through it. Two safety properties make it a clean boundary (ARCH-018/019):
+
+- **`SafeMessage` is a fixed generic string per code; the mapper NEVER reads `ex.Message` / `ex.StackTrace` / `ex.Data` / `ex.ToString()`.** It inspects only the exception *type* and the numeric `HttpRequestException.StatusCode`. So no provider secret or stack frame can leak through the mapped error regardless of what the SDK throws. (The *full* sanitizer + server-side log of the original is B.8's `ErrorSanitizer`; the mapper is the first safe-by-construction layer.)
+- **Don't throw inside the error-mapper.** The `stage` token is a closed set (`stt`/`translation`/`tts`/`cascade`) supplied as a compile-time literal by callers — enforce it with a caller-contract comment, not a runtime guard. A guard that throws inside the very code that exists to turn failures into safe errors would defeat the purpose.
+
+Non-exception outcomes the orchestrator raises directly get explicit factories (`EmptyTranscript` → `cascade.empty_transcript` with `Stage="cascade"`, the cascade short-circuit; `Timeout` → `<stage>.timeout`), rather than synthesising a fake exception to feed `Map`.
+
+**Rule:** Keep the exception→`ProviderError` table in one mapper; `SafeMessage` is fixed-per-code and never echoes the exception text/stack; validate the closed `stage` set by caller-contract (no throw inside the mapper); raise non-exception outcomes via explicit factories.
