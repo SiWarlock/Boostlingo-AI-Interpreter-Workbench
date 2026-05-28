@@ -15,11 +15,11 @@
 
 ## Currently in progress
 
-**B.1 — Provider interfaces + event types** (backend; `ISttProvider`/`ITranslationProvider`/`ITtsProvider` + event hierarchies + request records + `AudioFrame` + `ProviderError` mapping helpers, per ARCH-012). Brief: `docs/briefs/006-B.1-provider-interfaces.md`.
+**B.2 — Fake providers** (backend; `Fake{Stt,Translation,Tts}Provider` — variants + configurable per-event delay + `CancellationToken`, per ARCH-012; test doubles in `Providers/Fakes/`). Brief: `docs/briefs/007-B.2-fake-providers.md`.
 
-**Last landed:** **Phase A COMPLETE** (A.1–A.5; through `a4ebe71`; 17 commits, 28 tests, runnable host on 5179). **Commit cadence:** commit-as-we-go on `main` per logical unit (push deferred to `/orchestrate-end`; no remote).
+**Last landed:** `B.1` provider interfaces + `ProviderErrorMapper` (code `e65e13e` + docs `f4efd9a`); **Phase A COMPLETE** (A.1–A.5). **Commit cadence:** commit-as-we-go on `main` per logical unit (push deferred to `/orchestrate-end`; no remote).
 
-**Next after B.1:** B.2 (fake providers) → B.3 (metrics) → … → B.10 (provider boundary tests). Phase B = backend core seams + tests against **fake** providers (no real keys).
+**Next after B.2:** B.3 (metrics) → B.4 (cascade orchestrator) → B.5 (cost) → … → B.10 (provider boundary tests). Phase B = backend seams + tests against **fake** providers (no real keys).
 
 ---
 
