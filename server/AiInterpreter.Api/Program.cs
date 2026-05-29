@@ -5,6 +5,7 @@ using AiInterpreter.Api.Metrics;
 using AiInterpreter.Api.Providers.Deepgram;
 using AiInterpreter.Api.Providers.OpenAI;
 using AiInterpreter.Api.Realtime;
+using AiInterpreter.Api.Sessions;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -48,6 +49,15 @@ builder.Services.AddSingleton(new EvaluationPhraseStore(phrasesPath));
 builder.Services.AddSingleton<IClock, SystemClock>();
 builder.Services.AddSingleton<LatencyEventFactory>();
 builder.Services.AddSingleton<MetricsAggregator>();
+
+// Sessions (B.7a) — in-memory store (server-side id source) + persistence writer (write JSON under
+// SESSION_DATA_DIR; two-layer path-traversal guard; never persists secrets/raw audio — ARCH-016/019).
+// SESSION_DATA_DIR is a directly-read flat path (like PRICING_CONFIG_PATH / EVALUATION_PHRASES_PATH),
+// not a section-bound Option. Entry-point consumers are B.9 (SessionsController) + C.4 (WS turn
+// persist) + B.7b (summary) — available-in-DI now, not a silent gap.
+builder.Services.AddSingleton<SessionStore>();
+var sessionDataDir = builder.Configuration["SESSION_DATA_DIR"] ?? "../../data/sessions";
+builder.Services.AddSingleton(new SessionPersistenceWriter(sessionDataDir));
 
 // Shared JSON contract (A.3) on the HTTP pipeline — camelCase + enum-as-string + explicit null,
 // the same contract persistence uses, so API and persisted JSON cannot diverge.
