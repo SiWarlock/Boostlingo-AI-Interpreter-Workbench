@@ -17,11 +17,21 @@ public interface ISessionService
     InterpretationSession? Get(string sessionId);
     Task<EndSessionOutcome?> EndAsync(string sessionId, CancellationToken cancellationToken = default);
     SessionSummary? Summary(string sessionId);
+
+    // Turn lifecycle (B.9c-ii). Null returns: CreateTurn → session unknown; AppendEvents/CompleteTurnAsync
+    // → turn unknown (the controller checks session existence first for the right 404 code).
+    string? CreateTurn(string sessionId);
+    InterpretationTurn? AppendEvents(string sessionId, string turnId, IReadOnlyList<LatencyEvent> events);
+    Task<CompleteTurnOutcome?> CompleteTurnAsync(
+        string sessionId, string turnId, CompleteTurnRequest request, CancellationToken cancellationToken = default);
 }
 
 /// <summary>The in-memory result of ending a session: the ended session + the MUST-write outcome
 /// (the controller maps the <see cref="Persist"/> result to a path or a safe persistence warning).</summary>
 public sealed record EndSessionOutcome(InterpretationSession Session, Result<string> Persist);
+
+/// <summary>The in-memory result of completing a turn: the completed turn + the best-effort-write outcome.</summary>
+public sealed record CompleteTurnOutcome(InterpretationTurn Turn, Result<string> Persist);
 
 /// <inheritdoc cref="ISessionService"/>
 public sealed class SessionService : ISessionService
@@ -29,6 +39,7 @@ public sealed class SessionService : ISessionService
     private readonly SessionStore _store;
     private readonly SessionSummaryService _summaryService;
     private readonly SessionPersistenceWriter _writer;
+    private readonly IClock _clock;
     private readonly DeepgramOptions _deepgram;
     private readonly OpenAiTtsOptions _tts;
     private readonly Result<PricingOptions> _pricing;
@@ -37,6 +48,7 @@ public sealed class SessionService : ISessionService
         SessionStore store,
         SessionSummaryService summaryService,
         SessionPersistenceWriter writer,
+        IClock clock,
         IOptions<DeepgramOptions> deepgram,
         IOptions<OpenAiTtsOptions> tts,
         Result<PricingOptions> pricing)
@@ -44,6 +56,7 @@ public sealed class SessionService : ISessionService
         _store = store;
         _summaryService = summaryService;
         _writer = writer;
+        _clock = clock;
         _deepgram = deepgram.Value;
         _tts = tts.Value;
         _pricing = pricing;
@@ -95,6 +108,38 @@ public sealed class SessionService : ISessionService
     {
         var session = _store.Get(sessionId);
         return session is null ? null : _summaryService.Compute(session);
+    }
+
+    public string? CreateTurn(string sessionId) => _store.CreateTurn(sessionId)?.TurnId;
+
+    public InterpretationTurn? AppendEvents(string sessionId, string turnId, IReadOnlyList<LatencyEvent> events) =>
+        _store.UpdateTurn(sessionId, turnId, turn => turn with
+        {
+            LatencyEvents = [.. turn.LatencyEvents, .. events],
+        });
+
+    public async Task<CompleteTurnOutcome?> CompleteTurnAsync(
+        string sessionId, string turnId, CompleteTurnRequest request, CancellationToken cancellationToken = default)
+    {
+        var completed = _store.UpdateTurn(sessionId, turnId, turn => turn with
+        {
+            AudioDurationMs = request.AudioDurationMs ?? turn.AudioDurationMs,
+            Transcripts = request.Transcripts ?? turn.Transcripts,
+            // /complete always produces a TERMINAL turn: honor a client-reported Failed, otherwise
+            // Completed. A non-terminal client value (Ready/Recording/…) can't drag the turn backwards.
+            Status = request.Status == TurnStatus.Failed ? TurnStatus.Failed : TurnStatus.Completed,
+            CompletedAt = _clock.UtcNow,
+        });
+        if (completed is null)
+        {
+            return null; // turn unknown (the controller already confirmed the session exists)
+        }
+
+        // Per-turn persistence is BEST-EFFORT (ARCH-016, vs /end's MUST): write the whole session file
+        // and report success/failure; never crash the turn flow. Get is non-null here — UpdateTurn just
+        // resolved this session entry and the store has no eviction path.
+        var persist = await _writer.WriteAsync(_store.Get(sessionId)!, cancellationToken);
+        return new CompleteTurnOutcome(completed, persist);
     }
 
     private string PricingVersion() =>

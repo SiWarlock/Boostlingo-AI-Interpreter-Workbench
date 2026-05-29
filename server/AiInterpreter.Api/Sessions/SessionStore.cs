@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using AiInterpreter.Api.Common;
+using AiInterpreter.Api.Providers.Abstractions;
 
 namespace AiInterpreter.Api.Sessions;
 
@@ -77,6 +78,59 @@ public sealed class SessionStore
         return true;
     }
 
+    /// <summary>
+    /// Creates an empty turn with a backend-generated id (the store is the id source, like
+    /// <c>sessionId</c>), inheriting the session's current mode + direction (Flow G transitions are
+    /// recorded separately), <c>StartedAt</c> from the clock, <c>Status=Ready</c>; appends + returns it.
+    /// Null if the session is unknown.
+    /// </summary>
+    public InterpretationTurn? CreateTurn(string sessionId)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var entry)) return null;
+        lock (entry.Gate)
+        {
+            var config = entry.Session.Config;
+            var turn = new InterpretationTurn(
+                TurnId: GenerateTurnId(),
+                Mode: config.CurrentMode,
+                Direction: config.Direction,
+                StartedAt: _clock.UtcNow,
+                CompletedAt: null,
+                AudioDurationMs: 0, // 0 = not yet known; /complete overwrites it
+
+                Transcripts: new List<TranscriptSegment>(),
+                LatencyEvents: new List<LatencyEvent>(),
+                CostEstimate: null,
+                WerResult: null,
+                Errors: new List<ProviderError>(),
+                Status: TurnStatus.Ready,
+                TranslationModelUsed: null,
+                TtsVoiceUsed: null);
+            entry.Session.Turns.Add(turn);
+            return turn;
+        }
+    }
+
+    /// <summary>
+    /// Atomic read-modify-write of a turn (matched by <c>turnId</c>) under the gate: applies
+    /// <paramref name="transform"/> and stores the result. Returns the updated turn, or null if the
+    /// session or turn is unknown. (Used by B.9c-ii append-events / complete.)
+    /// </summary>
+    public InterpretationTurn? UpdateTurn(
+        string sessionId, string turnId, Func<InterpretationTurn, InterpretationTurn> transform)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var entry)) return null;
+        lock (entry.Gate)
+        {
+            var turns = entry.Session.Turns;
+            var idx = turns.FindIndex(t => t.TurnId == turnId);
+            if (idx < 0) return null;
+            var updated = transform(turns[idx]);
+            turns[idx] = updated;
+            return updated;
+        }
+    }
+
     /// <summary>Records a mode transition. Returns false (no throw) if the session id is unknown.</summary>
     public bool RecordModeTransition(string sessionId, ModeTransitionEvent transition)
     {
@@ -111,4 +165,8 @@ public sealed class SessionStore
     // session_<short-id>: the short-id is a lowercase-hex GUID segment, so the full id matches the
     // path-traversal allowlist ^[A-Za-z0-9_-]+$ (ARCH-016 / ARCH-019).
     private static string GenerateSessionId() => "session_" + Guid.NewGuid().ToString("N")[..8];
+
+    // turn_<short-id>: backend-owned (ARCH-009); a GUID segment avoids a per-session counter. The
+    // illustrative ARCH-009 "turn_001" is not a contract.
+    private static string GenerateTurnId() => "turn_" + Guid.NewGuid().ToString("N")[..8];
 }

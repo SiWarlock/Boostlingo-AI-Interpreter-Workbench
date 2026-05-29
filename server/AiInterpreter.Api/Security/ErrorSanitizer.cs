@@ -124,6 +124,7 @@ public sealed class ErrorSanitizer
     {
         "persistence.failed" => "Saving the session failed; the session continues.",
         "session.not_found" => "Session not found.",
+        "turn.not_found" => "Turn not found.",
         _ => GenericMessage,
     };
 }
