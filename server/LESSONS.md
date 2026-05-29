@@ -178,3 +178,116 @@ The DP edit-distance keeps a **backtrace** to attribute S/I/D individually (the 
 The phrase store self-loads once on construction via the lesson-§3 degrade pattern (missing / oversized / malformed → empty store + `LoadError`, never a host crash), exposing a clean DI facade (`Phrases`/`IsLoaded`/`LoadError`/`GetById`/`GetByLanguage`) over an internal `Result`-returning loader. Two security follow-ups for the F.1 boundary: the `n×m` DP matrix needs a hypothesis-length cap once a request body feeds it (memory-DoS), and `LoadError` carries path/`ex.Message` fragments so a controller must never surface it raw (same family as a `Result.Error`).
 
 **Rule:** WER normalization = invariant-lowercase → strip `\p{P}` → collapse whitespace, accents preserved, punctuation removed (not spaced); DP backtrace attributes S/I/D with a documented tie-break (match>sub>del>ins); WER is unbounded (never clamp `>1.0`); empty reference is a precondition (`ArgumentException`, never divide-by-zero); the phrase store degrades via lesson §3 behind a DI facade; cap hypothesis length + never surface `LoadError` at the F.1 boundary.
+
+---
+
+## <a id="11"></a>11. Persistence safety — sentinel-scan, two-layer path guard, degrade-don't-crash
+
+**Date:** 2026-05-28.
+**Source slice:** B.7a (session store + persistence writer + sentinel).
+
+The persistence writer is the point where an `InterpretationSession` becomes a file, so it carries the three never-persist safety invariants (root `CLAUDE.md` Key safety rules #1 standard keys / #2 ephemeral `ek_` secret / #3 raw audio) and the path-traversal guard (#5). Three patterns make those defensible and drift-proof:
+
+- **Sentinel-scan, not just structural.** The never-persist guarantee structurally holds because the session model has **no field** for a key, the ephemeral secret, or audio bytes (it references neither `TtsAudioChunk.Bytes` nor `CascadeOutputEvent.Audio.Bytes`). A purely structural assertion is too passive — it can't catch a *future* field that leaks one. So the sentinel test injects sentinel patterns (`sk-…`, `ek_…`) into adjacent runtime state and scans the **serialized JSON text** for `sk-`/`ek_`/`bytes`/`apikey`/`clientsecret`, asserting all absent **and** that legitimate content (a transcript word, `stt.final`) is present (so it can't trivially pass by serializing nothing). The active scan is the drift defense. Tighten audio assertions to **key-form** (`"audio":`) so they can't alias an unrelated value like the `audioMinutes` cost unit. The writer is **not** a runtime sanitization boundary — it serializes the normalized model verbatim; scrubbing free-text content (a secret mistakenly placed in a `Metadata` value) is B.8's job, and the upstream invariant is that secrets/audio never enter the model at all.
+- **Two-layer path-traversal guard; the trailing separator is load-bearing.** Layer 1: reject any `sessionId` not matching `^[A-Za-z0-9_-]+$` (ASCII allowlist via `char.IsAsciiLetterOrDigit`, before touching the filesystem — rejects dots, slashes, backslashes, unicode, percent-encoding, empty, whitespace). Layer 2 (defense-in-depth): canonicalize the resolved path with `Path.GetFullPath` and assert it `StartsWith` the **separator-terminated** `SESSION_DATA_DIR` full path. The trailing separator matters: without it, `…/data/sessions-evil` passes a `…/data/sessions` prefix test; with it, only paths genuinely under the root directory pass.
+- **Degrade-don't-crash (lesson §3 family).** Persistence IO failure (unwritable dir, IO error) returns `Result.Failure("persistence.failed: …")`, never an unhandled throw — a failed save must not crash a turn or the stream. Per-turn writes are best-effort; the write-on-end is the MUST that surfaces success/failure (Flow F). `Result.Error` embeds `ex.Message` (which can contain an absolute path), so it is `[JsonIgnore]` and downstream HTTP/WS callers (B.9/C.4) must never echo it into a response body — pairs with the B.8 sanitizer.
+
+Filename realization: `session_<StartedAt UTC yyyyMMddTHHmmssZ>_<short-id>.json`, timestamp from the session's `StartedAt` (stamped once at create, not write-time) so the per-turn + on-end writes **overwrite one stable file per session** rather than spraying N files.
+
+**Rule:** Persistence safety = an active sentinel-scan (inject `sk-`/`ek_` patterns, assert absent from serialized JSON + legitimate content present, audio asserted key-form) backing the structural no-secret/no-audio-field guarantee; a two-layer path guard (ASCII allowlist pre-FS + canonicalized **separator-terminated** `StartsWith` under root); IO degrades via `persistence.failed`/`Result`, never crashes a turn; the writer serializes the model verbatim (not a sanitization boundary — that's B.8); one stable file per session via a `StartedAt`-derived filename.
+
+---
+
+## <a id="12"></a>12. Summary aggregation — reuse the per-turn seam, propagate null-semantics up, test purity by source-integrity
+
+**Date:** 2026-05-28.
+**Source slice:** B.7b (SessionSummaryService).
+
+`SessionSummaryService` aggregates per-turn data into a session `SessionSummary` by **reusing the B.3 `MetricsAggregator` per turn** — it never re-implements latency math. Composing the existing seam (rather than duplicating the absolute-`Timestamp` logic) keeps one source of truth: a fix in the aggregator flows into the summary for free, with no second copy to drift. The same applies to cost — turns already carry `CostEstimate.EstimatedUsdPerMinute`, so the summary averages those (no `CostEstimator` dependency).
+
+The per-turn → per-mode aggregation **propagates the null-semantics up the tier**: a metric averages over **non-null** values only, and is `null` (n/a) when absent on every turn — never `0`, never a throw (carried up from `TurnMetrics`/lesson §7). A whole `ModeSummary` is `null` iff its mode has zero turns (an empty mode is absent, not zero-filled); cascade-stage averages are `null` for realtime turns. WER averaging stays **unbounded** — a `>1.0` sample is included as-is (lesson §10); pin it with a fixture whose mean differs under a clamp (`[0.5, 1.5] → 1.0`, not `0.75`) so the no-clamp rule is load-bearing in the assertion. Cost/min is the **average of the mode's non-null per-turn per-minute rates** (a labeled estimate-of-estimates), not a blended `sum/sum` — the alternative mixes models within a mode; the model-variant breakdown is a consumer (F.3) concern from the raw turn list, not the mode-level summary.
+
+A **pure compute function must be tested for source-integrity, not just output-correctness.** A "does not mutate" test that only asserts the computed field is still null can pass **trivially** (the field was null at construction). Strengthen it to assert the inputs are unchanged (turn-list count preserved) **and** that the computation actually ran (a populated result) — otherwise the purity guarantee isn't really pinned.
+
+**Rule:** Aggregation/summary services compose the existing per-element seam (reuse `MetricsAggregator` / read each turn's `CostEstimate`; never re-implement the math); propagate "average non-null, absent→null, never 0/throw" up the aggregation tier (a sub-summary is null iff its group is empty); keep WER unbounded in aggregates and pin no-clamp with a clamp-sensitive fixture; a pure-compute test asserts source-integrity (inputs unchanged + the computation ran), not just absence of the field write.
+
+---
+
+## <a id="13"></a>13. Error sanitization — safe-by-construction, log original server-side single-lined, project-don't-duplicate
+
+**Date:** 2026-05-28.
+**Source slice:** B.8 (ErrorSanitizer + UiError).
+
+`ErrorSanitizer` is the single boundary that turns any internal error (`Exception`, `ProviderError`, failed `Result`) into a client-facing `UiError` (safety invariant #4 — no stack/secret/raw-payload reaches a client; ARCH-018/019). The robust design is **safe-by-construction, not scrub**: the safe message is ALWAYS a **fixed string per code** (`SafeMessageForCode` — a small map + a generic fallback), and the sanitizer **never interpolates** untrusted input (`ex.Message` / `Result.Error` / stack / provider payload) into the output. Active regex-scrubbing of the original is brittle and fails open; constructing the output purely from fixed strings fails closed. The test proves it by injecting a sentinel secret (`sk-…` / `ek_…` / a filesystem path) into the input and asserting it's absent from **every serialized field** of the `UiError` (serialize + scan the JSON, not just `SafeMessage`).
+
+Three supporting rules:
+
+- **Log the original server-side — single-lined.** The full original (message + stack / `Result.Error`) is logged via the injected `ILogger` at the sanitize point so diagnosis stays possible; the client gets only the safe `UiError`. **Single-line the logged string first** (`ReplaceLineEndings(" ")`) — a multi-line internal error (or attacker-influenced text) could otherwise forge fake log lines (log injection).
+- **Project, don't duplicate.** An already-safe `ProviderError` (built by `ProviderErrorMapper`, lesson §5) is **projected** to `UiError` (carry code/safeMessage/stage/retryable; **drop** the `Provider` identity); the sanitizer owns only the generic `Exception` + `Result` boundary and does **not** re-implement the ARCH-012 HTTP-status table. One owner per table.
+- **Status off the wire body.** The TS `UiError` (ARCH-007) has no status field — HTTP status is the response status line. The backend record carries a server-only `[JsonIgnore] int? HttpStatusCode` (null → 500 at the handler) so the body stays an exact TS mirror while the status is preserved for B.9's handler. Caller contract: the `code` on the `Result` path is a normalized literal, never request-derived (it becomes `UiError.Code`).
+
+**Rule:** Error sanitization is safe-by-construction (fixed safe message per code; NEVER interpolate `ex.Message`/`Result.Error`/stack/payload into a client-facing error; prove via inject-secret-assert-absent across all serialized fields); log the original server-side only, single-lined to prevent log forgery; project an already-safe `ProviderError`→`UiError` (drop provider identity) and reuse `ProviderErrorMapper` rather than duplicating its table; preserve HTTP status via a server-only `[JsonIgnore]` field so the wire body stays an exact TS mirror.
+
+---
+
+## <a id="14"></a>14. Global exception handler — thin `IExceptionHandler`, `AddProblemDetails` gotcha, emit `UiError` not `ProblemDetails`
+
+**Date:** 2026-05-28.
+**Source slice:** B.9a (global exception handler).
+
+The unhandled-exception path is the *other half* of safety invariant #4 (lesson §13 is the sanitizer; this is its HTTP-boundary application). A `GlobalExceptionHandler : IExceptionHandler` (the .NET 8 idiom — DI-injectable, unit-testable) catches anything that escapes an endpoint, routes it through the **one** `ErrorSanitizer` (never re-sanitizes / re-logs — the sanitizer already logged the original single-lined), and writes a safe `UiError` JSON body with status `UiError.HttpStatusCode ?? 500`. Without it, an unhandled exception falls through to a framework error page — a **stack trace in Development** — straight to the client.
+
+Wiring + gotchas (all non-obvious, all worth banking):
+
+- **`AddProblemDetails()` is required** for the parameterless `app.UseExceptionHandler()` to initialize — without it the host **throws at startup**. Our handler always writes a `UiError` and returns `true`, so the ProblemDetails fallback writer is never reached — but the registration is mandatory.
+- **Side effect of `AddProblemDetails()`:** framework-level routing errors (**404 not-found / 405 method-not-allowed**) now emit `application/problem+json`, **not** `UiError`. Acceptable for unrouted paths the SPA never calls (a 404/405 is a bug or a probe, not a normal SPA path); add `UseStatusCodePages`→`UiError` only if a real consumer needs the uniform contract. No leak (ProblemDetails carries no stack/secret).
+- **Emit `UiError`, never `ProblemDetails`** for the handled path (ARCH-009 — the frontend `ErrorBanner` consumes `UiError`). Serialize with the **explicit** `JsonDefaults.Options` (don't rely on ambient pipeline options inside the handler).
+- **Place `app.UseExceptionHandler()` first** (right after `Build()`, before Swagger/WebSockets/CORS/endpoints) so it wraps the whole pipeline.
+- **Test by unit-testing the handler class** (`DefaultHttpContext` + a `MemoryStream` body) — strong, no production test-route. A throwing-route integration test is fiddly in minimal-hosting (IStartupFilter ordering vs the endpoints); prove the end-to-end wire instead by **overriding a registered service with a throwing fake** (`ConfigureTestServices`) and hitting a real endpoint once one exists.
+
+**Rule:** The global exception handler is a thin `IExceptionHandler` that routes unhandled exceptions through the one `ErrorSanitizer` → `UiError` (never `ProblemDetails`, never re-sanitize/re-log), placed first in the pipeline; `AddProblemDetails()` is mandatory for parameterless `UseExceptionHandler()` startup-init and as a side effect makes framework 404/405 emit ProblemDetails (accept for unrouted paths); unit-test via `DefaultHttpContext`, prove the end-to-end wire via a throwing-service override at a real endpoint (not an artificial route).
+
+---
+
+## <a id="15"></a>15. Controller conventions — thin controller + interface test seam, MVC JSON options, capability-from-key-presence
+
+**Date:** 2026-05-28.
+**Source slice:** B.9b (ConfigController + ConfigService).
+
+The first MVC controller establishes the conventions every later controller (B.9c sessions, F.1 evaluation) inherits:
+
+- **MVC JSON options are SEPARATE from the minimal-API ones.** A.5 set the minimal-API contract via `builder.Services.ConfigureHttpJsonOptions(...)`, but MVC controllers serialize through `Microsoft.AspNetCore.Mvc.JsonOptions` — a **different** options object. Carry the shared contract onto the MVC path explicitly: `builder.Services.AddControllers().AddJsonOptions(o => JsonDefaults.Apply(o.JsonSerializerOptions))`. Without it the controller path silently drops the enum-as-camelCase-string + explicit-null contract — invisible for string/bool DTOs (`ConfigResponse`) but wrong for enum-bearing DTOs (`InterpretationMode`/`TurnStatus`/`SessionStatus`). Minimal-API endpoints (health) keep the `ConfigureHttpJsonOptions` contract; both coexist.
+- **Thin controller → service (ARCH-008); the controller's collaborator gets a thin interface as the test seam.** The codebase's services are otherwise concrete (no interfaces), but the controller→service edge is the one place an interface earns its keep: it's the idiomatic MVC testability boundary and the only clean way to substitute a *throwing* collaborator to prove the global exception handler catches on the real path (`ConfigureTestServices` swaps `IConfigService` for a throwing fake → real endpoint → sanitized `UiError`). Prefer the interface over un-sealing + a `virtual`-for-test method (a recognized smell). Model-binding errors yield 400 ProblemDetails, not an unhandled exception, so this substitutable seam is the *only* way to exercise `UseExceptionHandler`.
+- **Capability/config endpoints report from key PRESENCE, never the value.** `configured = !string.IsNullOrWhiteSpace(ApiKey)` (invariant #1, ARCH-019); the response carries booleans + operator-config identifiers (model names, provider strings) but never a key value. Pin it with a **no-secret-echo sentinel scan**: set sentinel key values in config, assert the serialized body contains neither (and that legitimate content IS present, non-trivial). Defensive-copy any shared static catalogs into each response (`[.. Catalog]`) so a `string[]` surface can't alias a mutable static.
+
+**Rule:** Controllers are thin and delegate to a service; the controller's collaborator gets a thin interface as the test seam (substitutable throwing fake proves `UseExceptionHandler`, cleaner than `virtual`-for-test); `AddControllers().AddJsonOptions(JsonDefaults.Apply)` carries the shared JSON contract onto the MVC path (separate from the minimal-API `ConfigureHttpJsonOptions` — load-bearing for enum DTOs); capability/config endpoints report from key presence (`!IsNullOrWhiteSpace`) never the value, pinned by a no-secret-echo sentinel scan, with static catalogs defensive-copied per response.
+
+---
+
+## <a id="16"></a>16. Controller request/response boundary — `Result`→DTO never-serialize, record-param validation gotcha, no path disclosure
+
+**Date:** 2026-05-28.
+**Source slice:** B.9c-i (session-lifecycle endpoints).
+
+The controller↔HTTP boundary is where internal types become wire DTOs; three conventions keep it safe + correct:
+
+- **`Result`/`Result<T>` → DTO at the boundary; NEVER serialize a `Result`.** Map success → `Ok(dto)` (or the success response shape) and failure → a sanitized `UiError` via `ErrorSanitizer.SanitizeResult`/`SanitizeResult<T>` (logs the original server-side, single-lined). An internal outcome wrapper that carries a `Result` (e.g. `EndSessionOutcome(session, Result<string> persist)`) stays **internal** — the controller projects it to a serializable DTO. For an **expected** condition (a not-found, not an exception or a `Result`), use `ErrorSanitizer.ForCode(code)` — it builds a `UiError` from the owned `SafeMessageForCode` map with **no Error log** (a 404 isn't an error to log), keeping the sanitizer the single owner of safe messages. A controller-returned 404 (routed path, missing resource) is a `UiError`; the framework 404/405 for *unrouted* paths stays ProblemDetails (lesson §14).
+- **DataAnnotations on a record positional parameter target the PARAMETER, not the property.** `public sealed record CreateSessionRequest([Required, MaxLength(200)] string RealtimeModel, …)` — NOT `[property: Required, MaxLength(200)]`. MVC's validation metadata provider throws `InvalidOperationException` ("validation metadata must be associated with the constructor parameter") on the property-target form. Caught only by a full-suite run that actually boots MVC model binding.
+- **Boundary input caps + no response path disclosure (ARCH-019).** Request DTO strings get `[MaxLength]`/`[Required]` caps (an unbounded model/label string is a DoS / unbounded-disk-write vector once it reaches the store + persistence — even in a no-auth workbench, boundary hygiene). A response that echoes a server path discloses it: return **filename-only** (`Path.GetFileName`), never the absolute path / data-dir / username (the user already knows `SESSION_DATA_DIR` from config).
+
+**Rule:** Map `Result`/`Result<T>`→DTO at the controller boundary and never serialize a `Result` (success→`Ok(dto)`; failure→sanitized `UiError`; expected conditions→`ErrorSanitizer.ForCode`, no log; internal outcome wrappers stay internal); put DataAnnotations on record **parameters** not properties (MVC throws otherwise); cap request strings with `[MaxLength]`/`[Required]` (ARCH-019 boundary hygiene) and return filename-only paths (no absolute-path/data-dir disclosure).
+
+---
+
+## <a id="17"></a>17. Provider-boundary contract suite — interface-level + provider-agnostic, error-code preservation is the contract
+
+**Date:** 2026-05-29.
+**Source slice:** B.10 (provider boundary tests).
+
+The ARCH-020 CRITICAL `ProviderBoundaryTests` is a **contract-conformance suite**, distinct from the lower layers it sits above: B.1 `ProviderErrorMappingTests` pins the exception→`ProviderError` mapper *truth table* in isolation; B.2 `FakeProvidersTests` pins each *fake's* per-variant behavior; B.4 pins the *orchestrator's use* of the boundary. The boundary suite pins the contract that **any** provider — fake now, real in C.5 — must honor, so it's written **at the interface level** (`ISttProvider x = new FakeSttProvider(...)`, not the concrete fake) and C.5 extends the same file by swapping in real providers + reusing the assertions/helpers (a local `Collect<T>` + request builders, co-located for that reuse).
+
+The genuinely net-new assertion is **error-code preservation**: a `*Failed` event carries the **real ARCH-012 `ProviderError`** it was scripted with — `Code`, `Retryable`, `Stage`, **and `Provider`** survive the boundary unchanged (B.2 only checked the code is non-empty). Script it from an actual `ProviderErrorMapper.Map(...)` output across stages incl. a non-retryable case (403→`*.auth`, `Retryable=false`) so `false` is proven preserved, not just `true`. Don't re-derive B.1's truth table or re-run B.2's per-fake ordering verbatim; cancellation is B.2's (per-stage mid-stream + pre-cancelled) — the materially-different real-provider HTTP-stream cancellation belongs in C.5, not a near-verbatim re-run here.
+
+Make the success contract **tolerant of conformant variants** so it survives real-provider reuse: assert "`FirstAudio` present; **if** chunks follow, it precedes them" — NOT a hard `FirstAudio < firstChunk` (a real TTS provider may emit `FirstAudio→Complete` with no chunks; the `CompleteOnly` fake variant proves that shape exists). A contract test that rejects a conformant shape is worse than no test.
+
+**Rule:** A provider-boundary contract suite is written at the **interface level** (provider-agnostic) so the same assertions run against fakes (B) + real providers (C.5 extends the file); its net-new pin is **error-code preservation** (a `*Failed` carries the real `ProviderError` `Code`/`Retryable`/`Stage`/`Provider` unchanged — incl. a non-retryable case), NOT a re-test of the mapper truth table (B.1) / per-fake behavior (B.2) / cancellation (B.2); keep success assertions tolerant of conformant variants (no-chunk TTS success) so they survive real-provider reuse.

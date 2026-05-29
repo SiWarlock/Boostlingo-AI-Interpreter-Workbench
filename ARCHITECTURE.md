@@ -542,6 +542,8 @@ In-memory active session + JSON persistence; **no database**. Write strategy:
 
 `SessionSummary` is **computed on demand** (callable mid-session via `GET …/summary`); a cached snapshot is written on `/end` (and may be re-snapshotted per turn). `ComputedAt` disambiguates staleness.
 
+> **(B.7b realization)** `SessionSummaryService.Compute` is **pure** — it returns a `SessionSummary` and never writes `session.Summary`; the `/end` cached-snapshot write is the persistence step's job (B.9). It reuses the per-turn `MetricsAggregator` (no re-implemented metric math) and averages each metric over its **non-null** turns (absent-on-all → `null`, never `0`); a `ModeSummary` is `null` iff its mode has no turns; the cascade-stage averages are `null` for realtime turns; WER averaging is **unbounded** (no clamp `>1.0`). `EstimatedCostPerMinuteUsd` is the **average of the mode's non-null per-turn `EstimatedUsdPerMinute`** (a labeled estimate-of-estimates, not a blended `sum/sum`). The summary is **mode-level only** — the model-variant comparison (both translation models / both realtime models) is the `ComparisonSummary` (F.3) consumer's client-side grouping from the raw turn list (`TranslationModelUsed` + `ProviderProfile`), read via `GET /api/sessions/{id}`, not a `/summary` field.
+
 ---
 
 <a id="arch-006"></a>
@@ -637,6 +639,8 @@ Response:
 **`POST /api/sessions/{sessionId}/end`** — finalize summary + persist final JSON.
 **`GET /api/sessions/{sessionId}/summary`** — recompute `SessionSummary` on demand (callable mid-session). Returns `SessionSummary` (camelCase; `realtime`/`cascade` are `ModeSummary`).
 
+> **(B.9c-i realization)** `POST /api/sessions` and `GET /{id}` return the **full `InterpretationSession`** (the create example above is an abbreviation — those fields are a subset). `POST /{id}/end` returns `EndSessionResponse { session, persistedPath (filename-only — no absolute path/data-dir disclosure), persistenceWarning? }` at **200**: on a write failure the in-memory end still happened and `persistenceWarning` carries a `persistence.failed` `UiError` (ARCH-018 "continue session / save warning" — never a 500). An unknown id on any of these routed paths → **404 + a sanitized `session.not_found` `UiError`** (built via `ErrorSanitizer.ForCode` — an expected condition, not logged at Error); this is distinct from the framework 404/405 for *unrouted* paths (ProblemDetails, per the B.9a decision). The controller is thin → `SessionService` (ARCH-008); `Result`/`Result<T>` are mapped to DTOs at the boundary and **never serialized**.
+
 ### Turn lifecycle (all modes)
 
 The **backend owns `turnId`** for every mode. A Realtime "turn" is an app-layer construct with no OpenAI counterpart.
@@ -648,6 +652,8 @@ The **backend owns `turnId`** for every mode. A Realtime "turn" is an app-layer 
 { "events": [ { "name": "realtime.first_audio_delta", "stage": "realtime",
   "timestamp": "2026-05-28T15:30:05.123Z", "relativeMs": 842, "clockSource": "browser", "metadata": {} } ] }
 ```
+
+> **(B.9c-ii realization)** Backend owns `turnId` — `POST …/turns` (no request body) creates an empty turn inheriting the session's current `Mode`/`Direction`, returning `CreateTurnResponse { turnId: "turn_<short-id>" }` (the `turn_001` above is illustrative). `/complete` is the **realtime** finalize path (cascade turns are created via `POST …/turns` but persisted by C.4's WS — never `/complete`): `CompleteTurnRequest { audioDurationMs?, transcripts?[], status? }` (all optional; merged into the turn that already holds `/events` latency) — **cost is backend-owned (`CostEstimator`, ARCH-014; realtime cost is computed from usage in E), WER is F.1's (invariant #5, computed against a known phrase), and translation-model/tts-voice are cascade fields** — none are client-supplied here. `status` is coerced to terminal (`Failed` if reported, else `Completed`). Returns `CompleteTurnResponse { turn, persistenceWarning? }` at 200 (per-turn write is best-effort, ARCH-016 — a failure warns, never 500). Unknown session → `session.not_found`; known session + unknown turn → `turn.not_found` (sanitized 404 `UiError`). Collection caps: `events`/`transcripts` ≤ 500 (DataAnnotations → framework 400). Per-item string caps are deferred (bounded today by Kestrel's 30MB body limit + the count caps).
 
 ### Config / health
 
@@ -1127,6 +1133,8 @@ The EvaluationPanel records a phrase → `POST /api/evaluation/transcribe` (STT-
 
 Local JSON under `data/sessions/`. Filename: `session_YYYYMMDDTHHMMSSZ_<short-id>.json`. The `sessionId`/short-id derives only from a **server-generated id matching `^[A-Za-z0-9_-]+$`**; canonicalize and assert the resolved path stays under `SESSION_DATA_DIR` (path-traversal guard). The optional label is a JSON field only — never in the filename.
 
+> **(B.7a realization)** The filename timestamp is the session's `StartedAt` (stamped once at create), **not** write-time — so the write-on-end + best-effort per-turn writes target **one stable file per session** (overwrite-in-place), rather than spraying a new file per write. The path-traversal guard is **two layers**: an ASCII allowlist check (`^[A-Za-z0-9_-]+$`) before touching the filesystem, **plus** a canonicalized (`Path.GetFullPath`) **separator-terminated** `StartsWith(SESSION_DATA_DIR)` check. The trailing separator is load-bearing — without it a sibling like `…/data/sessions-evil` would pass a `…/data/sessions` prefix test.
+
 ### Persist / never-persist
 
 **Persist:** session id, label, timestamps, provider profile, mode transitions, turns, transcripts, latency events (with `clockSource`), cost estimates, WER results, normalized errors, summary, `sttLanguage`, `ttsVoice`, pricing assumptions, `pricingConfigVersion`.
@@ -1150,6 +1158,8 @@ Local JSON under `data/sessions/`. Filename: `session_YYYYMMDDTHHMMSSZ_<short-id
 ### Write strategy & tiers
 
 **MUST:** write final JSON on session end + best-effort write per completed/failed turn. **TRIM CANDIDATES (ARCH-025):** atomic temp→rename durability; write-after-every-WER. `SessionPersistenceTests` focus on round-trip + secret/raw-audio exclusion (not atomicity).
+
+> **(B.7a) Sentinel scope.** The never-persist guarantee (#1 standard keys / #2 ephemeral `ek_` secret / #3 raw audio) rests on the **session model carrying no field** for any of them. The `SessionPersistenceTests` sentinel actively scans the serialized JSON for those patterns (`sk-`/`ek_`/`bytes`/`apikey`/`clientsecret`) to make the guarantee explicit + **drift-proof** — a future field that leaks one of them fails the test. The writer is deliberately **not** a runtime sanitization boundary: it serializes the normalized model verbatim, and scrubbing free-text content (e.g. a secret mistakenly placed in a `Metadata` value) is the error-sanitizer's job (B.8 / ARCH-019). The upstream invariant is that secrets/audio never enter the model in the first place. Persistence IO failure degrades to `persistence.failed` (`Result.Failure`), never an unhandled crash; `Result.Error` may embed a filesystem path so callers (B.9/C.4) must never echo it into a response body.
 
 ---
 
@@ -1176,7 +1186,7 @@ Local JSON under `data/sessions/`. Filename: `session_YYYYMMDDTHHMMSSZ_<short-id
 
 Errors are **visible, normalized, persisted, and safe**. A failure in one cascade stage never erases prior evidence.
 
-**Normalized error codes** (`<stage>.<reason>`): `config.missing_openai_key`, `config.missing_deepgram_key`, `realtime.token_failed`, `realtime.connection_lost`, `realtime.rate_limited`, `stt.timeout`, `stt.failed`, `stt.rate_limited`, `cascade.empty_transcript`, `cascade.invalid_audio`, `translation.timeout`, `translation.failed`, `translation.rate_limited`, `tts.timeout`, `tts.failed`, `tts.rate_limited`, `playback.failed`, `persistence.failed`, `evaluation.invalid_phrase`. Each has a default `Retryable`.
+**Normalized error codes** (`<stage>.<reason>`): `config.missing_openai_key`, `config.missing_deepgram_key`, `realtime.token_failed`, `realtime.connection_lost`, `realtime.rate_limited`, `stt.timeout`, `stt.failed`, `stt.rate_limited`, `cascade.empty_transcript`, `cascade.invalid_audio`, `translation.timeout`, `translation.failed`, `translation.rate_limited`, `tts.timeout`, `tts.failed`, `tts.rate_limited`, `playback.failed`, `persistence.failed`, `evaluation.invalid_phrase`, `session.not_found`, `turn.not_found`. Each has a default `Retryable`.
 
 | Failure | Backend | UI | Test |
 |---|---|---|---|
@@ -1198,6 +1208,10 @@ Errors are **visible, normalized, persisted, and safe**. A failure in one cascad
 | WER invalid phrase | `evaluation.invalid_phrase` | phrase error | evaluation test |
 
 **Retry policy:** conservative — no auto-retry of expensive model calls; user retries a turn; the **only** path allowed one bounded auto-retry is the Realtime client-secret mint (honor `Retry-After`). Persist retries as separate turns or explicit retry metadata.
+
+> **(B.8) Sanitizer boundary.** `ErrorSanitizer` (a DI singleton) is the single place that turns any `Exception` / `ProviderError` / failed `Result` into a client-facing **`UiError`** (`{ code, safeMessage, stage?, retryable, turnId? }` — the backend record mirroring the ARCH-007 TS shape). It is **safe-by-construction**: a fixed message per code, **never** interpolating `ex.Message` / `Result.Error` / stack into the output, with the original logged server-side only (single-lined to prevent log forgery). HTTP status is preserved via a server-only `[JsonIgnore] HttpStatusCode` and applied at the response level by B.9's handler, so the wire body stays an exact TS mirror. The sanitizer **projects** an already-safe `ProviderError` → `UiError` (reusing `ProviderErrorMapper`, ARCH-012 — not duplicating its table) and owns the generic `Exception` + `Result` boundary. Caller contract: the `code` passed to the `Result` path is a normalized literal (never request-derived — it becomes `UiError.Code`).
+
+> **(B.9a) Global handler.** The unhandled-exception path is caught by a thin global `IExceptionHandler` (`app.UseExceptionHandler()`, placed first so it wraps the whole pipeline) that routes through the same `ErrorSanitizer` → `UiError` — no framework error page / Developer Exception Page ever reaches the client. Parameterless `UseExceptionHandler()` requires `AddProblemDetails()` to initialize (our handler always writes `UiError`, so the ProblemDetails fallback is never reached); a side effect is that framework-level **404/405 routing errors emit `application/problem+json`, not `UiError`** — accepted for unrouted paths the SPA never calls (add `UseStatusCodePages`→`UiError` only if a real consumer needs the uniform contract; no leak either way).
 
 <a id="arch-019"></a>
 
@@ -1319,6 +1333,7 @@ Canonical home for every cross-doc-invariant model. A field change on any row re
 | `SessionSummary` / `ModeSummary` / `WerSummary` | ARCH-005, ARCH-009 | aggregates by mode + WER |
 | `EvaluationPhrase` / `WerResult` | ARCH-005, ARCH-015 | phrase ref; WER S/I/D/N + normalized text |
 | `ProviderError` | ARCH-005, ARCH-012 | provider, stage, code, safeMessage, retryable, httpStatusCode |
+| `UiError` (backend record) | ARCH-007, ARCH-018, ARCH-019 | code, safeMessage, stage?, retryable, turnId? — mirror of the ARCH-007 TS `UiError`; produced by `ErrorSanitizer` (B.8); server-only `[JsonIgnore] HttpStatusCode` is **NOT** part of the wire mirror |
 | `ISttProvider` + `SttEvent`/`SttRequest`/`AudioFrame` | ARCH-012 | streaming STT contract |
 | `ITranslationProvider` + `TranslationEvent`/`TranslationRequest` | ARCH-012 | streaming translation contract |
 | `ITtsProvider` + `TtsEvent`/`TtsRequest` | ARCH-012 | streaming TTS contract |
@@ -1328,7 +1343,7 @@ Canonical home for every cross-doc-invariant model. A field change on any row re
 | `RealtimeOptions` (§`"Realtime"`) | ARCH-012, ARCH-028, ARCH-019 | ApiKey (backend-only), Model, Voice, InstructionsTemplate, ExpirySeconds=600, TokenTimeoutSeconds, TranscriptionModel=gpt-4o-transcribe |
 | `PricingOptions` | ARCH-014, ARCH-028 | Full `pricing.json` shape (A.4); file-loaded via `PRICING_CONFIG_PATH` (not section-bound); `realtime` explicit class (estimatorNote string sibling), `translation`/`tts` model-keyed dicts |
 | `UiSessionState` / `TurnViewModel` / `UiError` (TS) | ARCH-007 | frontend projections |
-| API DTOs: CreateSession, CreateTurn, CompleteTurn, ClientSecret, CascadeStream msgs, Transcribe, Wer, ConfigResponse | ARCH-009 | camelCase serializations of the above |
+| API DTOs: CreateSession, EndSessionResponse, CreateTurn(Response), CompleteTurn(Request/Response), AppendEvents, ClientSecret, CascadeStream msgs, Transcribe, Wer, ConfigResponse | ARCH-009 | camelCase serializations of the above. `CreateSession` (request) → returns the full `InterpretationSession`; `EndSessionResponse` (B.9c-i) = `{ session, persistedPath (filename-only), persistenceWarning? }` at 200; `CreateTurnResponse` = `{ turnId }`; `CompleteTurnRequest` (B.9c-ii, realtime-only) = `{ audioDurationMs?, transcripts?, status? }` (cost/WER/model/voice are NOT client-supplied); `CompleteTurnResponse` = `{ turn, persistenceWarning? }`. |
 
 ---
 
