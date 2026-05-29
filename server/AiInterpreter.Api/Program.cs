@@ -28,6 +28,11 @@ builder.Services.Configure<RealtimeOptions>(builder.Configuration.GetSection(Rea
 var pricingPath = builder.Configuration["PRICING_CONFIG_PATH"] ?? "../../config/pricing.json";
 builder.Services.AddSingleton(PricingLoader.Load(pricingPath));
 
+// Cost estimator (B.5) — first consumer of the pricing singleton; branches on pricing basis and
+// degrades to "estimate unavailable" on missing config. Entry-point consumers are C.4 (WS cost
+// message) + B.7 (summary aggregation) — available-in-DI now, not a silent gap.
+builder.Services.AddSingleton<CostEstimator>();
+
 // Metrics layer (B.3) — injectable clock + the latency factory/aggregator (ARCH-013). The factory
 // is the first IClock consumer; the production consumer of the trio is the B.4 cascade orchestrator
 // (available-in-DI now, entry-point wiring deferred — named, not a silent gap).
