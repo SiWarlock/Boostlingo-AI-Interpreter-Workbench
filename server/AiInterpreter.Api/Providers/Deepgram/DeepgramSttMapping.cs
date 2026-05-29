@@ -1,6 +1,7 @@
 using System.Globalization;
 using AiInterpreter.Api.Providers.Abstractions;
 using AiInterpreter.Api.Sessions;
+using Deepgram.Models.Exceptions.v1;
 using Deepgram.Models.Listen.v2.WebSocket;
 using WsResultResponse = Deepgram.Models.Listen.v2.WebSocket.ResultResponse;
 using RestSyncResponse = Deepgram.Models.Listen.v1.REST.SyncResponse;
@@ -54,14 +55,51 @@ internal static class DeepgramSttMapping
     /// (<see cref="ProviderErrorMapper"/>) with the provider/stage constants — SafeMessage never echoes the exception,
     /// so no key/stack can leak (ARCH-018/019).
     ///
-    /// LIMITATION (Deepgram SDK v6.6.1): API errors surface as <c>DeepgramException</c>/<c>DeepgramRESTException</c>
-    /// which carry NO HTTP status, so a common-path 429/401/403 degrades to <c>stt.unknown</c> (non-retryable) via the
-    /// mapper's default branch; only the rare empty-body path throws a status-bearing <c>HttpRequestException</c> that
-    /// maps to <c>stt.rate_limited</c>/<c>stt.auth</c>. Accepted for C.1 (no speculative mapper expansion); a Phase-C
-    /// hardening task tracks recovering the status from the SDK exception.
+    /// STATUS RECOVERY (C.6): Deepgram SDK v6.6.1 discards the numeric HTTP status on the error-body path —
+    /// <c>DeepgramException</c>/<c>DeepgramRESTException</c> carry only the semantic <c>err_code</c> string. We recover
+    /// the status by matching that string (<see cref="TryHttpStatusFromErrCode"/>) and route it through the vendor-
+    /// agnostic <see cref="ProviderErrorMapper.MapStatus"/>, so a common-path 429/401/403/400 maps correctly
+    /// (<c>stt.rate_limited</c>/<c>stt.auth</c>/<c>stt.invalid_request</c>). An unrecognized/absent <c>err_code</c>
+    /// (incl. Deepgram 5xx-with-body, which uses the <c>error_code</c> key) falls through to the existing mapper's
+    /// <c>stt.unknown</c> degrade; an empty-body error still arrives as a status-bearing <see cref="HttpRequestException"/>
+    /// handled by <see cref="ProviderErrorMapper.Map"/>.
     /// </summary>
     public static SttFailed ToFailed(Exception exception, DateTimeOffset timestamp) =>
-        new(ProviderErrorMapper.Map(exception, Provider, Stage), timestamp);
+        new(MapException(exception), timestamp);
+
+    private static ProviderError MapException(Exception exception)
+    {
+        // err_code DECIDES the status only; it never enters the ProviderError (SafeMessage stays fixed-per-code,
+        // so no err_code/err_msg leak — ARCH-018/019).
+        if (exception is DeepgramException dg && TryHttpStatusFromErrCode(dg.ErrCode, out var status))
+        {
+            return ProviderErrorMapper.MapStatus(status, Provider, Stage);
+        }
+
+        // Status-bearing HttpRequestException (empty-body path) / OCE / Timeout / unrecognized err_code:
+        // the existing mapper handles the status, the timeout, and the stt.unknown fallback.
+        return ProviderErrorMapper.Map(exception, Provider, Stage);
+    }
+
+    // Deepgram's documented err_code strings (v6.6.1, matched EXACT + case-sensitive) -> the HTTP status the SDK
+    // discarded (ARCH-012). "Bad Request" is Title-Case-with-space (a Deepgram artifact) unlike the UPPER_SNAKE
+    // others; an SDK casing change would degrade that case to stt.unknown. 5xx-with-body is intentionally absent
+    // (Deepgram uses the "error_code" key there, so ErrCode stays at the SDK default "Unknown Error Code" -> the
+    // unmappable fallback). 401-insufficient-permissions shares "INSUFFICIENT_PERMISSIONS" with 403 — harmless,
+    // both -> stt.auth.
+    private static bool TryHttpStatusFromErrCode(string? errCode, out int status)
+    {
+        status = errCode switch
+        {
+            "TOO_MANY_REQUESTS" => 429,
+            "INVALID_AUTH" => 401,
+            "INSUFFICIENT_PERMISSIONS" => 403,
+            "Bad Request" => 400,
+            _ => 0,
+        };
+
+        return status != 0;
+    }
 
     /// <summary>
     /// Builds the Deepgram live-listen schema from the request + options. ARCH-030 no-resample/no-transcode:

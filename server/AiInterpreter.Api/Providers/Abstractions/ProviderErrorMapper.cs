@@ -23,7 +23,7 @@ public static class ProviderErrorMapper
     {
         OperationCanceledException => Timeout(provider, stage),
         TimeoutException => Timeout(provider, stage),
-        HttpRequestException http => MapHttp(http, provider, stage),
+        HttpRequestException http => MapHttpStatus(http.StatusCode, provider, stage),
         _ => new ProviderError(provider, stage, $"{stage}.unknown",
             $"An unexpected {stage} error occurred.", Retryable: false),
     };
@@ -36,9 +36,20 @@ public static class ProviderErrorMapper
     public static ProviderError Timeout(string provider, string stage) => new(
         provider, stage, $"{stage}.timeout", $"The {stage} stage timed out.", Retryable: true);
 
-    private static ProviderError MapHttp(HttpRequestException http, string provider, string stage)
+    /// <summary>
+    /// Maps an explicit HTTP status code to a <see cref="ProviderError"/> using the SAME ARCH-012 table
+    /// as the <see cref="HttpRequestException"/> path. For SDKs that surface the status OUTSIDE an
+    /// <see cref="HttpRequestException"/> — e.g. the Deepgram provider recovers it from the SDK exception's
+    /// <c>err_code</c> string, since v6.6.1 discards the numeric <c>StatusCode</c> on the error-body path —
+    /// call this directly with the recovered status. Keeps the status->code table single-owned and the
+    /// mapper vendor-agnostic (no provider-SDK dependency in Abstractions). Caller passes a valid HTTP
+    /// status; an out-of-range value degrades to the <c>{stage}.unknown</c> default (same as any unrecognized status).
+    /// </summary>
+    public static ProviderError MapStatus(int statusCode, string provider, string stage) =>
+        MapHttpStatus((HttpStatusCode)statusCode, provider, stage);
+
+    private static ProviderError MapHttpStatus(HttpStatusCode? status, string provider, string stage)
     {
-        var status = http.StatusCode;
         var code = (int?)status;
 
         return status switch

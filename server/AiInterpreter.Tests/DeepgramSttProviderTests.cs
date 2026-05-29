@@ -127,12 +127,31 @@ public class DeepgramSttProviderTests
         Assert.Equal("deepgram", failed.Error.Provider);
     }
 
-    [Fact]
-    public void deepgram_exception_without_status_yields_unknown()
+    [Theory] // C.6 — recover the HTTP status from the Deepgram SDK exception's semantic err_code (v6.6.1
+             // carries no HttpStatusCode), then map via the vendor-agnostic ProviderErrorMapper. Net-new =
+             // the err_code-string -> status extraction; the status -> code table is B.1's (not re-tested).
+    [InlineData("TOO_MANY_REQUESTS", "stt.rate_limited", true)]      // 429 — the headline fidelity restore
+    [InlineData("INVALID_AUTH", "stt.auth", false)]                  // 401 — bad/missing key
+    [InlineData("INSUFFICIENT_PERMISSIONS", "stt.auth", false)]      // 403 (or 401-perms) — shared code, both -> auth
+    [InlineData("Bad Request", "stt.invalid_request", false)]        // 400 — note the Title-Case-with-space err_code
+    public void deepgram_errcode_recovers_status_and_maps(string errCode, string expectedCode, bool retryable)
     {
-        // The COMMON Deepgram error path (non-empty body) throws DeepgramRESTException, which carries NO
-        // HTTP status — so it lands on the mapper's {stage}.unknown (non-retryable) fallback. This pins
-        // that honest degrade as intended behavior (the fidelity gap flagged at Step 2.5/Step 9).
+        var failed = DeepgramSttMapping.ToFailed(new DeepgramRESTException("body") { ErrCode = errCode }, Now);
+
+        Assert.Equal(expectedCode, failed.Error.Code);
+        Assert.Equal(retryable, failed.Error.Retryable);
+        Assert.Equal("stt", failed.Error.Stage);
+        Assert.Equal("deepgram", failed.Error.Provider);
+    }
+
+    [Fact]
+    public void deepgram_exception_unmappable_yields_unknown()
+    {
+        // Unrecognized err_code — INCLUDING the Deepgram 5xx-with-body case (which uses the "error_code"
+        // JSON key, so ErrCode stays at the SDK default "Unknown Error Code") — has no recoverable status
+        // and falls through to the existing ProviderErrorMapper.Map default -> stt.unknown. This honest degrade is
+        // INTENDED (the narrow accepted C.6 residual; mirrors how C.1 test 8 documented its degrade).
+        // (Renamed/reframed C.1 test 8 — was "without_status", now the deliberate unmappable case.)
         var failed = DeepgramSttMapping.ToFailed(new DeepgramRESTException("upstream error body"), Now);
 
         Assert.Equal("stt.unknown", failed.Error.Code);
