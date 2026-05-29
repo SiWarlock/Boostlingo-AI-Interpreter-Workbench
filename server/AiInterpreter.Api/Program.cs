@@ -1,4 +1,5 @@
 using AiInterpreter.Api.Common;
+using AiInterpreter.Api.Config;
 using AiInterpreter.Api.Cost;
 using AiInterpreter.Api.Evaluation;
 using AiInterpreter.Api.Metrics;
@@ -79,6 +80,13 @@ builder.Services.AddSingleton<ErrorSanitizer>();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
 
+// Config endpoint (B.9b) — GET /api/config reports capability flags from key presence only (never
+// values; safety invariant #1). First MVC controller: AddControllers + apply the shared JsonDefaults
+// contract to MVC's (separate) JsonOptions so controller JSON matches the camelCase/enum/explicit-null
+// contract the minimal-API + persistence paths use. Consumer is D.2 (config-gating).
+builder.Services.AddSingleton<IConfigService, ConfigService>();
+builder.Services.AddControllers().AddJsonOptions(o => JsonDefaults.Apply(o.JsonSerializerOptions));
+
 // Shared JSON contract (A.3) on the HTTP pipeline — camelCase + enum-as-string + explicit null,
 // the same contract persistence uses, so API and persisted JSON cannot diverge.
 builder.Services.ConfigureHttpJsonOptions(o => JsonDefaults.Apply(o.SerializerOptions));
@@ -116,6 +124,7 @@ app.UseWebSockets();
 app.UseCors(corsPolicyName);
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
+app.MapControllers();
 
 app.Run();
 
