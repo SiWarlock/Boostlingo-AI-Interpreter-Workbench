@@ -842,6 +842,8 @@ The PRD requires **streaming throughout, no full-utterance blocking, live transc
 
 > Honesty note: `tts.first_audio`/`tts.complete` are **backend-measured** against the OpenAI TTS stream; `playback.started` is the only browser-side TTS-output timing.
 
+> Stage-label note (B.4): the `LatencyStage` enum (ARCH-005) has no `Overall` member — turn-lifecycle events (`turn.recording.started`/`.stopped`, `turn.completed`) are stamped `LatencyStage.Capture` (closest existing member); **"Overall" here is a descriptive grouping, not an enum value.** The aggregator keys metrics by event **name**, so the stage label is cosmetic. Add an `Overall` enum member (cross-doc: ARCH-005 + Appendix A) at C.4 — bundled with the `turn.recording.*` lifecycle events C.4 introduces — if a UI stage-grouping ever needs it.
+
 ### Empty-transcript rule
 
 If STT yields an empty final: do **not** call translation or TTS; emit `cascade.empty_transcript`; persist the failed turn; UI suggests retrying.
@@ -940,6 +942,8 @@ Each real provider catches its SDK/`HttpRequestException`, reads the status, set
 
 The orchestrator wraps each stage: `CancellationTokenSource.CreateLinkedTokenSource(requestToken).CancelAfter(Options.TimeoutSeconds)` and passes the linked token to the provider enumerable. On `OperationCanceledException`, emit the stage `*.timeout` event + `ProviderError(Code="<stage>.timeout", Retryable=true)` and skip downstream per the partial-failure rules. Per-stage timeouts; no separate global turn timeout for MVP. Suggested defaults: STT 30s, translation 20s, TTS 30s, realtime token mint 10s.
 
+> **STT timeout is a per-event idle timeout (B.4 realization).** Because the cascade orchestrator runs each finalized segment's translation+TTS sub-pipeline *inside* the STT `await foreach` (the nested per-segment loop, ARCH-011), a single whole-stream `CancelAfter` on the STT stage would count segment-1's downstream wall-clock against segment-2's STT and fire spuriously — and a `CancellationTokenSource` that has already fired cannot be un-cancelled. So the STT stage **arms** `CancelAfter(timeout)` immediately before each `MoveNextAsync` and **disarms** it (`CancelAfter(Timeout.InfiniteTimeSpan)`) before running downstream — i.e. the STT timeout bounds the *inter-event gap*, not the whole stream. Translation/TTS keep a single whole-stage `CancelAfter` (nothing long is interleaved inside them). The catch is filtered `when (!ct.IsCancellationRequested)` so **caller cancellation** (client disconnect) propagates as `OperationCanceledException` rather than being mislabeled a retryable `<stage>.timeout`.
+
 ### Provider Options (enumerated)
 
 - **`DeepgramOptions`**: `ApiKey`, `BaseUrl`/`WebSocketUrl`, `Model=nova-3`, `Language=multi`, `SmartFormat=true`, `Encoding=linear16`, `SampleRate`, `Channels=1`, `InterimResults=true`, `UtteranceEndMs`, `TimeoutSeconds`.
@@ -994,6 +998,15 @@ Metrics are the backbone — without credible metrics this is just an API demo.
 ### Realtime metrics
 
 `realtime_connect_ms`, `realtime_first_audio_delta_ms` (`realtime.first_audio_delta`−`turn.recording.stopped`), `realtime_first_transcript_delta_ms`, `realtime_playback_ms`.
+
+### Metric origins (aggregator conventions — B.3)
+
+The first-* stage metrics above carry explicit origins; the **final/complete** stage metrics and several realtime metrics were under-specified and are pinned here by `MetricsAggregator` (B.3), measured from each stage's start:
+
+- **Cascade stage durations:** `stt_final_ms` = `stt.final` − `cascade.audio.received`; `translation_final_ms` = `translation.final` − `translation.started`; `tts_complete_ms` = `tts.complete` − `tts.started`.
+- **Realtime:** `realtime_connect_ms` = `realtime.session.connected` − `realtime.session.connecting` (the latter a connect-start marker the WebRTC client emits at E.4 — `n/a` until then, never synthesized); `realtime_first_transcript_delta_ms` = `realtime.first_transcript_delta` − `turn.recording.stopped`; `realtime_playback_ms` = `playback.started` − `realtime.first_audio_delta` (client buffer latency — **distinct** from the universal `speech_end_to_playback_ms`, which is `playback.started` − `turn.recording.stopped`).
+- **`speech_end_to_first_audio_ms`** selects the present output-audio event: `tts.first_audio` (cascade) ?? `realtime.first_audio_delta` (realtime) ?? `playback.started`, else `n/a`.
+- The aggregator computes every metric from **absolute `Timestamp` subtraction**, so cross-clock pairs are wall-clock-correct and a small disclosed skew is **not** clamped; a missing endpoint event yields `n/a` (null), never an error. `LatencyEvent.relativeMs` is a per-event display value (stamped by `LatencyEventFactory` relative to a documented origin, clamped ≥ 0) — **not** a cross-event math input. Per-turn metrics are surfaced as `TurnMetrics` (area-local computed type); B.7's `SessionSummaryService` averages them into `ModeSummary`.
 
 ### Metric tiers
 
@@ -1066,6 +1079,12 @@ Load `pricing.json`; accept usage units per turn/stage; estimate per-turn + per-
 
 Use **"Estimated cost/min"**. Never an unqualified "Cost".
 
+### Estimator conventions (B.5)
+
+- **Cascade per-turn cost is one composite `CostEstimate`.** A cascade turn has three priced stages (STT/translation/TTS) but the turn model + the WS `cost` message carry a single `CostEstimate` — so the estimator aggregates: `Provider="cascade"`, `Model=<translation model used>` (the cascade comparison axis, so the summary groups cascade cost by translation-model variant), `PricingBasis="composite"`, `EstimatedUsd = Σ stages`, with the per-stage breakdown in `Units`. **`"composite"` is a fifth `PricingBasis` value** beyond the four basis names in the §3 `CostEstimate` comment (`usd_per_audio_minute`/`audio_output_tokens`/`characters`/`tokens`); `PricingBasis` is a `string`, so this is a documented value, not a model change. The composite degrades wholesale (any stage's pricing missing → estimate unavailable; never a partial-garbage number).
+- **Realtime audio-seconds→tokens factor is an explicit estimate.** `CostEstimator.RealtimeTokensPerAudioSecond = 50` is an **estimate pending build-time confirmation** (the `pricing.json` `estimatorNote` flags it) — it is surfaced in every realtime estimate's `Assumptions`, never presented as billing-grade. See §16 build-time-confirm items.
+- **`0.0` configured rate ≠ absent config.** A model present in `pricing.json` with a `0.0` rate (e.g. `gpt-5.4-mini`, pending confirmation) **estimates to `0.0`** (a real, if provisional, number); only genuinely-missing config / model / usage degrades to `Result.Failure` ("estimate unavailable"). All math is `decimal`, unrounded (the UI formats).
+
 ---
 
 <a id="arch-015"></a>
@@ -1087,6 +1106,8 @@ WER is an objective **STT transcript** quality signal for scripted phrases. It d
 ### Normalization & algorithm
 
 Lowercase → remove punctuation → normalize whitespace. (Accent-stripping only if explicitly documented; default preserves language text.) DP edit distance over word arrays: `WER = (S + I + D) / N`, `N` = reference word count.
+
+> **Implementation note (B.6):** normalize = **invariant**-lowercase → strip `\p{P}` punctuation (incl. inverted `¿`/`¡`) → collapse whitespace; **accents/`ñ` are preserved** (accent-stripping not taken). Punctuation is removed (replaced with `""`, not a space), so contractions collapse (`don't`→`dont`) — robust to STT apostrophe-dropping; author `evaluation-phrases.json` free of intra-word punctuation so word boundaries are unambiguous. The DP backtrace attributes S/I/D individually with tie-break precedence **match > substitution > deletion > insertion** (documented for reproducibility). **WER is unbounded** — `> 1.0` is valid (more insertions/substitutions than reference words) and is never clamped. An empty normalized reference (`N=0`) is a **precondition violation** → `ArgumentException` (never a divide-by-zero); the reference is always a validated scripted phrase.
 
 ### Flow & tests
 
@@ -1224,12 +1245,13 @@ TTS_TIMEOUT_SECONDS=30
 REALTIME_TOKEN_TIMEOUT_SECONDS=10
 SESSION_DATA_DIR=../../data/sessions
 PRICING_CONFIG_PATH=../../config/pricing.json
+EVALUATION_PHRASES_PATH=   # optional; default: <AppContext.BaseDirectory>/Evaluation/evaluation-phrases.json (B.6)
 ASPNETCORE_ENVIRONMENT=Development
 ```
 
 Each provider has an `Options` class bound via `IOptions` (ARCH-012). Rule: **standard keys stay backend-only; the browser gets only the ephemeral credential.** Config-missing behavior cross-links ARCH-018. `ConfigService` reports configured booleans from key presence only.
 
-> **Env→section bridge (A.5).** The flat operator env vars above are mapped to the PascalCase Options sections in one place in `Program.cs` (an explicit map → `AddInMemoryCollection` → `Configure<T>(GetSection(SectionName))`), setting **only keys that are present** so the inline Options defaults stand. `OPENAI_API_KEY` fans out to all three OpenAI services (`OpenAiTranslation`/`OpenAiTts`/`Realtime`). `PRICING_CONFIG_PATH` is read directly by the pricing loader (file-load, not section-bound); `SESSION_DATA_DIR` is consumed by persistence (B.7).
+> **Env→section bridge (A.5).** The flat operator env vars above are mapped to the PascalCase Options sections in one place in `Program.cs` (an explicit map → `AddInMemoryCollection` → `Configure<T>(GetSection(SectionName))`), setting **only keys that are present** so the inline Options defaults stand. `OPENAI_API_KEY` fans out to all three OpenAI services (`OpenAiTranslation`/`OpenAiTts`/`Realtime`). `PRICING_CONFIG_PATH` is read directly by the pricing loader (file-load, not section-bound); `SESSION_DATA_DIR` is consumed by persistence (B.7); `EVALUATION_PHRASES_PATH` is read directly by `EvaluationPhraseStore` (B.6, optional — sensible default), same degrade-don't-crash file-load as the pricing loader.
 
 <a id="arch-029"></a>
 

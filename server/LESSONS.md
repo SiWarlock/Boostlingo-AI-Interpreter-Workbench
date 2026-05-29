@@ -111,3 +111,70 @@ Pacing + cancellation live in **one** helper called before each `yield`: `FakeSt
 Don't unit-assert the *wall-clock* delay (flaky); assert the **event ordering** + that cancellation throws. The same async-iterator + single-cancellation-point shape carries over to the real C providers consuming vendor streams.
 
 **Rule:** Streaming fakes/providers are `async IAsyncEnumerable<TEvent>` with `[EnumeratorCancellation]`; route every per-event delay through one `PaceAsync(delay, ct)` (`ThrowIfCancellationRequested` + `await Task.Delay`) for deterministic cancellation + no CS1998; error variants `yield` a real-code `*Failed` then `yield break`; test ordering + cancellation, not wall-clock timing.
+
+---
+
+## <a id="7"></a>7. Metrics aggregation — absolute-Timestamp math, relativeMs is display-only, n/a-not-error
+
+**Date:** 2026-05-28.
+**Source slice:** B.3 (latency model + MetricsAggregator).
+
+Two distinct time values live on a `LatencyEvent`, and conflating them breaks cross-clock metrics. `relativeMs` is a **per-event display value** — milliseconds from that event's documented reference origin, stamped by `LatencyEventFactory` and clamped ≥ 0 (a single event measured against a *same-clock* origin is monotonic, so a negative is nonsense). The aggregator must NOT compute metrics by subtracting two `relativeMs` values: cascade server stages carry `clockSource: server` while `turn.recording.stopped`/`playback.started` carry `clockSource: browser`, and `relativeMs` values relative to different origins/clocks are not comparable. Instead `MetricsAggregator` subtracts the absolute `Timestamp` (`DateTimeOffset`) of the two endpoint events — wall-clock instants meaningful across machines modulo skew (ARCH-013: "the aggregator must handle cross-clock pairs explicitly; a small skew is acceptable and disclosed").
+
+Crucially the **factory clamps** a single event's `relativeMs` to ≥ 0, but the **aggregator does NOT clamp** a cross-clock metric pair — a small negative from browser/server skew is real, disclosed in the write-up, and hiding it with a `Math.Max(0, …)` would be dishonest. Two different rules in two different places; the suite pins the fork with a factory clamp-to-zero test (event before origin → 0) and an aggregator no-clamp test (server-behind skew → negative preserved).
+
+A missing endpoint event yields `n/a` (null), **never an error** — a `nice`-tier event absent, or a whole metric family absent (a cascade turn has no `realtime.*` events and vice versa), drives the metric to null by absence, no mode parameter needed. The aggregator is pure + stateless + total (never throws, even on an empty list).
+
+Two test-harness pins make the design self-enforcing and worth reusing: (1) every constructed `LatencyEvent` carries a deliberately-wrong `RelativeMs` sentinel (`999999`), so any aggregator that reads `RelativeMs` instead of `Timestamp` computes garbage and fails — proving the absolute-`Timestamp` rule; (2) tests use the literal ARCH-013 wire-strings (`"stt.final"`, …) while the aggregator keys off `LatencyEventNames` constants — so a constant typo → wrong lookup → null → test fails, pinning the vocabulary. Where ARCH-013 under-specified the final/complete + realtime metric origins, B.3 pinned them by the consistent per-stage-origin rule (now documented in ARCH-013's "Metric origins" note) and introduced `realtime.session.connecting` as the honest, null-until-emitted origin for `realtime_connect_ms` (E.4 emits it; no synthesis).
+
+**Rule:** Aggregate latency metrics from absolute `Timestamp` (cross-clock safe); `relativeMs` is a per-event display value stamped by the factory (clamped ≥ 0), never a cross-event math input; the aggregator does NOT clamp cross-clock pairs (skew disclosed, not hidden); a missing endpoint → `null` (n/a), never an error.
+
+---
+
+## <a id="8"></a>8. Cascade streaming orchestrator — per-segment nested loop, stamp-on-first-arrival, arm/disarm idle timeout
+
+**Date:** 2026-05-28.
+**Source slice:** B.4 (cascade streaming orchestrator).
+
+The `CascadeStreamingOrchestrator` realizes the ARCH-011 pipeline as a **nested per-segment loop**: `await foreach` the STT event stream, and on each non-empty `SttFinal` run *that segment's* translation→TTS sub-pipeline to completion (each stage streamed live) before resuming STT consumption for the next segment. This streams every finalized segment in arrival order without buffering the whole utterance (the streaming-honesty rule — a "consume all STT, then translate" structure full-utterance-blocks any multi-segment turn). Concurrent sub-utterance interleaving (segment-2 STT overlapping segment-1 translation) stays deferred (ARCH-025). The output is a flat, **transport-agnostic** `IAsyncEnumerable<CascadeOutputEvent>` (`Transcript`/`Latency`/`Audio`/`Error`/`Done`) — the orchestrator knows nothing about WebSockets or JSON; C.4 adapts it to the wire.
+
+Each `first_*` LatencyEvent (`stt.first_partial`/`translation.first_token`/`tts.first_audio`) is stamped on **real first arrival** via a one-shot boolean gate (`LatencyEventFactory.Stamp`), never relabeled from a completion (lesson §7; forbidden-pattern #3). C# forbids `yield` inside a `try`/`catch`, so each stage **manually enumerates** its provider stream: `try { hasNext = await e.MoveNextAsync(); } catch(...)` wraps **only** the `MoveNextAsync`, and the `yield return` happens outside the try.
+
+Two cancellation gotchas the reviewers caught (both fixed in-slice with regression tests):
+
+- **A `CancellationTokenSource` that has fired cannot be un-cancelled** — so a per-stage `CancelAfter(timeout)` set once at loop-top is wrong for the STT stage: the timer keeps running during the (potentially long) per-segment translation/TTS sub-pipeline, fires mid-downstream, and the *next* segment's `MoveNextAsync` sees an already-cancelled token → spurious `stt.timeout`. Fix: make the STT timeout a **per-event idle timeout** — arm `CancelAfter(timeout)` immediately before each `MoveNextAsync`, disarm with `CancelAfter(Timeout.InfiniteTimeSpan)` immediately after, so only inter-STT-event gaps count. Translation/TTS keep a single whole-stage `CancelAfter` (nothing long is interleaved inside them).
+- **Caller cancellation vs stage timeout must not conflate.** A linked-CTS timeout and a caller-cancel (client disconnect) both surface as `OperationCanceledException`. Mapping both to a retryable `<stage>.timeout` is wrong — a disconnect isn't a timeout. Filter the catch with `when (!ct.IsCancellationRequested)`: the caller's token cancelled → rethrow/propagate the OCE; only the stage timer fired → map to `ProviderErrorMapper.Timeout`.
+
+**Rule:** Cascade orchestrator = nested per-segment loop (each `SttFinal` → its own streamed translation→TTS, sequential; concurrent interleaving deferred); stamp each `first_*` once on real first arrival; manual `MoveNextAsync` enumeration with try/catch only around the move (yield outside); STT timeout is a per-event idle timer (arm/disarm `CancelAfter`, since a fired CTS can't un-cancel); filter OCE with `when (!ct.IsCancellationRequested)` to split caller-cancel from stage-timeout; emit a flat transport-agnostic `IAsyncEnumerable<CascadeOutputEvent>`.
+
+---
+
+## <a id="9"></a>9. Cost estimation — branch on pricing basis, degrade via Result, 0.0 ≠ absent
+
+**Date:** 2026-05-28.
+**Source slice:** B.5 (cost estimator).
+
+`CostEstimator` branches on the configured **pricing basis** rather than the provider: audio-minute (Deepgram STT), tokens (OpenAI translation), audio-output-tokens or characters (OpenAI TTS), and realtime (audio-seconds converted to tokens before the per-million rate). A usage abstraction (`CostUsage`, nullable fields) lets one entry point serve every basis; the basis selects which fields are read. Per-stage methods (`EstimateStt`/`EstimateTranslation`/`EstimateTts`/`EstimateRealtime`) are individually useful (F.1 STT-only eval cost) and compose into `EstimateCascadeTurn`, which sums the three stages into **one composite `CostEstimate`** (`Provider="cascade"`, `Model=<translation model>`, `PricingBasis="composite"`, breakdown in `Units`) — because the turn model + WS `cost` message are singular, the estimator (not the transport) owns the aggregation.
+
+Three honesty rules keep estimates defensible:
+
+- **`0.0` configured rate ≠ absent config.** A model present in `pricing.json` with a `0.0` rate estimates to `0.0` (a real, provisional number — e.g. `gpt-5.4-mini` pending build-confirm); only a genuinely-missing model / basis / usage degrades to `Result<CostEstimate>.Failure` ("estimate unavailable"). The distinction is a `decimal?` null-check on the rate, not a `== 0` check. Degrade follows lesson §3 (load via `Result`, never crash); the composite degrades **wholesale** if any stage can't price (no partial-garbage total).
+- **Estimate factors are labelled estimates.** The realtime audio-seconds→tokens factor (`RealtimeTokensPerAudioSecond`) has no authoritative source yet, so it's a named constant, commented as an estimate, **surfaced in every realtime estimate's `Assumptions`**, and added to the build-time-confirm list — never presented as billing-grade. Tests reference the constant (pinning the *formula*), not its literal value, so a confirmed re-tune doesn't break them.
+- **`decimal`, unrounded.** All cost math is `decimal` and the estimator does not round (the UI formats for display) — so tests assert exact value-equality and no precision is lost mid-pipeline.
+
+**Rule:** Cost estimation branches on `PricingBasis` (not provider); degrade missing config/usage via `Result<CostEstimate>` (lesson §3), but a `0.0` configured rate is present and estimates to `0.0` (distinguish by `decimal?` null, not `==0`); estimate-only factors are named constants surfaced in `Assumptions` + flagged for build-confirm; compute in `decimal` without rounding; a cascade turn aggregates to one composite estimate keyed by translation model.
+
+---
+
+## <a id="10"></a>10. WER — normalize, DP-backtrace S/I/D, unbounded; reference is a precondition
+
+**Date:** 2026-05-28.
+**Source slice:** B.6 (WER calculator + phrase store).
+
+WER is an **STT-transcript** quality signal, not semantic translation quality — keep the scope narrow. Normalization is **invariant**-lowercase → strip `\p{P}` Unicode punctuation (which covers inverted `¿`/`¡`) → collapse whitespace, with **accents/`ñ` preserved** (ARCH-015's accent-strip opt-in is NOT taken — Spanish text stays intact). Punctuation is removed (replaced with `""`, not a space) so contractions collapse (`don't`→`dont`); since STT may or may not emit apostrophes, removing them makes ref/hyp agree — but author the scripted `evaluation-phrases.json` free of intra-word punctuation (hyphens, contractions) so word boundaries are unambiguous.
+
+The DP edit-distance keeps a **backtrace** to attribute S/I/D individually (the `WerResult` stores each, not just the total distance); the tie-break precedence is **match > substitution > deletion > insertion**, documented so counts are reproducible. Where a test must assert exact S/I/D, construct it tie-break-invariant (equal-length ref/hyp ⇒ insertions==deletions; a known LCS fixes the only composition) rather than depending on the backtrace path. **WER is unbounded** — more insertions/substitutions than reference words gives `WER > 1.0`, which is valid and must **never be clamped** (downstream metrics depend on the true value). An **empty normalized reference (`N=0`) is a precondition violation → `ArgumentException`** (the reference is always a validated scripted phrase), never a divide-by-zero or a clamped 0.
+
+The phrase store self-loads once on construction via the lesson-§3 degrade pattern (missing / oversized / malformed → empty store + `LoadError`, never a host crash), exposing a clean DI facade (`Phrases`/`IsLoaded`/`LoadError`/`GetById`/`GetByLanguage`) over an internal `Result`-returning loader. Two security follow-ups for the F.1 boundary: the `n×m` DP matrix needs a hypothesis-length cap once a request body feeds it (memory-DoS), and `LoadError` carries path/`ex.Message` fragments so a controller must never surface it raw (same family as a `Result.Error`).
+
+**Rule:** WER normalization = invariant-lowercase → strip `\p{P}` → collapse whitespace, accents preserved, punctuation removed (not spaced); DP backtrace attributes S/I/D with a documented tie-break (match>sub>del>ins); WER is unbounded (never clamp `>1.0`); empty reference is a precondition (`ArgumentException`, never divide-by-zero); the phrase store degrades via lesson §3 behind a DI facade; cap hypothesis length + never surface `LoadError` at the F.1 boundary.

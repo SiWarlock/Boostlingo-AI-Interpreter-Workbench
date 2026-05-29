@@ -15,15 +15,19 @@
 
 ## Currently in progress
 
-**Phase B — B.3 (latency model + `MetricsAggregator`)** is the next slice. **⏸ Team wound down at the B.2 boundary (context cycle, impl 76% ACTION); a FRESH team resumes here** (no successors spawned this round — human restarts the team).
+**Phase B — B.7a (session store + persistence writer + sentinel — SAFETY)** is the next slice. Brief drafted: `docs/briefs/012-B.7a-session-store-persistence-sentinel.md` (B.7 is split for safety-commit isolation into **B.7a** store/writer/sentinel — own commit + mandatory `security-reviewer` pass — and **B.7b** `SessionSummaryService`, read-only aggregation, separate brief/commit). **⏸ Predecessor team crash-recovered + wound down at the B.6 boundary; a FRESH team resumes here.**
 
-- **Team paused 2026-05-28** — handoff doc: `docs/team-handoffs/001-2026-05-28-context-cycle-phase-b.md` · last round-seal: `4be9397` · next-slice target: **B.3** (latency model + `MetricsAggregator`).
+**Last landed:** `B.6` WER calculator + phrase store (`edcbacd`); also `B.5` cost (`af40aaa`), `B.4` cascade orchestrator (`9b679b1`), `B.3` metrics (`620f542`); session doc `002` (`88049bb`). **Phase A COMPLETE (A.1–A.5) + Phase B B.1–B.6.** **92 tests green**, runnable host on `:5179`. **Commit cadence:** commit-as-we-go on `main` per logical unit (push deferred; no remote configured).
 
-**Last landed:** `B.2` fake providers (code `ba4d3bf` + docs `b53f58a`); session doc `001` (`05401ee`). **Phase A COMPLETE (A.1–A.5) + Phase B B.1–B.2.** 24 commits, **50 tests green**, runnable host on `:5179`. **Commit cadence:** commit-as-we-go on `main` per logical unit (push deferred; no remote configured).
+**Open safety/handoff items for the fresh team** (full detail in session doc `002` + lessons §7–§10):
+- **B.7a (SAFETY, next):** persistence sentinel — JSON must contain no standard key, no ephemeral secret (`ek_…`), no raw audio (`TtsAudioChunk.Bytes` / `CascadeOutputEvent.Audio.Bytes`); path-traversal guard (server-gen id `^[A-Za-z0-9_-]+$` resolved under `SESSION_DATA_DIR`). Own commit + `security-reviewer` pass (invariants 1/2/3/5).
+- **B.8 sanitizer:** `Result.Error` / `PricingLoader.Error` / `EvaluationPhraseStore.LoadError` embed path/`ex.Message` fragments — the sanitizer + B.9 global handler must ensure they never reach a client response or an unfiltered log (origin B.5/B.6 lows; safe today via `[JsonIgnore]` + never-surfaced).
+- **B.9 global sanitizing exception-handler** (safety, ARCH-018/019; wire with the first real endpoints).
+- **C.4 (security MEDIUM):** WS `start` `encoding` allowlist before building `CascadeStartParams` (content-type header-injection surface); plus `TtsFirstAudio.ContentType` clamp (low), `Overall` `LatencyStage` enum member + `turn.recording.*` re-stamp, stream-without-terminal `<stage>.unknown` hardening, WS `Origin` validation.
+- **F.1 (security MEDIUM):** cap `POST /api/evaluation/wer` hypothesis length (~2000 chars / 500 words → `400`) **before** `WerCalculator.Compute` (DP-matrix memory-DoS); never surface `LoadError`.
+- **Carry-forward:** B.5 cost-estimate evidence-trail polish (`cachedAudioInputSeconds` / null-token) — last-consumer C.4/B.7. **Build-confirm:** `gpt-5.4-mini` pricing rates (still `0.0`); `RealtimeTokensPerAudioSecond = 50` realtime factor. **D.1** TS mirror types + Vite dev-config (re-sequenced).
 
-**Open safety/handoff items for the fresh team** (full detail in session doc `001` + lessons §1–§6): **B.9** global sanitizing exception-handler (safety, ARCH-018/019, no current exposure — wire with the first real endpoints via B.8); **B.7** `TtsAudioChunk` raw-audio cross-check; **B.4/B.5/C.4** deferred consumers (provider DI swap, pricing-`Result` consumer, WS-`Origin` validation); **D.1** TS mirror types + Vite dev-config (re-sequenced); `gpt-5.4-mini` pricing build-confirm.
-
-**Next after B.3:** B.4 (cascade orchestrator) → B.5 (cost) → … → B.10 (boundary tests). Phase B = backend seams + tests against **fake** providers (no real keys).
+**Next after B.7:** B.8 (sanitizer) → B.9 (Session/Config HTTP endpoints) → B.10 (provider boundary tests) → Phase-B acceptance, then Phase C (real providers). Phase B = backend seams + tests against **fake** providers (no real keys).
 
 ---
 
@@ -31,7 +35,9 @@
 
 _Entries carry an origin marker `(origin: YYYY-MM-DD <slice-id>)`. Items that belong to a specific phase are inlined as task checkboxes there (not held here); only next-1–2-slice items live here._
 
-_(Empty at Phase-A close — all items closed or inlined to their phase. **Closed:** WAE-scope (decided A.5 — Api-only WAE, no `Directory.Build.props`); A.1 template reconciliation (done A.5 — port 5179, template profiles dropped, Swagger Dev-only). **Inlined to B.9:** collection-size bounding + `Result`→DTO mapping (origin A.3) + global sanitizing exception handler (origin A.5, safety). **Inlined to C.4:** cascade WS `Origin` validation (origin A.5).)_
+- **Cost-estimate evidence-trail polish (origin: 2026-05-28 B.5)** — when C.4/B.7 wire real provider usage: (a) `CostEstimate.Units` always writes `cachedAudioInputSeconds` (0 when unsupplied) → consider omitting the key when null so the persisted trail distinguishes "no cache" from "0s"; (b) `EstimateTranslation` substitutes 0 for null tokens (silent $0) vs STT's degrade-on-null → align or document. _(last-consumer-slice: C.4/B.7.)_
+
+_(Phase-A close — earlier items closed or inlined to their phase. **Closed:** WAE-scope (decided A.5 — Api-only WAE, no `Directory.Build.props`); A.1 template reconciliation (done A.5 — port 5179, template profiles dropped, Swagger Dev-only). **Inlined to B.9:** collection-size bounding + `Result`→DTO mapping (origin A.3) + global sanitizing exception handler (origin A.5, safety). **Inlined to C.4:** cascade WS `Origin` validation (origin A.5).)_
 
 ---
 
@@ -156,38 +162,38 @@ The project is "done" (ARCH-025 + PRD success criteria) when:
 - [x] Anchors: `ARCH-012`, `ARCH-020`. Cross-doc invariant: none. _(lesson §6 — streaming-fake pattern.)_
 
 ### B.3 — Latency model + MetricsAggregator (+ tests)
-- [ ] `LatencyEventFactory` stamps `LatencyEvent` with `clockSource` + `relativeMs` from the documented origin (ARCH-013 clock rules); `MetricsAggregator` computes universal + cascade + realtime metrics and the MUST/nice tiers (nice → `n/a`, never error).
-- [ ] Tests: `MetricsAggregatorTests` — MUST-pair `relativeMs` formulas incl. **cross-clock** pairs; missing nice-tier event → `n/a`.
-- [ ] Files: NEW — `Metrics/LatencyEventFactory.cs`, `Metrics/MetricsAggregator.cs`, `AiInterpreter.Tests/MetricsAggregatorTests.cs`.
-- [ ] Anchors: `ARCH-013`, `ARCH-020`. Cross-doc invariant: extended (`LatencyEvent` gains `clockSource`).
+- [x] `LatencyEventFactory` stamps `LatencyEvent` with `clockSource` + `relativeMs` from the documented origin (ARCH-013 clock rules); `MetricsAggregator` computes universal + cascade + realtime metrics and the MUST/nice tiers (nice → `n/a`, never error). _(factory: `Create`/`Stamp`(injected `IClock`), relativeMs round+clamp≥0; aggregator: absolute-`Timestamp` math — cross-clock-safe, no-clamp on skew, never throws.)_
+- [x] Tests: `MetricsAggregatorTests` (8) — MUST-pair formulas incl. **cross-clock** pairs (+/- skew, aggregator-no-clamp pinned vs factory-clamp); missing nice-tier event → `n/a`; realtime tier; empty-input no-throw.
+- [x] Files: NEW — `Metrics/LatencyEventNames.cs`, `Metrics/MetricsModels.cs` (`TurnMetrics`), `Metrics/LatencyEventFactory.cs`, `Metrics/MetricsAggregator.cs`, `AiInterpreter.Tests/MetricsAggregatorTests.cs`; extended — `Program.cs` (DI: `IClock`→`SystemClock` + factory + aggregator). _(brief 008.)_
+- [x] Anchors: `ARCH-013`, `ARCH-020`. Cross-doc invariant: **none** — consumes the existing A.3 `LatencyEvent` (already carries `clockSource`); `TurnMetrics` is an area-local computed type (not persisted/wire this slice → Appendix A registration deferred until first serialized). _(lesson §7; ARCH-013 "Metric origins" note added this round.)_
 
 ### B.4 — Streaming cascade orchestrator (+ tests, with fakes)
-- [ ] `CascadeStreamingOrchestrator` drives `STT partials/finals → per-finalized-segment translation (streamed) → TTS (streamed)` exactly per `ARCH-011` "Streaming pipeline", stamping `stt.*`/`translation.*`/`tts.*` LatencyEvents on **first arrival** of each event type and emitting normalized `TranscriptSegment`s + audio chunks to an output channel.
-- [ ] Implements: empty-transcript short-circuit (`cascade.empty_transcript`, no translation/TTS), partial-failure rules (translation-fails → source kept; TTS-fails → both transcripts kept), and per-stage timeout/cancellation via linked CTS + `CancelAfter` (ARCH-012/ARCH-018).
-- [ ] Tests: `CascadeOrchestratorTests` (CRITICAL) — success path + stage ordering; **empty-transcript short-circuit (translation/TTS NEVER invoked via call-count spies; Status=Failed)**; two partial-failure cases; timeout → `*.timeout` event + retryable error.
-- [ ] Files: NEW — `Cascade/CascadeStreamingOrchestrator.cs`, `Cascade/CascadeModels.cs`, `AiInterpreter.Tests/CascadeOrchestratorTests.cs`.
-- [ ] Anchors: `ARCH-011`, `ARCH-012`, `ARCH-013`, `ARCH-018`, `ARCH-020`. Cross-doc invariant: none.
+- [x] `CascadeStreamingOrchestrator` drives `STT partials/finals → per-finalized-segment translation (streamed) → TTS (streamed)` exactly per `ARCH-011` "Streaming pipeline" (nested per-segment loop; concurrent sub-utterance interleaving deferred per ARCH-025), stamping `stt.*`/`translation.*`/`tts.*` LatencyEvents on **first arrival** of each event type (via B.3's `LatencyEventFactory.Stamp` — never synthesize/back-date; forbidden-pattern #3) and emitting a flat transport-agnostic `IAsyncEnumerable<CascadeOutputEvent>` (`Transcript`/`Latency`/`Audio`/`Error`/`Done`). _(B.3 origins: also emits the stage-start markers `cascade.audio.received`/`translation.started`/`tts.started` the metric origins measure from.)_
+- [x] Implements: empty-transcript short-circuit (`cascade.empty_transcript`, no translation/TTS), partial-failure rules (translation-fails → source kept; TTS-fails → both transcripts kept), and per-stage timeout/cancellation via linked CTS + `CancelAfter` (ARCH-012/ARCH-018). _(STT = per-event idle timeout via arm/disarm; OCE filtered `when (!ct.IsCancellationRequested)` so caller-cancel ≠ stage-timeout — both reviewer-flagged + fixed in-slice; lesson §8.)_
+- [x] Tests: `CascadeOrchestratorTests` (CRITICAL, 9) — success path + stage ordering; **empty-transcript short-circuit (translation/TTS NEVER invoked via call-count spies; Status=Failed)**; two partial-failure cases; timeout → `*.timeout` retryable; first-arrival stamping; **multi-segment per-segment streaming** + idle-timeout regression + caller-cancellation propagation.
+- [x] Files: NEW — `Cascade/CascadeStreamingOrchestrator.cs` (nested per-segment loop), `Cascade/CascadeModels.cs` (`CascadeOutputEvent` + `CascadeStartParams`), `AiInterpreter.Tests/CascadeOrchestratorTests.cs`; extended — `Metrics/LatencyEventNames.cs` (+`stt.started`, ARCH-013 MUST event). _(brief 009; no `Program.cs` change — DI is C.4.)_
+- [x] Anchors: `ARCH-011`, `ARCH-012`, `ARCH-013`, `ARCH-018`, `ARCH-020`. Cross-doc invariant: none (`CascadeOutputEvent`/`CascadeStartParams` area-local — Appendix A at C.4 when serialized). _(Step-9 arch notes added this round: ARCH-012 STT-idle-timeout, ARCH-011 turn-lifecycle stage-label.)_
 
 ### B.5 — Cost estimator (+ tests)
-- [ ] `CostEstimator` loads pricing, **branches on pricing basis** (audio-minute vs token vs character), converts realtime audio-seconds→tokens, computes per-turn + per-minute cost, emits `CostEstimate` with assumptions + `pricingConfigVersion`.
-- [ ] Tests: `CostEstimatorTests` (IMPORTANT) — deterministic per-basis estimates (Deepgram min, OpenAI tokens for translation, gpt-4o-mini-tts audio-output tokens, tts-1 chars); missing pricing → estimate unavailable.
-- [ ] Files: NEW — `Cost/CostEstimator.cs`, `AiInterpreter.Tests/CostEstimatorTests.cs`.
-- [ ] Anchors: `ARCH-014`, `ARCH-020`. Cross-doc invariant: none.
+- [x] `CostEstimator` loads pricing, **branches on pricing basis** (audio-minute vs token vs character vs audio-output-tokens), converts realtime audio-seconds→tokens, computes per-turn + per-minute cost, emits `CostEstimate` with assumptions + `pricingConfigVersion`. _(per-stage methods + `EstimateCascadeTurn` composite — Provider="cascade", Model=translation-model-used, PricingBasis="composite"; degrade via `Result<CostEstimate>`; `0.0` rate estimates to 0 ≠ absent; `decimal` no-rounding. lesson §9.)_
+- [x] Tests: `CostEstimatorTests` (IMPORTANT, 12) — deterministic per-basis estimates (Deepgram min, OpenAI tokens for translation, gpt-4o-mini-tts audio-output tokens + approx-minute fallback, tts-1 chars); realtime conversion + cached-rate (incl. mini fall-back); cascade composite; cost/min + zero-duration; missing pricing/usage/model → unavailable; `0.0`-rate-still-estimates.
+- [x] Files: NEW — `Cost/CostEstimator.cs`, `Cost/CostModels.cs` (`CostUsage`), `AiInterpreter.Tests/CostEstimatorTests.cs`; extended — `Program.cs` (DI: `CostEstimator`, first consumer of the A.5 pricing singleton). _(brief 010.)_
+- [x] Anchors: `ARCH-014`, `ARCH-020`. Cross-doc invariant: none (`CostUsage` area-local). _(Step-9 arch note: ARCH-014 "Estimator conventions" — `"composite"` basis value + `RealtimeTokensPerAudioSecond=50` estimate.)_
 
 ### B.6 — WER calculator + phrase store (+ tests)
-- [ ] `WerCalculator` (DP edit distance over normalized word arrays: lowercase → strip punctuation → normalize whitespace; `WER=(S+I+D)/N`); `EvaluationPhraseStore` loads `evaluation-phrases.json` (8–12 EN+ES phrases).
-- [ ] Tests: `WerCalculatorTests` (CRITICAL) — perfect=0; one deletion; one insertion; one substitution; empty hypothesis; **empty reference (N=0) rejected (no divide-by-zero)**; punctuation/casing normalization.
-- [ ] Files: NEW — `Evaluation/WerCalculator.cs`, `Evaluation/EvaluationPhraseStore.cs`, `Evaluation/evaluation-phrases.json`, `AiInterpreter.Tests/WerCalculatorTests.cs`.
-- [ ] Anchors: `ARCH-015`, `ARCH-020`. Cross-doc invariant: none.
+- [x] `WerCalculator` (DP edit distance over normalized word arrays: invariant-lowercase → strip `\p{P}` punctuation → collapse whitespace, **accents preserved**; `WER=(S+I+D)/N`, S/I/D backtraced individually, tie-break match>sub>del>ins; **WER unbounded** >1.0; empty reference → `ArgumentException`); `EvaluationPhraseStore` (self-loading facade, degrade-don't-crash per lesson §3) loads `evaluation-phrases.json` (10: 5 EN + 5 ES, no intra-word punctuation).
+- [x] Tests: `WerCalculatorTests` (CRITICAL, 13) — perfect=0; deletion; insertion; substitution; empty hypothesis; **empty reference (N=0) rejected (no divide-by-zero)**; punctuation/casing normalization; accent-preserve; combined S/I/D (tie-break-invariant); **WER>1.0**; phrase-store load / degrade / size-guard.
+- [x] Files: NEW — `Evaluation/WerCalculator.cs`, `Evaluation/EvaluationPhraseStore.cs`, `Evaluation/evaluation-phrases.json`, `AiInterpreter.Tests/WerCalculatorTests.cs`; extended — `Program.cs` (DI: `WerCalculator` + `EvaluationPhraseStore`), `AiInterpreter.Api.csproj` + `AiInterpreter.Tests.csproj` (copy the data file), `.env.example` (`EVALUATION_PHRASES_PATH`). _(brief 011; lesson §10.)_
+- [x] Anchors: `ARCH-015`, `ARCH-020`. Cross-doc invariant: extended (`EVALUATION_PHRASES_PATH` env → ARCH-028 + cross-doc row, written this round). _(Step-9 arch note: ARCH-015 tie-break + accent-preserve.)_
 
 ### B.7 — Session store, persistence writer, summary (+ tests)
 - [ ] `SessionStore` (in-memory), `SessionPersistenceWriter` (write-on-end MUST + best-effort per-turn; filename `session_YYYYMMDDTHHMMSSZ_<short-id>.json`; **path-traversal guard** — server-generated id `^[A-Za-z0-9_-]+$`, resolved path stays under `SESSION_DATA_DIR`), `SessionSummaryService` (computes `SessionSummary` on demand).
-- [ ] Tests: `SessionPersistenceTests` (IMPORTANT) — round-trip; **sentinel assertion that JSON contains neither standard key, nor ephemeral secret, nor raw audio** (invariants 6/6b/8); transcripts/latency present; `../` sessionId rejected. _(Defense-in-depth cross-check, origin B.1 security review: the writer must never serialize streaming `TtsAudioChunk.Bytes` audio — structurally safe today since the session model has no audio field, but the sentinel + writer review should confirm it explicitly.)_
+- [ ] Tests: `SessionPersistenceTests` (IMPORTANT) — round-trip; **sentinel assertion that JSON contains neither standard key, nor ephemeral secret, nor raw audio** (invariants 6/6b/8); transcripts/latency present; `../` sessionId rejected. _(Defense-in-depth cross-check, origin B.1 + B.4 security reviews: the writer must never serialize streaming raw audio — `TtsAudioChunk.Bytes` **or** `CascadeOutputEvent.Audio.Bytes` — structurally safe today since the session model has no audio field, but the sentinel + writer review should confirm it explicitly.)_
 - [ ] Files: NEW — `Sessions/SessionStore.cs`, `Sessions/SessionPersistenceWriter.cs`, `Sessions/SessionSummaryService.cs`, `AiInterpreter.Tests/SessionPersistenceTests.cs`.
 - [ ] Anchors: `ARCH-016`, `ARCH-008`, `ARCH-019`, `ARCH-020`. Cross-doc invariant: none.
 
 ### B.8 — Error sanitizer (+ tests)
-- [ ] `ErrorSanitizer` maps internal/provider errors → safe `ProviderError`/`UiError` (no stack traces, no secrets); preserves `HttpStatusCode`/`Retryable`; logs original server-side only.
+- [ ] `ErrorSanitizer` maps internal/provider errors → safe `ProviderError`/`UiError` (no stack traces, no secrets); preserves `HttpStatusCode`/`Retryable`; logs original server-side only. _(origin B.5 security-low: `Result.Error`/`PricingLoader.Error` strings may embed filesystem-path fragments — safe today (`[JsonIgnore]` + never surfaced), but the sanitizer + B.9 global handler must ensure `Result.Error` never reaches a client response or an unfiltered log.)_
 - [ ] Tests: `ErrorSanitizerTests` — exception containing an API-key substring + stack → `SafeMessage` contains neither; status/retryable preserved.
 - [ ] Files: NEW — `Security/ErrorSanitizer.cs`, `AiInterpreter.Tests/ErrorSanitizerTests.cs`.
 - [ ] Anchors: `ARCH-019`, `ARCH-018`, `ARCH-020`. Cross-doc invariant: none.
@@ -201,7 +207,7 @@ The project is "done" (ARCH-025 + PRD success criteria) when:
 - [ ] Anchors: `ARCH-009`, `ARCH-018`, `ARCH-019`, `ARCH-020`. Cross-doc invariant: extended (DTOs → Appendix A).
 
 ### B.10 — Provider boundary tests (against fakes)
-- [ ] **NEW-create** `AiInterpreter.Tests/ProviderBoundaryTests.cs` (CRITICAL per ARCH-020) exercising the B.1 interfaces + B.2 fakes: ordered streaming-event contracts for `Fake{Stt,Translation,Tts}` (Started → Partial/first-token/chunk → Final/Complete); exception→`ProviderError` mapping helper (429 → `<stage>.rate_limited` retryable; timeout → `<stage>.timeout`; empty-final → `cascade.empty_transcript`); cancellation honored. No real keys. (Real-provider/HTTP-mock cases are added "extended" in C.5.)
+- [ ] **NEW-create** `AiInterpreter.Tests/ProviderBoundaryTests.cs` (CRITICAL per ARCH-020) exercising the B.1 interfaces + B.2 fakes: ordered streaming-event contracts for `Fake{Stt,Translation,Tts}` (Started → Partial/first-token/chunk → Final/Complete); exception→`ProviderError` mapping helper (429 → `<stage>.rate_limited` retryable; timeout → `<stage>.timeout`; empty-final → `cascade.empty_transcript`); cancellation honored. No real keys. (Real-provider/HTTP-mock cases are added "extended" in C.5.) _(Optional, origin B.4 Step-9: explicit per-stage translation/TTS timeout cases — the OCE-filter+`Timeout` mapping is identical across stages and is exercised indirectly by B.4's STT-timeout + caller-cancel tests, so add only if cheap.)_
 - [ ] Files: NEW — `AiInterpreter.Tests/ProviderBoundaryTests.cs`.
 - [ ] Anchors: `ARCH-012`, `ARCH-020`. Cross-doc invariant: none.
 
@@ -240,8 +246,11 @@ The project is "done" (ARCH-025 + PRD success criteria) when:
 - [ ] DI swaps fakes → real providers via config; the orchestrator code is unchanged from Phase B (seam proven).
 - [ ] Two cascade entry points are explicit: `CascadeWebSocketEndpoint.cs` hosts `WS /api/cascade/stream`; `CascadeController.cs` hosts the blob HTTP route (C.5).
 - [ ] **`Origin` validation (origin A.5).** The WS upgrade bypasses the CORS middleware, so `CascadeWebSocketEndpoint` validates the `Origin` header itself (reject non-allowed origins) rather than relying on the CORS policy.
-- [ ] Files: NEW — `Cascade/CascadeWebSocketEndpoint.cs`, `Controllers/CascadeController.cs`; extended — `Program.cs` (DI binding real vs fake by env).
-- [ ] Anchors: `ARCH-009`, `ARCH-011`. Cross-doc invariant: extended (WS message DTOs → Appendix A).
+- [ ] **`encoding` allowlist (SECURITY, origin B.4 security review — MEDIUM).** The `start` handler MUST validate `encoding` against a closed allowlist (e.g. `linear16`/`pcm`) **before** building `CascadeStartParams` — the orchestrator interpolates `Encoding` into a content-type (`audio/{encoding}`), so an unvalidated value is a header-injection surface at the real provider. The orchestrator stays a non-boundary; the WS handler is the boundary (ARCH-019). Reject invalid → `cascade.invalid_audio`. _(Also clamp/validate provider-sourced `TtsFirstAudio.ContentType` at the serialization boundary — security low.)_
+- [ ] **`Overall` `LatencyStage` enum member (cross-doc, origin B.4).** Add `Overall` to `LatencyStage` (ARCH-005 + Appendix A) and re-stamp the turn-lifecycle events (`turn.recording.started`/`.stopped` introduced here + `turn.completed`) as `Overall` instead of `Capture` — bundled here since C.4 first emits the `turn.recording.*` events. _(Cosmetic for the aggregator, which keys by name; do it for doc/UI fidelity. Flag the enum change at Step 9 → orchestrator writes the ARCH-005/Appendix A rows.)_
+- [ ] **Stream-without-terminal hardening (origin B.4).** When a real STT/translation stream ends WITHOUT a terminal event (final/failed) — unreachable via fakes — the orchestrator currently yields `Done(Completed)` with a missing target + no error. Harden to a `<stage>.unknown` failure (pairs with the deferred generic-`Exception`→`<stage>.unknown` catch); add a test with the real providers.
+- [ ] Files: NEW — `Cascade/CascadeWebSocketEndpoint.cs`, `Controllers/CascadeController.cs`; extended — `Program.cs` (DI binding real vs fake by env), `Sessions/SessionModels.cs` (`Overall` enum member), `Cascade/CascadeStreamingOrchestrator.cs` (`turn.recording.*` stamps + stream-without-terminal hardening).
+- [ ] Anchors: `ARCH-009`, `ARCH-011`, `ARCH-019`. Cross-doc invariant: extended (WS message DTOs + `CascadeOutputEvent`/`CascadeStartParams` + `LatencyStage.Overall` → Appendix A).
 
 ### C.5 — Cascade blob fallback endpoint
 - [ ] `POST /api/cascade/turn` (multipart): pre-recorded STT path → streamed translation/TTS → single JSON response; **audio upload validation** (max ~10MB; content-type allow-list; violations → `cascade.invalid_audio` 413/415). Explicitly the documented non-streaming fallback.
@@ -327,7 +336,7 @@ The project is "done" (ARCH-025 + PRD success criteria) when:
 - [ ] Anchors: `ARCH-010`, `ARCH-007`. Cross-doc invariant: none.
 
 ### E.4 — Manual turn control + event mapping + metrics
-- [ ] After DC opens, `session.update turn_detection=null`. Start → `input_audio_buffer.clear` + stream mic; Stop → `input_audio_buffer.commit` + `response.create` (stamp `turn.recording.stopped`). Map GA events per `ARCH-010` table (`response.output_audio.delta`, `response.output_audio_transcript.delta`, `conversation.item.input_audio_transcription.delta/.completed`); render source+target transcripts (show "source unavailable" if input transcription off); report normalized events to backend.
+- [ ] After DC opens, `session.update turn_detection=null`. Start → `input_audio_buffer.clear` + stream mic; Stop → `input_audio_buffer.commit` + `response.create` (stamp `turn.recording.stopped`). Map GA events per `ARCH-010` table (`response.output_audio.delta`, `response.output_audio_transcript.delta`, `conversation.item.input_audio_transcription.delta/.completed`); render source+target transcripts (show "source unavailable" if input transcription off); report normalized events to backend. _(B.3 origin: emit `realtime.session.connecting` at WebRTC connect-start — browser clock — so `realtime_connect_ms` computes; else it stays honest `n/a`.)_
 - [ ] Files: extended — `web/src/realtime/*`, `web/src/components/TranscriptPanel.tsx`.
 - [ ] Anchors: `ARCH-010`, `ARCH-013`. Cross-doc invariant: none.
 
@@ -354,8 +363,10 @@ The project is "done" (ARCH-025 + PRD success criteria) when:
 
 ### F.1 — Evaluation endpoints
 - [ ] `GET /api/evaluation/phrases`; `POST /api/evaluation/transcribe` (STT-only, no translation/TTS — returns hypothesis + sttProvider/model + latency); `POST /api/evaluation/wer` (returns full `WerResult` incl. normalized fields).
+- [ ] **Hypothesis length cap (SECURITY, origin B.6 security review — MEDIUM).** `POST /api/evaluation/wer` MUST cap the request-body hypothesis length (suggest ~2000 chars / ~500 words → `400 evaluation.invalid_phrase`) **before** invoking `WerCalculator.Compute` — the calculator allocates an `n×m` DP matrix, so an unbounded hypothesis is a memory-DoS surface once it's request-reachable. (The calculator itself is safe; the boundary is F.1's job — ARCH-019.)
+- [ ] **`LoadError` never surfaced (security low, origin B.6 / B.5 family).** `EvaluationPhraseStore.LoadError` (and any `Result.Error`) embeds path/`ex.Message` fragments — the controller exposes only `isLoaded` / a fixed-safe message, never the raw error (pairs with B.8/B.9 sanitizer).
 - [ ] Files: NEW — `Controllers/EvaluationController.cs`, `Evaluation/EvaluationService.cs`.
-- [ ] Anchors: `ARCH-009`, `ARCH-015`. Cross-doc invariant: extended (DTOs → Appendix A).
+- [ ] Anchors: `ARCH-009`, `ARCH-015`, `ARCH-019`. Cross-doc invariant: extended (DTOs → Appendix A).
 
 ### F.2 — Evaluation panel (standalone, MUST)
 - [ ] `EvaluationPanel`: phrase selector, reference display, record+transcribe a phrase, WER result, "WER is STT-only" explanation (Flow D). Persists WER on the session.
@@ -435,7 +446,7 @@ Owner decisions are **resolved** (reflected in ARCHITECTURE.md): full streaming 
 
 - Confirm `gpt-realtime`/`gpt-realtime-mini` access in the target OpenAI account (E.1).
 - Confirm Realtime input-transcription deltas with the chosen config; else degrade source-transcript UI (E.4).
-- Re-verify `pricing.json` values, esp. `gpt-5.4-mini` + realtime token-conversion factors (A.4).
+- Re-verify `pricing.json` values, esp. `gpt-5.4-mini` + realtime token-conversion factors (A.4). _(B.5 chose `CostEstimator.RealtimeTokensPerAudioSecond = 50` as the working estimate — commented as such + surfaced in every realtime estimate's `Assumptions`; confirm against OpenAI realtime audio-token billing before relying on realtime cost numbers. `gpt-5.4-mini` rates still `0.0`.)_
 - Confirm capture format/no-transcoding on target browsers (C.1/D.3).
 
 ---
@@ -453,3 +464,11 @@ _(Append-only, date-stamped.)_
   - **Cycle:** impl context hit **ACTION (76%)** at the B.2 boundary → **full team wind-down** (no successors spawned; the human restarts the team fresh). Clean break — nothing in flight, B.2 fully committed + documented.
   - Next session target: **B.3 (latency model + `MetricsAggregator`)**.
   - Reference: implementer session doc `001-2026-05-28-phase-a-plus-b1-b2.md`; briefs `001`–`007`; lessons §1–§6.
+
+- **2026-05-28 — Phase B core seams (B.3–B.6) landed; crash-recovered round close.**
+  - Built the four mid-Phase-B deterministic seams against fakes: metrics/latency layer (B.3 `620f542`), streaming cascade orchestrator (B.4 `9b679b1` — CRITICAL, the spec centerpiece), cost estimator (B.5 `af40aaa`), WER calculator + scripted-phrase store (B.6 `edcbacd`). Session doc `002` (`88049bb`). **50 → 92 tests green** (B.3 +8, B.4 +9, B.5 +12, B.6 +13).
+  - Decisions: aggregate metrics from absolute `Timestamp` (cross-clock safe), `relativeMs` is display-only, factory-clamps-but-aggregator-doesn't (lesson §7); cascade = nested per-segment loop with per-event idle-timeout + OCE-filter caller-cancel split (lesson §8); cost branches on basis, a `0.0` rate ≠ absent config, cascade → one composite estimate (lesson §9); WER normalize + DP-backtrace S/I/D, unbounded, empty-ref precondition (lesson §10).
+  - Hot-routed this round: ARCH-013 metric-origins · ARCH-012 STT-idle-timeout · ARCH-011 stage-label · ARCH-014 estimator-conventions · ARCH-015 WER-note · ARCH-028 `EVALUATION_PHRASES_PATH`; lessons §7–§10 + four `server/CLAUDE.md` index rows. Two precondition Findings folded into phase tasks: **C.4** `encoding` allowlist (MEDIUM) + **F.1** hypothesis-length cap (MEDIUM); related sanitizer-lows into B.8 / F.1. B.3 cross-doc invariant corrected to **none** (consumes existing A.3 `LatencyEvent`).
+  - **Crash recovery:** predecessor orchestrator died mid-`/orchestrate-end` (machine shutdown). Slice commits (`620f542`/`9b679b1`/`af40aaa`/`edcbacd`) + session doc (`88049bb`) were already committed; only the round-seal (doc reconciliation) was outstanding. Successor verified the predecessor's uncommitted edits complete + correct, advanced Currently-in-progress → B.7a, appended this entry, and sealed the round.
+  - Next session target: **B.7a (session store + persistence writer + sentinel — SAFETY)**; brief `012` drafted.
+  - Reference: implementer session doc `002-2026-05-28-phase-b-b3-b6.md`; briefs `008`–`012`; lessons §7–§10.
