@@ -17,6 +17,8 @@
 
 **Phase B — B.7a (session store + persistence writer + sentinel — SAFETY)** is the next slice. Brief drafted: `docs/briefs/012-B.7a-session-store-persistence-sentinel.md` (B.7 is split for safety-commit isolation into **B.7a** store/writer/sentinel — own commit + mandatory `security-reviewer` pass — and **B.7b** `SessionSummaryService`, read-only aggregation, separate brief/commit). **⏸ Predecessor team crash-recovered + wound down at the B.6 boundary; a FRESH team resumes here.**
 
+- **Team paused 2026-05-28 (crash-recovered close 2026-05-29)** — handoff doc: `docs/team-handoffs/002-2026-05-28-crash-recovery-phase-b.md` · last round-seal: `352029c` · next-slice target: **B.7a** (session store + persistence writer + sentinel — SAFETY).
+
 **Last landed:** `B.6` WER calculator + phrase store (`edcbacd`); also `B.5` cost (`af40aaa`), `B.4` cascade orchestrator (`9b679b1`), `B.3` metrics (`620f542`); session doc `002` (`88049bb`). **Phase A COMPLETE (A.1–A.5) + Phase B B.1–B.6.** **92 tests green**, runnable host on `:5179`. **Commit cadence:** commit-as-we-go on `main` per logical unit (push deferred; no remote configured).
 
 **Open safety/handoff items for the fresh team** (full detail in session doc `002` + lessons §7–§10):

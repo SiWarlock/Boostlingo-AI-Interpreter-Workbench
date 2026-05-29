@@ -3,7 +3,7 @@
 **Date:** 2026-05-28
 **Track:** `boostlingo-main`
 **Predecessor handoff:** first handoff
-**Successor handoff:** _(filled in when the next /team-end runs)_
+**Successor handoff:** `docs/team-handoffs/002-2026-05-28-crash-recovery-phase-b.md`
 **Round-seal commit at handoff:** `4be9397`
 
 ## Why this handoff exists
