@@ -15,16 +15,74 @@ namespace AiInterpreter.Api.Cascade;
 /// </summary>
 internal static class CascadeWsMapping
 {
+    // Known audio MIME types we forward verbatim (normalized lowercase); anything else is clamped to the
+    // default so a garbage/injected provider Content-Type can't cross the wire (C.4b, ARCH-009 hygiene).
+    private const string DefaultAudioContentType = "audio/mpeg";
+    private static readonly HashSet<string> AllowedAudioContentTypes = new(StringComparer.Ordinal)
+    {
+        "audio/mpeg", "audio/wav", "audio/pcm", "audio/ogg", "audio/opus", "audio/aac", "audio/flac",
+    };
+
     /// <summary>Maps a <see cref="CascadeOutputEvent"/> to the exact ARCH-009 server message (camelCase via JsonDefaults).</summary>
     public static object ToServerMessage(CascadeOutputEvent ev, string turnId) => ev switch
     {
         Transcript t => (object)new { type = "transcript", segment = t.Segment },
         Latency l => new { type = "latency", @event = l.Event },
-        Audio a => new { type = "audio", contentType = a.ContentType, seq = a.Seq, base64 = Convert.ToBase64String(a.Bytes) },
+        // ContentType is provider-sourced — clamp it to the audio allowlist before it crosses the wire.
+        Audio a => new { type = "audio", contentType = ClampContentType(a.ContentType), seq = a.Seq, base64 = Convert.ToBase64String(a.Bytes) },
         Error e => new { type = "error", error = e.ProviderError },
         Done d => new { type = "done", turnId, status = d.Status },
         _ => throw new ArgumentOutOfRangeException(nameof(ev), ev.GetType().Name, "Unknown cascade output event."),
     };
+
+    /// <summary>
+    /// Clamps a provider-sourced audio Content-Type to a known audio allowlist (case-insensitive, trimmed,
+    /// parameters stripped by exact-match-or-fallback). An unknown/garbage/empty/null value falls back to
+    /// <c>audio/mpeg</c> (C.4b — the cascade emits mp3 in practice; this is defense-in-depth at the boundary).
+    /// </summary>
+    public static string ClampContentType(string? contentType)
+    {
+        var normalized = contentType?.Trim().ToLowerInvariant() ?? string.Empty;
+        return AllowedAudioContentTypes.Contains(normalized) ? normalized : DefaultAudioContentType;
+    }
+
+    /// <summary>
+    /// Folds the accumulated cascade events into the cost-usage inputs: translation tokens summed ADDITIVELY
+    /// across segments (one <c>translation.final</c> per segment — overwriting would undercount a multi-segment
+    /// turn, the C.4a fix this pins) and target characters accumulated across target finals. Absent tokens stay
+    /// null (cost degrades, never fabricated 0). Pure — the C.4b extraction of the C.4a inline accumulation.
+    /// </summary>
+    public static CascadeCostInputs FoldCostInputs(IReadOnlyList<CascadeOutputEvent> events)
+    {
+        int? inputTokens = null;
+        int? outputTokens = null;
+        long targetChars = 0;
+
+        foreach (var ev in events)
+        {
+            switch (ev)
+            {
+                case Latency l when l.Event.Name == LatencyEventNames.TranslationFinal:
+                    if (l.Event.Metadata.TryGetValue("inputTokens", out var it) && int.TryParse(it, out var iv))
+                    {
+                        inputTokens = (inputTokens ?? 0) + iv;
+                    }
+
+                    if (l.Event.Metadata.TryGetValue("outputTokens", out var ot) && int.TryParse(ot, out var ov))
+                    {
+                        outputTokens = (outputTokens ?? 0) + ov;
+                    }
+
+                    break;
+
+                case Transcript t when t.Segment is { Role: "target", IsFinal: true }:
+                    targetChars += t.Segment.Text.Length;
+                    break;
+            }
+        }
+
+        return new CascadeCostInputs(inputTokens, outputTokens, targetChars);
+    }
 
     /// <summary>The <c>cost</c> message on a successful estimate; <c>null</c> when unavailable (B.5 degrade — no message, no crash).</summary>
     public static object? ToCostMessageOrNull(Result<CostEstimate> cost) =>
@@ -72,3 +130,6 @@ internal static class CascadeWsMapping
         };
     }
 }
+
+/// <summary>The cost-usage inputs folded from a turn's cascade events (C.4b). Area-local; not serialized.</summary>
+internal readonly record struct CascadeCostInputs(int? InputTokens, int? OutputTokens, long TargetChars);

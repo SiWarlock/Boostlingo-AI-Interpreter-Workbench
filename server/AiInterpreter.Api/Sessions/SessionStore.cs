@@ -131,6 +131,36 @@ public sealed class SessionStore
         }
     }
 
+    /// <summary>
+    /// Idempotently finalizes a turn to a terminal status (C.4b). If the turn is ALREADY terminal
+    /// (<see cref="TurnStatus.Completed"/>/<see cref="TurnStatus.Failed"/>), the <paramref name="transform"/>
+    /// is NOT applied and the existing turn is returned with <c>Applied=false</c> — so a second completion
+    /// (the WS terminal path colliding with the HTTP <c>/complete</c>, or a double call on either) can't
+    /// overwrite the terminal status / drift <c>CompletedAt</c>, and the caller can skip a redundant persist.
+    /// A fresh turn returns <c>Applied=true</c>. Null if the session or turn is unknown. (ARCH-016.)
+    /// </summary>
+    public FinalizeResult? FinalizeTurn(
+        string sessionId, string turnId, Func<InterpretationTurn, InterpretationTurn> transform)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var entry)) return null;
+        lock (entry.Gate)
+        {
+            var turns = entry.Session.Turns;
+            var idx = turns.FindIndex(t => t.TurnId == turnId);
+            if (idx < 0) return null;
+
+            var existing = turns[idx];
+            if (existing.Status is TurnStatus.Completed or TurnStatus.Failed)
+            {
+                return new FinalizeResult(existing, Applied: false); // idempotent — already terminal
+            }
+
+            var updated = transform(existing);
+            turns[idx] = updated;
+            return new FinalizeResult(updated, Applied: true);
+        }
+    }
+
     /// <summary>Records a mode transition. Returns false (no throw) if the session id is unknown.</summary>
     public bool RecordModeTransition(string sessionId, ModeTransitionEvent transition)
     {
@@ -139,13 +169,21 @@ public sealed class SessionStore
         return true;
     }
 
-    /// <summary>Stamps <c>EndedAt</c> from the clock and returns the ended session, or null if unknown.</summary>
+    /// <summary>
+    /// Stamps <c>EndedAt</c> from the clock and returns the ended session, or null if unknown. Idempotent
+    /// (C.4b): an already-ended session is returned unchanged (no re-stamp) so a second <c>/end</c> — or the
+    /// WS terminal path colliding with the HTTP end path — can't move the end time.
+    /// </summary>
     public InterpretationSession? End(string sessionId)
     {
         if (!_sessions.TryGetValue(sessionId, out var entry)) return null;
         lock (entry.Gate)
         {
-            entry.Session = entry.Session with { EndedAt = _clock.UtcNow };
+            if (entry.Session.EndedAt is null)
+            {
+                entry.Session = entry.Session with { EndedAt = _clock.UtcNow };
+            }
+
             return entry.Session;
         }
     }
@@ -170,3 +208,10 @@ public sealed class SessionStore
     // illustrative ARCH-009 "turn_001" is not a contract.
     private static string GenerateTurnId() => "turn_" + Guid.NewGuid().ToString("N")[..8];
 }
+
+/// <summary>
+/// The outcome of <see cref="SessionStore.FinalizeTurn"/> (C.4b): the resulting turn + whether the
+/// transform was <see cref="Applied"/> (false when the turn was already terminal — the caller skips a
+/// redundant persist). Area-local; not serialized.
+/// </summary>
+public sealed record FinalizeResult(InterpretationTurn Turn, bool Applied);

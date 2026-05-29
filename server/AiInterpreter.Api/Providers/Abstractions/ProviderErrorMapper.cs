@@ -24,13 +24,22 @@ public static class ProviderErrorMapper
         OperationCanceledException => Timeout(provider, stage),
         TimeoutException => Timeout(provider, stage),
         HttpRequestException http => MapHttpStatus(http.StatusCode, provider, stage),
-        _ => new ProviderError(provider, stage, $"{stage}.unknown",
-            $"An unexpected {stage} error occurred.", Retryable: false),
+        _ => Unknown(provider, stage),
     };
 
     /// <summary>STT returned an empty final transcript — a cascade-level short-circuit, not an STT failure.</summary>
     public static ProviderError EmptyTranscript(string provider) => new(
         provider, "cascade", "cascade.empty_transcript", "No speech was detected in the audio.", Retryable: true);
+
+    /// <summary>
+    /// A non-exception, fail-closed outcome: a <b>started</b> stage stream ended WITHOUT its terminal event
+    /// (no <c>TranslationFinal</c> / <c>TtsComplete</c> / <c>SttFinal</c>). The B.4 orchestrator raises this
+    /// directly (like <see cref="Timeout"/> / <see cref="EmptyTranscript"/>) so a terminal-less real-provider
+    /// stream fails closed instead of silently skipping/completing (ARCH-011/018). Non-retryable; same fixed
+    /// SafeMessage as the <see cref="Map"/> generic fallback (never echoes provider text — lesson §5/§13).
+    /// </summary>
+    public static ProviderError Unknown(string provider, string stage) => new(
+        provider, stage, $"{stage}.unknown", $"An unexpected {stage} error occurred.", Retryable: false);
 
     /// <summary>A stage exceeded its timeout (the B.4 CancelAfter path calls this directly).</summary>
     public static ProviderError Timeout(string provider, string stage) => new(

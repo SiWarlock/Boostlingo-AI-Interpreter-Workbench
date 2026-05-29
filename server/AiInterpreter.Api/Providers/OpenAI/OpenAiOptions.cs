@@ -31,8 +31,9 @@ public sealed class OpenAiTtsOptions
     public string Voice { get; set; } = "alloy";
 
     /// <summary>
-    /// Optional per-language voice override map (e.g. "es" → a Spanish-leaning voice). Part of the
-    /// ARCH-012 enumeration; unused until the TTS provider lands (C.3).
+    /// Optional per-language voice override map (e.g. "es" → a Spanish-leaning voice), keyed by the
+    /// lowercase language code. Part of the ARCH-012 enumeration; resolved to the effective voice by
+    /// <see cref="OpenAiTtsMapping.ResolveVoice"/> (C.4b) — an explicit request voice still wins over it.
     /// </summary>
     public Dictionary<string, string>? VoiceByLanguage { get; set; }
 

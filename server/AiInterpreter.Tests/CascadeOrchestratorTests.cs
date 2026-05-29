@@ -284,6 +284,124 @@ public class CascadeOrchestratorTests
         Assert.DoesNotContain(events, e => e is Error);
     }
 
+    // === C.4b — stream-without-terminal hardening (ARCH-011/018: fail closed, never silently skip/complete) ===
+
+    // A translation stream that STARTS (Started + partials) but ends with NO TranslationFinal — unreachable
+    // via the B.2 fakes; a real SSE that ends without response.completed produces this.
+    private sealed class TranslationStartedNoFinalProvider : ITranslationProvider
+    {
+        public async IAsyncEnumerable<TranslationEvent> TranslateAsync(
+            TranslationRequest request, [EnumeratorCancellation] CancellationToken ct)
+        {
+            await Task.CompletedTask;
+            yield return new TranslationStarted(DateTimeOffset.UtcNow);
+            yield return new TranslationPartial("hol", DateTimeOffset.UtcNow);
+            // stream ends — no TranslationFinal, no TranslationFailed
+        }
+    }
+
+    // A TTS stream that STARTS (Started + first audio + a chunk) but ends with NO TtsComplete.
+    private sealed class TtsStartedNoCompleteProvider : ITtsProvider
+    {
+        public async IAsyncEnumerable<TtsEvent> SynthesizeAsync(
+            TtsRequest request, [EnumeratorCancellation] CancellationToken ct)
+        {
+            await Task.CompletedTask;
+            yield return new TtsStarted(DateTimeOffset.UtcNow);
+            yield return new TtsFirstAudio("audio/mpeg", DateTimeOffset.UtcNow);
+            yield return new TtsAudioChunk(new byte[] { 1, 2 }, 0, DateTimeOffset.UtcNow);
+            // stream ends — no TtsComplete, no TtsFailed
+        }
+    }
+
+    // An STT stream that emits a partial but NO final (a lost final — a real failure per Q4).
+    private sealed class SttPartialNoFinalProvider : ISttProvider
+    {
+        public async IAsyncEnumerable<SttEvent> TranscribeAsync(
+            SttRequest request, [EnumeratorCancellation] CancellationToken ct)
+        {
+            await Task.CompletedTask;
+            yield return new SttStarted(DateTimeOffset.UtcNow);
+            yield return new SttPartial("hello", DateTimeOffset.UtcNow);
+            // stream ends — partial seen, no final
+        }
+    }
+
+    // An STT stream that ends cleanly with NO partial and NO final (silence — valid per Q4 → Completed).
+    private sealed class SttSilenceProvider : ISttProvider
+    {
+        public async IAsyncEnumerable<SttEvent> TranscribeAsync(
+            SttRequest request, [EnumeratorCancellation] CancellationToken ct)
+        {
+            await Task.CompletedTask;
+            yield return new SttStarted(DateTimeOffset.UtcNow);
+            // stream ends — no partial, no final
+        }
+    }
+
+    [Fact]
+    public async Task translation_stream_without_final_fails_closed()
+    {
+        var ttsSpy = new CountingTtsProvider(new FakeTtsProvider());
+
+        var events = await Run(
+            new FakeSttProvider(FakeSttBehavior.SuccessWithPartials), // a real STT final → translation invoked
+            new TranslationStartedNoFinalProvider(),
+            ttsSpy,
+            Params());
+
+        Assert.Equal("translation.unknown", events.OfType<Error>().Single().ProviderError.Code);
+        Assert.False(events.OfType<Error>().Single().ProviderError.Retryable);
+        Assert.Equal(TurnStatus.Failed, Assert.IsType<Done>(events[^1]).Status);
+        Assert.Contains(events, e => e is Transcript t && t.Segment.Role == "source"); // source kept
+        Assert.DoesNotContain(events, e => e is Transcript t && t.Segment.Role == "target" && t.Segment.IsFinal); // no target final
+        Assert.Equal(0, ttsSpy.Calls); // TTS skipped — translation never finalized
+    }
+
+    [Fact]
+    public async Task tts_stream_without_complete_fails_closed()
+    {
+        var events = await Run(
+            new FakeSttProvider(FakeSttBehavior.SuccessWithPartials),
+            new FakeTranslationProvider(FakeTranslationBehavior.TokenStreamThenFinal),
+            new TtsStartedNoCompleteProvider(),
+            Params());
+
+        Assert.Equal("tts.unknown", events.OfType<Error>().Single().ProviderError.Code);
+        Assert.Equal(TurnStatus.Failed, Assert.IsType<Done>(events[^1]).Status);
+        Assert.Contains(events, e => e is Transcript t && t.Segment.Role == "source" && t.Segment.IsFinal); // both transcripts kept
+        Assert.Contains(events, e => e is Transcript t && t.Segment.Role == "target" && t.Segment.IsFinal);
+    }
+
+    [Fact]
+    public async Task stt_partials_without_final_fails_closed()
+    {
+        var translationSpy = new CountingTranslationProvider(new FakeTranslationProvider());
+        var ttsSpy = new CountingTtsProvider(new FakeTtsProvider());
+
+        var events = await Run(new SttPartialNoFinalProvider(), translationSpy, ttsSpy, Params());
+
+        Assert.Equal("stt.unknown", events.OfType<Error>().Single().ProviderError.Code); // lost final = real failure
+        Assert.Equal(TurnStatus.Failed, Assert.IsType<Done>(events[^1]).Status);
+        Assert.Equal(0, translationSpy.Calls); // downstream never invoked
+        Assert.Equal(0, ttsSpy.Calls);
+    }
+
+    [Fact]
+    public async Task stt_clean_end_without_final_completes()
+    {
+        var translationSpy = new CountingTranslationProvider(new FakeTranslationProvider());
+        var ttsSpy = new CountingTtsProvider(new FakeTtsProvider());
+
+        var events = await Run(new SttSilenceProvider(), translationSpy, ttsSpy, Params());
+
+        // Silence (no partial, no final) is valid recording → Completed, no error (Q4).
+        Assert.Equal(TurnStatus.Completed, Assert.IsType<Done>(events[^1]).Status);
+        Assert.DoesNotContain(events, e => e is Error);
+        Assert.Equal(0, translationSpy.Calls);
+        Assert.Equal(0, ttsSpy.Calls);
+    }
+
     [Fact]
     public async Task caller_cancellation_propagates_not_mapped_to_timeout()
     {

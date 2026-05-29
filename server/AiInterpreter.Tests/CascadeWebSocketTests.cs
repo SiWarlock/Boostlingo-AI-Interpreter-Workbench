@@ -150,6 +150,108 @@ public class CascadeWebSocketTests
         Assert.Equal(TurnStatus.Completed, turn.Status);
     }
 
+    // === Group 5 — ContentType clamp (C.4b — provider-sourced content-type hygiene before serialize) ===
+
+    [Theory] // allowlisted audio types pass (case-insensitive, normalized lowercase); anything else → audio/mpeg.
+    [InlineData("audio/mpeg", "audio/mpeg")]
+    [InlineData("audio/wav", "audio/wav")]
+    [InlineData("audio/pcm", "audio/pcm")]
+    [InlineData("AUDIO/WAV", "audio/wav")]                       // case-insensitive match, normalized
+    [InlineData("  audio/ogg  ", "audio/ogg")]                   // trimmed
+    [InlineData("text/html", "audio/mpeg")]                       // non-audio → fallback
+    [InlineData("audio/mpeg; codecs=evil", "audio/mpeg")]        // parametrized/garbage → fallback (strips params)
+    [InlineData("", "audio/mpeg")]                                // empty → fallback
+    [InlineData("not a mime type", "audio/mpeg")]                // garbage → fallback
+    public void content_type_clamp(string? input, string expected)
+    {
+        Assert.Equal(expected, CascadeWsMapping.ClampContentType(input));
+    }
+
+    [Fact]
+    public void content_type_clamp_null_falls_back()
+    {
+        Assert.Equal("audio/mpeg", CascadeWsMapping.ClampContentType(null));
+    }
+
+    [Fact]
+    public void audio_message_content_type_is_clamped()
+    {
+        // The Audio→WS-message mapping must clamp a garbage provider content-type before it crosses the wire.
+        var root = Serialize(CascadeWsMapping.ToServerMessage(new Audio(new byte[] { 1 }, 0, "text/html"), "turn_1"));
+
+        Assert.Equal("audio/mpeg", root.GetProperty("contentType").GetString()); // clamped, not echoed
+    }
+
+    // === Group 6 — multi-segment cost accumulation fold (C.4b — pins the C.4a additive undercount fix) ===
+
+    [Fact]
+    public void multi_segment_cost_accumulation_sums_additively()
+    {
+        // Three translated segments: tokens must SUM across segments (a single-segment-overwrite impl would
+        // report only the last segment → undercount). Target chars accumulate across the target finals.
+        var events = new List<CascadeOutputEvent>
+        {
+            TranslationFinal(inputTokens: 10, outputTokens: 20),
+            TargetFinal("hola"),   // 4
+            TranslationFinal(inputTokens: 5, outputTokens: 7),
+            TargetFinal("mundo!"), // 6
+            TranslationFinal(inputTokens: 1, outputTokens: 2),
+            TargetFinal("adios"),  // 5
+        };
+
+        var folded = CascadeWsMapping.FoldCostInputs(events);
+
+        Assert.Equal(16, folded.InputTokens);   // 10 + 5 + 1
+        Assert.Equal(29, folded.OutputTokens);  // 20 + 7 + 2
+        Assert.Equal(15, folded.TargetChars);   // 4 + 6 + 5
+    }
+
+    [Fact]
+    public void cost_fold_yields_null_tokens_when_no_translation_final()
+    {
+        // No translation.final events → tokens stay null (cost degrades; never fabricated 0). Source-only
+        // transcripts do not contribute target chars.
+        var events = new List<CascadeOutputEvent>
+        {
+            new Transcript(new TranscriptSegment("src-0", "source", "hola", IsFinal: true, "deepgram", When, ClockSource.Server)),
+        };
+
+        var folded = CascadeWsMapping.FoldCostInputs(events);
+
+        Assert.Null(folded.InputTokens);
+        Assert.Null(folded.OutputTokens);
+        Assert.Equal(0, folded.TargetChars);
+    }
+
+    [Fact]
+    public void cost_fold_ignores_partial_target_transcripts()
+    {
+        // Only IsFinal target transcripts contribute target chars — interspersed partials must NOT be counted
+        // (the orchestrator emits a partial per token + one final per segment).
+        var events = new List<CascadeOutputEvent>
+        {
+            new Transcript(new TranscriptSegment("tgt-0", "target", "ho", IsFinal: false, "openai", When, ClockSource.Server)),
+            new Transcript(new TranscriptSegment("tgt-0", "target", "hola", IsFinal: false, "openai", When, ClockSource.Server)),
+            TargetFinal("hola"), // 4 — the only contributor
+        };
+
+        var folded = CascadeWsMapping.FoldCostInputs(events);
+
+        Assert.Equal(4, folded.TargetChars); // partials (2 + 4 chars) excluded
+    }
+
+    private static Latency TranslationFinal(int inputTokens, int outputTokens) =>
+        new(new LatencyEvent(
+            LatencyEventNames.TranslationFinal, LatencyStage.Translation, When, 0, ClockSource.Server,
+            new Dictionary<string, string>
+            {
+                ["inputTokens"] = inputTokens.ToString(),
+                ["outputTokens"] = outputTokens.ToString(),
+            }));
+
+    private static Transcript TargetFinal(string text) =>
+        new(new TranscriptSegment("tgt-0", "target", text, IsFinal: true, "openai", When, ClockSource.Server));
+
     // === helpers ===
 
     private static string Json(object message) => JsonSerializer.Serialize(message, JsonDefaults.Options);

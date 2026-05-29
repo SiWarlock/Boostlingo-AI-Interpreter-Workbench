@@ -1,4 +1,5 @@
 using AiInterpreter.Api.Providers.Abstractions;
+using AiInterpreter.Api.Sessions;
 
 namespace AiInterpreter.Api.Providers.OpenAI;
 
@@ -28,7 +29,7 @@ internal static class OpenAiTtsMapping
         {
             ["model"] = string.IsNullOrWhiteSpace(request.Model) ? options.Model : request.Model,
             ["input"] = request.Text,
-            ["voice"] = string.IsNullOrWhiteSpace(request.Voice) ? options.Voice : request.Voice,
+            ["voice"] = ResolveVoice(request.Voice, request.TargetLanguage, options),
             ["response_format"] = string.IsNullOrWhiteSpace(request.ResponseFormat) ? options.ResponseFormat : request.ResponseFormat,
             ["stream_format"] = "audio",
         };
@@ -60,6 +61,30 @@ internal static class OpenAiTtsMapping
     /// </summary>
     public static TtsFailed ToFailed(Exception exception, DateTimeOffset timestamp) =>
         new(ProviderErrorMapper.Map(exception, Provider, Stage), timestamp);
+
+    /// <summary>
+    /// Resolves the effective TTS voice (C.4b — <c>VoiceByLanguage</c> resolution). Precedence: an explicit
+    /// non-blank request voice wins (per-turn override); else the per-target-language map
+    /// <c>VoiceByLanguage[targetLanguage]</c> (keyed by the lowercase code "en"/"es"); else the
+    /// <c>options.Voice</c> default. Keeping it here (not in the orchestrator) keeps the cascade provider-agnostic.
+    /// </summary>
+    public static string ResolveVoice(string? requestVoice, LanguageCode targetLanguage, OpenAiTtsOptions options)
+    {
+        if (!string.IsNullOrWhiteSpace(requestVoice))
+        {
+            return requestVoice;
+        }
+
+        var key = targetLanguage.ToString().ToLowerInvariant(); // LanguageCode.Es -> "es"
+        if (options.VoiceByLanguage is not null
+            && options.VoiceByLanguage.TryGetValue(key, out var mapped)
+            && !string.IsNullOrWhiteSpace(mapped))
+        {
+            return mapped;
+        }
+
+        return options.Voice;
+    }
 
     /// <summary>The response `Content-Type` header first (real value); else derive from `response_format`.</summary>
     public static string ResolveContentType(string? header, string responseFormat)

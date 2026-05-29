@@ -140,6 +140,45 @@ public class OpenAiTtsProviderTests
         Assert.Equal("audio", root.GetProperty("stream_format").GetString());
     }
 
+    // === Group 6 — ResolveVoice precedence (C.4b — VoiceByLanguage resolution) ===
+
+    [Theory] // explicit non-empty request voice wins; else VoiceByLanguage[targetLang]; else options.Voice default.
+    [InlineData("nova", LanguageCode.Es, "nova")]   // explicit request voice wins over the map + default
+    [InlineData("", LanguageCode.Es, "shimmer")]    // blank request → map hit for "es"
+    [InlineData("   ", LanguageCode.Es, "shimmer")] // whitespace request treated as blank → map hit
+    [InlineData("", LanguageCode.En, "alloy")]      // blank request, no "en" map key → options.Voice default
+    public void resolve_voice_precedence(string requestVoice, LanguageCode targetLang, string expected)
+    {
+        var options = new OpenAiTtsOptions
+        {
+            Voice = "alloy",
+            VoiceByLanguage = new Dictionary<string, string> { ["es"] = "shimmer" },
+        };
+
+        Assert.Equal(expected, OpenAiTtsMapping.ResolveVoice(requestVoice, targetLang, options));
+    }
+
+    [Fact]
+    public void resolve_voice_falls_back_to_default_when_map_absent()
+    {
+        var options = new OpenAiTtsOptions { Voice = "alloy", VoiceByLanguage = null };
+
+        Assert.Equal("alloy", OpenAiTtsMapping.ResolveVoice("", LanguageCode.Es, options));
+    }
+
+    [Fact]
+    public async Task request_body_voice_resolved_via_voice_by_language()
+    {
+        // End-to-end: a blank request voice + a VoiceByLanguage map → the resolved voice lands in the body.
+        var options = new OpenAiTtsOptions { Voice = "alloy", VoiceByLanguage = new Dictionary<string, string> { ["es"] = "shimmer" } };
+        var handler = new StubHandler(new byte[] { 1, 2 }, "audio/mpeg", chunkSize: 0);
+
+        await Collect(Provider(handler, options).SynthesizeAsync(Req(voice: ""), default));
+
+        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        Assert.Equal("shimmer", doc.RootElement.GetProperty("voice").GetString());
+    }
+
     // === helpers ===
 
     private static void AssertChunk(TtsEvent e, int seq, byte[] bytes)

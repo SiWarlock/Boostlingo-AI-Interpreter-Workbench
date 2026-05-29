@@ -55,14 +55,67 @@ public class CascadeStartValidationTests
     [Fact]
     public void malformed_start_json_rejected()
     {
+        // C.4b Q5: malformed JSON is a malformed *request* frame, not bad *audio* — distinct, honest code.
         var parsed = CascadeStartValidation.ParseStart("{ not json");
 
         Assert.Null(parsed.Params);
-        Assert.Equal("cascade.invalid_audio", parsed.Error!.Code);
+        Assert.Equal("cascade.invalid_request", parsed.Error!.Code);
+        Assert.False(parsed.Error.Retryable);
     }
 
-    private static string StartJson(string encoding) =>
+    [Theory] // C.4b field validation (ARCH-019): missing/blank ids + non-positive sample rate are rejected
+             // BEFORE building CascadeStartParams (today they fall through to empty-string/0).
+    [InlineData("", "turn_1", 48000)]   // blank sessionId
+    [InlineData("s1", "", 48000)]       // blank turnId
+    [InlineData("s1", "turn_1", 0)]     // sampleRate <= 0
+    [InlineData("s1", "turn_1", -1)]    // negative sampleRate
+    public void start_frame_rejects_missing_fields(string sessionId, string turnId, int sampleRate)
+    {
+        var parsed = CascadeStartValidation.ParseStart(StartJsonFull(sessionId, turnId, "linear16", sampleRate));
+
+        Assert.Null(parsed.Params); // not built
+        Assert.Equal("cascade.invalid_request", parsed.Error!.Code);
+        Assert.False(parsed.Error.Retryable);
+    }
+
+    [Fact] // ARCH-019 / lesson §16: cap client-supplied start-frame strings — sessionId/turnId are echoed
+           // (turnId in every `done`) + used as store keys; an unbounded value is a reflection/alloc surface.
+    public void start_frame_rejects_oversized_field()
+    {
+        var huge = new string('x', 300);
+        var parsed = CascadeStartValidation.ParseStart(StartJsonFull(huge, "turn_1", "linear16", 48000));
+
+        Assert.Null(parsed.Params); // not built
+        Assert.Equal("cascade.invalid_request", parsed.Error!.Code);
+        Assert.False(parsed.Error.Retryable);
+    }
+
+    [Fact]
+    public void valid_full_start_frame_builds_params()
+    {
+        var parsed = CascadeStartValidation.ParseStart(StartJsonFull("s1", "turn_1", "linear16", 16000));
+
+        Assert.Null(parsed.Error);
+        Assert.NotNull(parsed.Params);
+        Assert.Equal(16000, parsed.Params!.SampleRate);
+    }
+
+    [Fact] // ARCH-018 error-shape precision: malformed JSON vs disallowed encoding vs missing field each map
+           // to their distinct rejection code (a single parametrized Invalid(...) factory backs them).
+    public void start_frame_message_precision()
+    {
+        Assert.Equal("cascade.invalid_request",
+            CascadeStartValidation.ParseStart("{ not json").Error!.Code);                        // malformed
+        Assert.Equal("cascade.invalid_audio",
+            CascadeStartValidation.ParseStart(StartJsonFull("s1", "turn_1", "mp3", 48000)).Error!.Code); // bad encoding (SECURITY allowlist)
+        Assert.Equal("cascade.invalid_request",
+            CascadeStartValidation.ParseStart(StartJsonFull("", "turn_1", "linear16", 48000)).Error!.Code); // missing field
+    }
+
+    private static string StartJson(string encoding) => StartJsonFull("s1", "turn_1", encoding, 48000);
+
+    private static string StartJsonFull(string sessionId, string turnId, string encoding, int sampleRate) =>
         $$"""
-        {"type":"start","sessionId":"s1","turnId":"turn_1","direction":{"source":"en","target":"es"},"encoding":"{{encoding}}","sampleRate":48000,"translationModel":"gpt-5.4-nano","ttsVoice":"alloy"}
+        {"type":"start","sessionId":"{{sessionId}}","turnId":"{{turnId}}","direction":{"source":"en","target":"es"},"encoding":"{{encoding}}","sampleRate":{{sampleRate}},"translationModel":"gpt-5.4-nano","ttsVoice":"alloy"}
         """;
 }

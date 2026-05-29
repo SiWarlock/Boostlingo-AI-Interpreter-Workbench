@@ -79,6 +79,9 @@ public sealed class CascadeStreamingOrchestrator(
 
         var sttFirstPartialStamped = false;
         var segmentIndex = 0;
+        // A partial was seen but not yet finalized. If the STT stream ENDS while this is set, a final was
+        // lost — fail closed (Q4). A clean end with no pending partial (silence) stays Completed.
+        var pendingPartial = false;
 
         while (true)
         {
@@ -123,6 +126,15 @@ public sealed class CascadeStreamingOrchestrator(
 
             if (ended)
             {
+                // Stream ended WITH a dangling partial (no final) → a lost final is a real failure (Q4,
+                // ARCH-011/018). A clean end with no pending partial (silence) falls through to Completed.
+                if (pendingPartial)
+                {
+                    yield return new Error(ProviderErrorMapper.Unknown(SttProviderLabel, "stt"));
+                    yield return new Done(TurnStatus.Failed);
+                    yield break;
+                }
+
                 break;
             }
 
@@ -133,6 +145,7 @@ public sealed class CascadeStreamingOrchestrator(
                     break;
 
                 case SttPartial partial:
+                    pendingPartial = true;
                     if (!sttFirstPartialStamped)
                     {
                         sttFirstPartialStamped = true;
@@ -143,6 +156,7 @@ public sealed class CascadeStreamingOrchestrator(
                     break;
 
                 case SttFinal final:
+                    pendingPartial = false; // this segment's partials are now finalized
                     yield return Stamp(LatencyEventNames.SttFinal, LatencyStage.Stt, origin, SttProviderLabel);
                     yield return Seg($"src-{segmentIndex}", RoleSource, final.Text, true, SttProviderLabel, final.Timestamp);
 
@@ -166,8 +180,8 @@ public sealed class CascadeStreamingOrchestrator(
                         yield break;
                     }
 
-                    // Non-failure always yields a final per the provider contract; the guard defends
-                    // against a misbehaving provider ending without one (skip TTS, keep the source).
+                    // FinalText is guaranteed set on the non-failed path now (a terminal-less translation
+                    // stream fails closed above); the pattern guard is belt-and-suspenders.
                     if (translationOutcome.FinalText is { } targetText)
                     {
                         var ttsOutcome = new StageOutcome();
@@ -246,6 +260,11 @@ public sealed class CascadeStreamingOrchestrator(
 
             if (ended)
             {
+                // The stream ended without a TranslationFinal (the final-case yield-breaks, so reaching here
+                // means no terminal arrived). Translation is required for a non-empty segment → fail closed
+                // (C.4b, ARCH-011/018), rather than silently skipping TTS and completing the turn.
+                outcome.Failed = true;
+                yield return new Error(ProviderErrorMapper.Unknown(OpenAiProviderLabel, "translation"));
                 yield break;
             }
 
@@ -298,6 +317,7 @@ public sealed class CascadeStreamingOrchestrator(
         await using var stream = tts.SynthesizeAsync(request, cts.Token).GetAsyncEnumerator(cts.Token);
 
         var contentType = TtsDefaultContentType;
+        var completed = false; // set on TtsComplete; if the stream ends without it → fail closed (C.4b)
 
         while (true)
         {
@@ -330,6 +350,14 @@ public sealed class CascadeStreamingOrchestrator(
 
             if (ended)
             {
+                // A real provider yields TtsComplete then ends, so reaching `ended` WITHOUT having seen
+                // complete means the audio stream ended early (truncated) → fail closed (C.4b, ARCH-011/018).
+                if (!completed)
+                {
+                    outcome.Failed = true;
+                    yield return new Error(ProviderErrorMapper.Unknown(OpenAiProviderLabel, "tts"));
+                }
+
                 yield break;
             }
 
@@ -349,6 +377,7 @@ public sealed class CascadeStreamingOrchestrator(
                     break;
 
                 case TtsComplete:
+                    completed = true;
                     yield return Stamp(LatencyEventNames.TtsComplete, LatencyStage.Tts, origin, OpenAiProviderLabel);
                     break;
 

@@ -107,6 +107,22 @@ public class ProviderErrorMappingTests
     }
 
     [Fact]
+    public void unknown_factory_is_nonretryable_fixed_message()
+    {
+        // C.4b: the orchestrator raises Unknown(...) directly when a STARTED stage stream ends without its
+        // terminal event (a fail-closed, non-exception outcome — like Timeout/EmptyTranscript). Fixed safe
+        // message per code; non-retryable; no input echoed beyond the closed-set stage literal.
+        var err = ProviderErrorMapper.Unknown("openai", "translation");
+
+        Assert.Equal("translation.unknown", err.Code);
+        Assert.False(err.Retryable);
+        Assert.Equal("openai", err.Provider);
+        Assert.Equal("translation", err.Stage);
+        Assert.Equal("An unexpected translation error occurred.", err.SafeMessage); // fixed, matches the Map(...) fallback
+        Assert.Null(err.HttpStatusCode);
+    }
+
+    [Fact]
     public void stage_token_interpolates()
     {
         Assert.Equal("translation.timeout", ProviderErrorMapper.Timeout("openai", "translation").Code);

@@ -121,7 +121,9 @@ public sealed class SessionService : ISessionService
     public async Task<CompleteTurnOutcome?> CompleteTurnAsync(
         string sessionId, string turnId, CompleteTurnRequest request, CancellationToken cancellationToken = default)
     {
-        var completed = _store.UpdateTurn(sessionId, turnId, turn => turn with
+        // Idempotent terminal finalize (C.4b): the WS terminal path can collide with this HTTP /complete, so
+        // route through FinalizeTurn — an already-terminal turn is returned unchanged (no status overwrite).
+        var result = _store.FinalizeTurn(sessionId, turnId, turn => turn with
         {
             AudioDurationMs = request.AudioDurationMs ?? turn.AudioDurationMs,
             Transcripts = request.Transcripts ?? turn.Transcripts,
@@ -130,16 +132,23 @@ public sealed class SessionService : ISessionService
             Status = request.Status == TurnStatus.Failed ? TurnStatus.Failed : TurnStatus.Completed,
             CompletedAt = _clock.UtcNow,
         });
-        if (completed is null)
+        if (result is null)
         {
             return null; // turn unknown (the controller already confirmed the session exists)
         }
 
+        if (!result.Applied)
+        {
+            // Idempotent re-complete of an already-terminal turn: return the existing turn as a 200-shaped
+            // success (no persistenceWarning), skipping the redundant best-effort re-persist (B.9c-ii contract).
+            return new CompleteTurnOutcome(result.Turn, Result<string>.Success(string.Empty));
+        }
+
         // Per-turn persistence is BEST-EFFORT (ARCH-016, vs /end's MUST): write the whole session file
-        // and report success/failure; never crash the turn flow. Get is non-null here — UpdateTurn just
+        // and report success/failure; never crash the turn flow. Get is non-null here — FinalizeTurn just
         // resolved this session entry and the store has no eviction path.
         var persist = await _writer.WriteAsync(_store.Get(sessionId)!, cancellationToken);
-        return new CompleteTurnOutcome(completed, persist);
+        return new CompleteTurnOutcome(result.Turn, persist);
     }
 
     private string PricingVersion() =>
