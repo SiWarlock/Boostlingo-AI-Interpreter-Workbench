@@ -5,6 +5,7 @@ using AiInterpreter.Api.Metrics;
 using AiInterpreter.Api.Providers.Deepgram;
 using AiInterpreter.Api.Providers.OpenAI;
 using AiInterpreter.Api.Realtime;
+using AiInterpreter.Api.Security;
 using AiInterpreter.Api.Sessions;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -63,6 +64,12 @@ builder.Services.AddSingleton(new SessionPersistenceWriter(sessionDataDir));
 // B.3 MetricsAggregator per turn). Stateless singleton; entry-point consumers are B.9 (GET …/summary
 // + the /end snapshot) + F.3 (ComparisonSummary) — available-in-DI now, not a silent gap.
 builder.Services.AddSingleton<SessionSummaryService>();
+
+// Error sanitizer (B.8, safety invariant #4) — turns any Exception/ProviderError/Result.Error into a
+// safe normalized UiError (no stack/secret/raw-payload to the client; original logged server-side).
+// Injectable singleton (needs ILogger). Entry-point consumers are B.9 (global exception handler +
+// Result→DTO) + C.4 (WS error frames) — available-in-DI now, not a silent gap.
+builder.Services.AddSingleton<ErrorSanitizer>();
 
 // Shared JSON contract (A.3) on the HTTP pipeline — camelCase + enum-as-string + explicit null,
 // the same contract persistence uses, so API and persisted JSON cannot diverge.
