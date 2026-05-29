@@ -1,6 +1,8 @@
 using System.Net;
 using AiInterpreter.Api.Providers.Abstractions;
+using AiInterpreter.Api.Providers.Deepgram;
 using AiInterpreter.Api.Providers.Fakes;
+using AiInterpreter.Api.Providers.OpenAI;
 using AiInterpreter.Api.Sessions;
 
 namespace AiInterpreter.Tests;
@@ -127,6 +129,38 @@ public class ProviderBoundaryTests
         Assert.IsType<TtsComplete>(events[^1]);
         Assert.Single(events.OfType<TtsComplete>());
         Assert.DoesNotContain(events, e => e is TtsFailed);
+    }
+
+    // === C.5 — SafeMessage sentinel sweep across the REAL-provider mappings (invariant #4, mirrors B.7a) ===
+
+    [Fact]
+    public void safe_message_never_echoes_provider_text()
+    {
+        // Inject an exception whose message carries secret-/provider-shaped tokens; every real-provider
+        // mapping's SafeMessage must echo NONE of them (the mapper sets a fixed string per code).
+        const string secret = "sk-live-SECRET123";
+        var leaky = new HttpRequestException(
+            $"{secret} Bearer xyz err_msg=boom err_code=RATE_LIMIT at Provider.Call()", null, HttpStatusCode.TooManyRequests);
+        var ts = DateTimeOffset.UtcNow;
+
+        var errors = new[]
+        {
+            DeepgramSttMapping.ToFailed(leaky, ts).Error,
+            OpenAiTranslationMapping.ToFailed(leaky, ts).Error,
+            OpenAiTtsMapping.ToFailed(leaky, ts).Error,
+            ProviderErrorMapper.Map(leaky, "openai", "translation"),
+            ProviderErrorMapper.Unknown("deepgram", "stt"),
+        };
+
+        foreach (var err in errors)
+        {
+            Assert.DoesNotContain(secret, err.SafeMessage);
+            Assert.DoesNotContain("Bearer", err.SafeMessage);
+            Assert.DoesNotContain("err_msg", err.SafeMessage);
+            Assert.DoesNotContain("err_code", err.SafeMessage);
+            Assert.DoesNotContain("boom", err.SafeMessage);
+            Assert.DoesNotContain("Provider.Call", err.SafeMessage);
+        }
     }
 
     // === helpers (shared with C.5, which extends this file with real-provider/HTTP-mock cases) ===

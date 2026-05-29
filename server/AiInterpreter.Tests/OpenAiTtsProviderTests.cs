@@ -140,6 +140,25 @@ public class OpenAiTtsProviderTests
         Assert.Equal("audio", root.GetProperty("stream_format").GetString());
     }
 
+    // === Group 5b — 0-byte audio body contract (C.5 pin, origin C.3) ===
+
+    [Fact]
+    public async Task tts_zero_byte_audio_yields_started_then_complete_no_first_audio()
+    {
+        // A 200 with an empty body: the read loop hits EOF immediately -> no TtsFirstAudio, no chunks, just
+        // TtsStarted -> TtsComplete. Pinned as the MVP contract (real TTS always returns audio; the §17
+        // boundary suite already tolerates the no-chunk shape). Switch only if a real need appears.
+        var events = await Collect(
+            Provider(new StubHandler(Array.Empty<byte>(), "audio/mpeg", chunkSize: 0)).SynthesizeAsync(Req(), default));
+
+        Assert.Collection(
+            events,
+            e => Assert.IsType<TtsStarted>(e),
+            e => Assert.Equal("audio/mpeg", Assert.IsType<TtsComplete>(e).ContentType));
+        Assert.DoesNotContain(events, e => e is TtsFirstAudio);
+        Assert.DoesNotContain(events, e => e is TtsAudioChunk);
+    }
+
     // === Group 6 — ResolveVoice precedence (C.4b — VoiceByLanguage resolution) ===
 
     [Theory] // explicit non-empty request voice wins; else VoiceByLanguage[targetLang]; else options.Voice default.

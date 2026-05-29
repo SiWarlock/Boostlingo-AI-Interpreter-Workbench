@@ -11,6 +11,7 @@ using AiInterpreter.Api.Providers.OpenAI;
 using AiInterpreter.Api.Realtime;
 using AiInterpreter.Api.Security;
 using AiInterpreter.Api.Sessions;
+using Microsoft.AspNetCore.Http.Features;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -113,10 +114,23 @@ else
 // Origin check (C.4b; the WS upgrade bypasses CORS, so the endpoint validates Origin itself).
 var frontendOrigin = builder.Configuration["FRONTEND_ORIGIN"] ?? "http://localhost:5173";
 
+// Bound the request body to the cascade upload cap + a small multipart-envelope headroom (C.5, ARCH-019):
+// an oversized upload is rejected at the framework boundary instead of buffered to the 128MB default. The
+// PRECISE per-file cap + the cascade.invalid_audio 413 still come from CascadeUploadValidation in the
+// controller; this just closes the buffering/DoS window. (CASCADE_MAX_UPLOAD_BYTES also configures the cap.)
+var maxUploadBytes = builder.Configuration.GetValue<long?>("CASCADE_MAX_UPLOAD_BYTES") ?? CascadeUploadValidation.DefaultMaxBytes;
+var maxRequestBodyBytes = maxUploadBytes + (1 * 1024 * 1024);
+builder.Services.Configure<FormOptions>(o => o.MultipartBodyLengthLimit = maxRequestBodyBytes);
+builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = maxRequestBodyBytes);
+
 // The cascade orchestrator (B.4, UNCHANGED) + the C.4a WS endpoint shell. Transient/scoped so a singleton
 // never captures a transient typed-HttpClient provider (captive-dependency); each WS turn resolves fresh.
 // The endpoint takes the allowed Origin (C.4b) for its pre-accept Origin validation.
 builder.Services.AddTransient<CascadeStreamingOrchestrator>();
+// The C.5 blob-fallback adapter (POST /api/cascade/turn via CascadeController) — reuses the streaming
+// orchestrator for pre-recorded STT -> the same translation/TTS, collected into a turn. Transient so it
+// never captures a transient typed-HttpClient provider (captive-dependency); each request resolves fresh.
+builder.Services.AddTransient<CascadeOrchestrator>();
 builder.Services.AddScoped(sp => new CascadeWebSocketEndpoint(
     sp.GetRequiredService<CascadeStreamingOrchestrator>(),
     sp.GetRequiredService<SessionStore>(),
