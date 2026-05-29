@@ -109,10 +109,22 @@ else
     builder.Services.AddSingleton<ITtsProvider>(_ => new FakeTtsProvider());
 }
 
+// The local frontend origin (ARCH-019) — the single source for both CORS (below) and the cascade WS
+// Origin check (C.4b; the WS upgrade bypasses CORS, so the endpoint validates Origin itself).
+var frontendOrigin = builder.Configuration["FRONTEND_ORIGIN"] ?? "http://localhost:5173";
+
 // The cascade orchestrator (B.4, UNCHANGED) + the C.4a WS endpoint shell. Transient/scoped so a singleton
 // never captures a transient typed-HttpClient provider (captive-dependency); each WS turn resolves fresh.
+// The endpoint takes the allowed Origin (C.4b) for its pre-accept Origin validation.
 builder.Services.AddTransient<CascadeStreamingOrchestrator>();
-builder.Services.AddScoped<CascadeWebSocketEndpoint>();
+builder.Services.AddScoped(sp => new CascadeWebSocketEndpoint(
+    sp.GetRequiredService<CascadeStreamingOrchestrator>(),
+    sp.GetRequiredService<SessionStore>(),
+    sp.GetRequiredService<SessionPersistenceWriter>(),
+    sp.GetRequiredService<CostEstimator>(),
+    sp.GetRequiredService<LatencyEventFactory>(),
+    sp.GetRequiredService<IClock>(),
+    frontendOrigin));
 
 // Error sanitizer (B.8, safety invariant #4) — turns any Exception/ProviderError/Result.Error into a
 // safe normalized UiError (no stack/secret/raw-payload to the client; original logged server-side).
@@ -139,8 +151,8 @@ builder.Services.AddControllers().AddJsonOptions(o => JsonDefaults.Apply(o.JsonS
 // the same contract persistence uses, so API and persisted JSON cannot diverge.
 builder.Services.ConfigureHttpJsonOptions(o => JsonDefaults.Apply(o.SerializerOptions));
 
-// CORS — local frontend origin only (ARCH-019); never AllowAnyOrigin.
-var frontendOrigin = builder.Configuration["FRONTEND_ORIGIN"] ?? "http://localhost:5173";
+// CORS — local frontend origin only (ARCH-019); never AllowAnyOrigin. (frontendOrigin resolved above,
+// shared with the cascade WS Origin check.)
 builder.Services.AddCors(o => o.AddPolicy(
     corsPolicyName,
     p => p.WithOrigins(frontendOrigin).AllowAnyHeader().AllowAnyMethod()));

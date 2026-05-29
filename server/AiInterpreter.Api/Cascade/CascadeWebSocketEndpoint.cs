@@ -6,6 +6,7 @@ using AiInterpreter.Api.Common;
 using AiInterpreter.Api.Cost;
 using AiInterpreter.Api.Metrics;
 using AiInterpreter.Api.Providers.Abstractions;
+using AiInterpreter.Api.Security;
 using AiInterpreter.Api.Sessions;
 using Microsoft.AspNetCore.Http;
 
@@ -28,15 +29,32 @@ public sealed class CascadeWebSocketEndpoint(
     SessionPersistenceWriter writer,
     CostEstimator costEstimator,
     LatencyEventFactory factory,
-    IClock clock)
+    IClock clock,
+    string allowedOrigin)
 {
     private const int ReceiveBufferSize = 16 * 1024;
+
+    // Bounded audio bridge (C.4b SECURITY): backpressure (FullMode.Wait) caps the buffer when a stalled STT
+    // consumer can't keep up — an unbounded channel would grow for the whole turn (a per-session DoS;
+    // G.4 5-min-no-leak tie). ~256 frames ≈ 5-12s of 20-50ms PCM; backpressure throttles the socket read
+    // rather than dropping audio (dropping corrupts the transcription).
+    private const int AudioChannelCapacity = 256;
 
     public async Task HandleAsync(HttpContext context)
     {
         if (!context.WebSockets.IsWebSocketRequest)
         {
-            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            await RejectAsync(context, StatusCodes.Status400BadRequest, "cascade.invalid_request",
+                "A WebSocket upgrade is required for this endpoint.");
+            return;
+        }
+
+        // The WS upgrade BYPASSES the CORS middleware (ARCH-019), so validate the Origin here, before accept.
+        var origin = context.Request.Headers.Origin.ToString();
+        if (!CascadeOriginValidation.IsAllowedOrigin(origin, allowedOrigin))
+        {
+            await RejectAsync(context, StatusCodes.Status403Forbidden, "cascade.forbidden_origin",
+                "The request origin is not allowed.");
             return;
         }
 
@@ -55,12 +73,24 @@ public sealed class CascadeWebSocketEndpoint(
 
     private async Task RunTurnAsync(WebSocket socket, CancellationToken ct)
     {
-        var startText = await ReceiveTextAsync(socket, ct);
-        if (startText is null)
+        var buffer = new byte[ReceiveBufferSize];
+        var startResult = await socket.ReceiveAsync(buffer, ct);
+        if (startResult.MessageType != WebSocketMessageType.Text)
         {
-            return; // socket closed before a start frame
+            return; // socket closed / non-text before a start frame
         }
 
+        if (!startResult.EndOfMessage)
+        {
+            // The start frame is a small JSON; a fragmented (> ReceiveBufferSize) frame is oversized — reject
+            // WITHOUT buffering more (a DoS guard at the boundary, C.4b; manual-smoke). ARCH-019.
+            var oversized = new ProviderError("cascade", "cascade", "cascade.invalid_request",
+                "The start frame is too large.", Retryable: false);
+            await SendAsync(socket, new { type = "error", error = oversized }, ct);
+            return;
+        }
+
+        var startText = Encoding.UTF8.GetString(buffer, 0, startResult.Count);
         var parse = CascadeStartValidation.ParseStart(startText);
         if (parse.Error is not null)
         {
@@ -83,44 +113,27 @@ public sealed class CascadeWebSocketEndpoint(
         // turn.recording.started (Overall) — server-clock, stamped at the start frame.
         await SendLatencyAsync(socket, CascadeWsMapping.RecordingEvent(factory, LatencyEventNames.TurnRecordingStarted, origin), collected, p.TurnId, ct);
 
-        // PCM frames -> Channel<AudioFrame> (the orchestrator's audio stream). The receive pump is the ONLY
-        // reader of the socket; the main loop is the ONLY sender (no concurrent sends -> no send lock needed).
-        var audio = Channel.CreateUnbounded<AudioFrame>();
+        // PCM frames -> bounded Channel<AudioFrame> (the orchestrator's audio stream). The receive pump is the
+        // ONLY reader of the socket + ONLY writer of the channel; the main loop is the ONLY sender + ONLY reader
+        // of the channel (no concurrent sends -> no send lock; SingleReader/SingleWriter optimizations apply).
+        var audio = Channel.CreateBounded<AudioFrame>(new BoundedChannelOptions(AudioChannelCapacity)
+        {
+            FullMode = BoundedChannelFullMode.Wait,
+            SingleReader = true,
+            SingleWriter = true,
+        });
         LatencyEvent? recordingStopped = null;
         var pump = PumpAudioAsync(socket, audio.Writer, () => recordingStopped = CascadeWsMapping.RecordingEvent(factory, LatencyEventNames.TurnRecordingStopped, origin), ct);
 
-        int? inputTokens = null;
-        int? outputTokens = null;
-        long targetChars = 0;
-
         await foreach (var ev in orchestrator.RunAsync(p, audio.Reader.ReadAllAsync(ct), ct).WithCancellation(ct))
         {
-            switch (ev)
-            {
-                case Latency l when l.Event.Name == LatencyEventNames.TranslationFinal:
-                    // Accumulate ADDITIVELY across segments — a multi-segment turn yields one translation.final
-                    // per segment; summing keeps the cost estimate correct (overwriting would undercount).
-                    if (l.Event.Metadata.TryGetValue("inputTokens", out var it) && int.TryParse(it, out var iv))
-                    {
-                        inputTokens = (inputTokens ?? 0) + iv;
-                    }
-
-                    if (l.Event.Metadata.TryGetValue("outputTokens", out var ot) && int.TryParse(ot, out var ov))
-                    {
-                        outputTokens = (outputTokens ?? 0) + ov;
-                    }
-
-                    break;
-
-                case Transcript t when t.Segment is { Role: "target", IsFinal: true }:
-                    targetChars += t.Segment.Text.Length;
-                    break;
-            }
-
             if (ev is Done done)
             {
-                await EmitTerminalAsync(socket, p, turn, collected, recordingStopped, inputTokens, outputTokens, targetChars, origin, done, ct);
-                await pump; // PumpAudioAsync never throws (it completes the channel in finally)
+                await EmitTerminalAsync(socket, p, turn, collected, recordingStopped, origin, done, ct);
+                // Unblock the pump: after Done nothing reads the channel, so a pump parked on a backpressured
+                // WriteAsync (full channel) would never drain — completing the writer throws it out cleanly.
+                audio.Writer.TryComplete();
+                await pump; // PumpAudioAsync swallows the resulting ChannelClosedException + completes in finally
                 return;
             }
 
@@ -134,14 +147,15 @@ public sealed class CascadeWebSocketEndpoint(
             await SendAsync(socket, CascadeWsMapping.ToServerMessage(ev, p.TurnId), ct);
         }
 
+        // Orchestrator stream ended without a Done (defensive — it always yields one); unblock the pump.
+        audio.Writer.TryComplete();
         await pump;
     }
 
     // turn.recording.stopped (stashed at stop time) -> cost (computed, before done) -> done -> persist.
     private async Task EmitTerminalAsync(
         WebSocket socket, CascadeStartParams p, InterpretationTurn turn, List<CascadeOutputEvent> collected,
-        LatencyEvent? recordingStopped, int? inputTokens, int? outputTokens, long targetChars,
-        DateTimeOffset origin, Done done, CancellationToken ct)
+        LatencyEvent? recordingStopped, DateTimeOffset origin, Done done, CancellationToken ct)
     {
         if (recordingStopped is not null)
         {
@@ -149,7 +163,9 @@ public sealed class CascadeWebSocketEndpoint(
         }
 
         var stoppedAt = recordingStopped?.Timestamp ?? clock.UtcNow;
-        var cost = ComputeCost(p, inputTokens, outputTokens, targetChars, origin, stoppedAt);
+        // Fold the observed usage from the accumulated events (translation tokens summed additively across
+        // segments + target chars) — the C.4b extraction of the C.4a inline accumulation.
+        var cost = ComputeCost(p, CascadeWsMapping.FoldCostInputs(collected), origin, stoppedAt);
         var costMessage = CascadeWsMapping.ToCostMessageOrNull(cost);
         if (costMessage is not null)
         {
@@ -166,13 +182,13 @@ public sealed class CascadeWebSocketEndpoint(
     // translation.final Metadata, C.4 FORK-1a), and a TTS character proxy (target text length) — audio-streaming
     // mode reports no TTS usage block, so precise TTS audio-token cost is unavailable (documented limitation).
     private Result<CostEstimate> ComputeCost(
-        CascadeStartParams p, int? inputTokens, int? outputTokens, long targetChars, DateTimeOffset origin, DateTimeOffset stoppedAt)
+        CascadeStartParams p, CascadeCostInputs inputs, DateTimeOffset origin, DateTimeOffset stoppedAt)
     {
         var durationMs = Math.Max(0, (long)(stoppedAt - origin).TotalMilliseconds);
         var audioMinutes = durationMs / 60000m;
         var sttUsage = new CostUsage { AudioMinutes = audioMinutes };
-        var translationUsage = new CostUsage { InputTokens = inputTokens, OutputTokens = outputTokens };
-        var ttsUsage = new CostUsage { Characters = targetChars > 0 ? targetChars : null };
+        var translationUsage = new CostUsage { InputTokens = inputs.InputTokens, OutputTokens = inputs.OutputTokens };
+        var ttsUsage = new CostUsage { Characters = inputs.TargetChars > 0 ? inputs.TargetChars : null };
 
         return costEstimator.EstimateCascadeTurn(p.TranslationModel, p.TtsModel, sttUsage, translationUsage, ttsUsage, durationMs);
     }
@@ -181,13 +197,20 @@ public sealed class CascadeWebSocketEndpoint(
         CascadeStartParams p, List<CascadeOutputEvent> collected, Result<CostEstimate> cost, DateTimeOffset completedAt, DateTimeOffset origin)
     {
         var durationMs = Math.Max(0, (long)(completedAt - origin).TotalMilliseconds);
-        store.UpdateTurn(p.SessionId, p.TurnId, current =>
+        // Idempotent terminal finalize (C.4b): if the turn is already terminal (the HTTP /complete or a prior
+        // WS terminal already landed), FinalizeTurn returns Applied=false and we skip the redundant persist.
+        var result = store.FinalizeTurn(p.SessionId, p.TurnId, current =>
             CascadeWsMapping.AssembleTurn(current, collected, cost, completedAt) with
             {
                 AudioDurationMs = durationMs,
                 TranslationModelUsed = p.TranslationModel,
                 TtsVoiceUsed = p.TtsVoice,
             });
+
+        if (result is not { Applied: true })
+        {
+            return; // turn unknown, or already terminal — no (re-)persist
+        }
 
         var session = store.Get(p.SessionId);
         if (session is not null)
@@ -214,7 +237,9 @@ public sealed class CascadeWebSocketEndpoint(
                 {
                     // One binary message == one PCM frame (the client sends ~20-50ms frames). Fragmented frames
                     // (EndOfMessage == false) are a manual-smoke refinement; the common path is one-message-per-frame.
-                    writer.TryWrite(new AudioFrame(buffer[..result.Count], clock.UtcNow));
+                    // Backpressure: a bounded channel + WriteAsync stalls this socket read when the orchestrator
+                    // (STT consumer) falls behind, capping memory rather than dropping audio (C.4b SECURITY).
+                    await writer.WriteAsync(new AudioFrame(buffer[..result.Count], clock.UtcNow), ct);
                 }
                 else if (result.MessageType == WebSocketMessageType.Text && IsStopFrame(buffer, result.Count))
                 {
@@ -264,13 +289,13 @@ public sealed class CascadeWebSocketEndpoint(
         await socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, ct);
     }
 
-    private static async Task<string?> ReceiveTextAsync(WebSocket socket, CancellationToken ct)
+    // Pre-accept HTTP rejection (non-WS request / disallowed Origin) — a UiError-shaped body (ARCH-018/019),
+    // never a bare status, so the shape matches the rest of the API's error contract.
+    private static async Task RejectAsync(HttpContext context, int statusCode, string code, string message)
     {
-        var buffer = new byte[ReceiveBufferSize];
-        var result = await socket.ReceiveAsync(buffer, ct);
-        return result.MessageType == WebSocketMessageType.Text
-            ? Encoding.UTF8.GetString(buffer, 0, result.Count)
-            : null;
+        context.Response.StatusCode = statusCode;
+        var body = new UiError(code, message, Stage: null, Retryable: false, TurnId: null);
+        await context.Response.WriteAsJsonAsync(body, JsonDefaults.Options);
     }
 
     private static async Task CloseQuietlyAsync(WebSocket socket)
