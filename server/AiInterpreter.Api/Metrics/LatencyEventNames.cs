@@ -15,6 +15,7 @@ public static class LatencyEventNames
 
     // Cascade stage markers — stage-start origins + terminals.
     public const string CascadeAudioReceived = "cascade.audio.received"; // STT stage origin
+    public const string SttStarted = "stt.started";
     public const string SttFirstPartial = "stt.first_partial";
     public const string SttFinal = "stt.final";
     public const string TranslationStarted = "translation.started";       // translation stage origin

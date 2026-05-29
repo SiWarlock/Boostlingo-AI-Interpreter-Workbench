@@ -1,0 +1,366 @@
+using System.Runtime.CompilerServices;
+using System.Text;
+using AiInterpreter.Api.Common;
+using AiInterpreter.Api.Metrics;
+using AiInterpreter.Api.Providers.Abstractions;
+using AiInterpreter.Api.Sessions;
+
+namespace AiInterpreter.Api.Cascade;
+
+/// <summary>
+/// Drives the streaming cascade pipeline (ARCH-011): <c>STT (partials/finals) → per-finalized-segment
+/// translation (streamed) → TTS (streamed)</c>. Emits a flat, transport-agnostic
+/// <see cref="CascadeOutputEvent"/> stream — C.4 adapts it to the WS wire (ARCH-009).
+///
+/// <para><b>Streaming honesty (load-bearing):</b> each provider stream is consumed with
+/// <c>await foreach</c>; source partials, target tokens, and TTS chunks are emitted as they arrive
+/// (before <see cref="Done"/>). Each <c>first_*</c> latency event is stamped on the <i>real</i> first
+/// arrival via <see cref="LatencyEventFactory.Stamp"/> — never synthesized or relabeled from a
+/// completion (forbidden-pattern #3/#4; ARCH-011/013).</para>
+///
+/// <para><b>Nested per-segment loop:</b> on each finalized STT segment, that segment's
+/// translation→TTS sub-pipeline runs to completion before the next STT event is consumed — so a
+/// multi-segment turn streams per segment in arrival order without buffering the whole utterance
+/// (the full-utterance blocking ARCH-011 forbids). Sequential per segment; concurrent interleaving
+/// is a deferred refinement (ARCH-025).</para>
+///
+/// <para><b>Failure handling:</b> empty STT final short-circuits (no translation/TTS); a stage
+/// failure or timeout keeps the upstream transcripts, skips downstream, and ends the turn
+/// <see cref="TurnStatus.Failed"/> (ARCH-018). Each stage has its own linked-CTS timeout; the STT
+/// stage's timeout is reset before each event (a per-event idle timeout) so downstream wall-clock
+/// doesn't count against the next STT event (ARCH-012).</para>
+/// </summary>
+public sealed class CascadeStreamingOrchestrator(
+    ISttProvider stt,
+    ITranslationProvider translation,
+    ITtsProvider tts,
+    LatencyEventFactory factory,
+    IClock clock)
+{
+    private const string SttProviderLabel = "deepgram";
+    private const string OpenAiProviderLabel = "openai";
+    private const string SttLanguage = "multi";
+    private const string RoleSource = "source";
+    private const string RoleTarget = "target";
+    private const string TtsResponseFormat = "mp3";
+    private const string TtsDefaultContentType = "audio/mpeg";
+
+    private static readonly TimeSpan DefaultSttTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan DefaultTranslationTimeout = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan DefaultTtsTimeout = TimeSpan.FromSeconds(30);
+
+    private sealed class StageOutcome
+    {
+        public bool Failed { get; set; }
+
+        public string? FinalText { get; set; }
+    }
+
+    public async IAsyncEnumerable<CascadeOutputEvent> RunAsync(
+        CascadeStartParams p,
+        IAsyncEnumerable<AudioFrame> audioFrames,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        // The per-turn server origin — all server-stamped relativeMs are measured from here (ARCH-013).
+        var origin = clock.UtcNow;
+        var sttTimeout = p.SttTimeout ?? DefaultSttTimeout;
+
+        yield return new Latency(factory.Create(
+            LatencyEventNames.CascadeAudioReceived, LatencyStage.Capture, ClockSource.Server, origin, origin,
+            new Dictionary<string, string> { ["provider"] = SttProviderLabel }));
+
+        var sttRequest = new SttRequest(
+            audioFrames, $"audio/{p.Encoding}", p.Encoding, p.SampleRate,
+            p.Direction.Source, SttLanguage, p.SessionId, p.TurnId);
+
+        using var sttCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        await using var sttStream = stt.TranscribeAsync(sttRequest, sttCts.Token).GetAsyncEnumerator(sttCts.Token);
+
+        var sttFirstPartialStamped = false;
+        var segmentIndex = 0;
+
+        while (true)
+        {
+            SttEvent? current = null;
+            ProviderError? sttTimeoutError = null;
+            var ended = false;
+
+            // Arm the idle timer for THIS wait only. CancelAfter cannot un-cancel a CTS that has
+            // already fired, so the timer must be disarmed (below) before the translation/TTS
+            // sub-pipeline runs — otherwise its wall-clock would fire the STT timer and the next
+            // segment's MoveNextAsync would see an already-cancelled token (a spurious timeout).
+            sttCts.CancelAfter(sttTimeout);
+            try
+            {
+                if (await sttStream.MoveNextAsync())
+                {
+                    current = sttStream.Current;
+                }
+                else
+                {
+                    ended = true;
+                }
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // The idle timer fired (not caller cancellation) → a real STT-stage timeout.
+                sttTimeoutError = ProviderErrorMapper.Timeout(SttProviderLabel, "stt");
+            }
+            finally
+            {
+                // Disarm: the timer must not run during downstream translation/TTS. Infinite cancels
+                // the pending callback; a no-op if it already fired (we exit via the catch then).
+                sttCts.CancelAfter(Timeout.InfiniteTimeSpan);
+            }
+
+            if (sttTimeoutError is not null)
+            {
+                yield return new Error(sttTimeoutError);
+                yield return new Done(TurnStatus.Failed);
+                yield break;
+            }
+
+            if (ended)
+            {
+                break;
+            }
+
+            switch (current)
+            {
+                case SttStarted:
+                    yield return Stamp(LatencyEventNames.SttStarted, LatencyStage.Stt, origin, SttProviderLabel);
+                    break;
+
+                case SttPartial partial:
+                    if (!sttFirstPartialStamped)
+                    {
+                        sttFirstPartialStamped = true;
+                        yield return Stamp(LatencyEventNames.SttFirstPartial, LatencyStage.Stt, origin, SttProviderLabel);
+                    }
+
+                    yield return Seg($"src-{segmentIndex}", RoleSource, partial.Text, false, SttProviderLabel, partial.Timestamp);
+                    break;
+
+                case SttFinal final:
+                    yield return Stamp(LatencyEventNames.SttFinal, LatencyStage.Stt, origin, SttProviderLabel);
+                    yield return Seg($"src-{segmentIndex}", RoleSource, final.Text, true, SttProviderLabel, final.Timestamp);
+
+                    // Empty-transcript short-circuit: never call translation/TTS (ARCH-011).
+                    if (string.IsNullOrWhiteSpace(final.Text))
+                    {
+                        yield return new Error(ProviderErrorMapper.EmptyTranscript(SttProviderLabel));
+                        yield return new Done(TurnStatus.Failed);
+                        yield break;
+                    }
+
+                    var translationOutcome = new StageOutcome();
+                    await foreach (var ev in TranslateSegmentAsync(p, origin, final.Text, segmentIndex, translationOutcome, ct))
+                    {
+                        yield return ev;
+                    }
+
+                    if (translationOutcome.Failed)
+                    {
+                        yield return new Done(TurnStatus.Failed);
+                        yield break;
+                    }
+
+                    // Non-failure always yields a final per the provider contract; the guard defends
+                    // against a misbehaving provider ending without one (skip TTS, keep the source).
+                    if (translationOutcome.FinalText is { } targetText)
+                    {
+                        var ttsOutcome = new StageOutcome();
+                        await foreach (var ev in SynthesizeSegmentAsync(p, origin, targetText, ttsOutcome, ct))
+                        {
+                            yield return ev;
+                        }
+
+                        if (ttsOutcome.Failed)
+                        {
+                            yield return new Done(TurnStatus.Failed);
+                            yield break;
+                        }
+                    }
+
+                    segmentIndex++;
+                    break;
+
+                case SttFailed failed:
+                    yield return new Error(failed.Error);
+                    yield return new Done(TurnStatus.Failed);
+                    yield break;
+            }
+        }
+
+        yield return Stamp(LatencyEventNames.TurnCompleted, LatencyStage.Capture, origin, provider: null);
+        yield return new Done(TurnStatus.Completed);
+    }
+
+    private async IAsyncEnumerable<CascadeOutputEvent> TranslateSegmentAsync(
+        CascadeStartParams p,
+        DateTimeOffset origin,
+        string sourceText,
+        int segmentIndex,
+        StageOutcome outcome,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        var request = new TranslationRequest(
+            sourceText, p.Direction.Source, p.Direction.Target, p.TranslationModel, p.SessionId, p.TurnId);
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(p.TranslationTimeout ?? DefaultTranslationTimeout);
+        await using var stream = translation.TranslateAsync(request, cts.Token).GetAsyncEnumerator(cts.Token);
+
+        var firstTokenStamped = false;
+        var accumulated = new StringBuilder();
+
+        while (true)
+        {
+            TranslationEvent? current = null;
+            ProviderError? timeoutError = null;
+            var ended = false;
+
+            try
+            {
+                if (await stream.MoveNextAsync())
+                {
+                    current = stream.Current;
+                }
+                else
+                {
+                    ended = true;
+                }
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                timeoutError = ProviderErrorMapper.Timeout(OpenAiProviderLabel, "translation");
+            }
+
+            if (timeoutError is not null)
+            {
+                outcome.Failed = true;
+                yield return new Error(timeoutError);
+                yield break;
+            }
+
+            if (ended)
+            {
+                yield break;
+            }
+
+            switch (current)
+            {
+                case TranslationStarted:
+                    yield return Stamp(LatencyEventNames.TranslationStarted, LatencyStage.Translation, origin, OpenAiProviderLabel);
+                    break;
+
+                case TranslationPartial partial:
+                    if (!firstTokenStamped)
+                    {
+                        firstTokenStamped = true;
+                        yield return Stamp(LatencyEventNames.TranslationFirstToken, LatencyStage.Translation, origin, OpenAiProviderLabel);
+                    }
+
+                    accumulated.Append(partial.TextDelta);
+                    yield return Seg($"tgt-{segmentIndex}", RoleTarget, accumulated.ToString(), false, OpenAiProviderLabel, partial.Timestamp);
+                    break;
+
+                case TranslationFinal final:
+                    yield return Stamp(LatencyEventNames.TranslationFinal, LatencyStage.Translation, origin, OpenAiProviderLabel);
+                    yield return Seg($"tgt-{segmentIndex}", RoleTarget, final.Text, true, OpenAiProviderLabel, final.Timestamp);
+                    outcome.FinalText = final.Text;
+                    yield break;
+
+                case TranslationFailed failed:
+                    outcome.Failed = true;
+                    yield return new Error(failed.Error);
+                    yield break;
+            }
+        }
+    }
+
+    private async IAsyncEnumerable<CascadeOutputEvent> SynthesizeSegmentAsync(
+        CascadeStartParams p,
+        DateTimeOffset origin,
+        string targetText,
+        StageOutcome outcome,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        var request = new TtsRequest(
+            targetText, p.Direction.Target, p.TtsVoice, p.TtsModel, TtsResponseFormat, null, p.SessionId, p.TurnId);
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(p.TtsTimeout ?? DefaultTtsTimeout);
+        await using var stream = tts.SynthesizeAsync(request, cts.Token).GetAsyncEnumerator(cts.Token);
+
+        var contentType = TtsDefaultContentType;
+
+        while (true)
+        {
+            TtsEvent? current = null;
+            ProviderError? timeoutError = null;
+            var ended = false;
+
+            try
+            {
+                if (await stream.MoveNextAsync())
+                {
+                    current = stream.Current;
+                }
+                else
+                {
+                    ended = true;
+                }
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                timeoutError = ProviderErrorMapper.Timeout(OpenAiProviderLabel, "tts");
+            }
+
+            if (timeoutError is not null)
+            {
+                outcome.Failed = true;
+                yield return new Error(timeoutError);
+                yield break;
+            }
+
+            if (ended)
+            {
+                yield break;
+            }
+
+            switch (current)
+            {
+                case TtsStarted:
+                    yield return Stamp(LatencyEventNames.TtsStarted, LatencyStage.Tts, origin, OpenAiProviderLabel);
+                    break;
+
+                case TtsFirstAudio first:
+                    contentType = first.ContentType;
+                    yield return Stamp(LatencyEventNames.TtsFirstAudio, LatencyStage.Tts, origin, OpenAiProviderLabel);
+                    break;
+
+                case TtsAudioChunk chunk:
+                    yield return new Audio(chunk.Bytes, chunk.Seq, contentType);
+                    break;
+
+                case TtsComplete:
+                    yield return Stamp(LatencyEventNames.TtsComplete, LatencyStage.Tts, origin, OpenAiProviderLabel);
+                    break;
+
+                case TtsFailed failed:
+                    outcome.Failed = true;
+                    yield return new Error(failed.Error);
+                    yield break;
+            }
+        }
+    }
+
+    private Latency Stamp(string name, LatencyStage stage, DateTimeOffset origin, string? provider) =>
+        new(factory.Stamp(
+            name, stage, ClockSource.Server, origin,
+            provider is null ? null : new Dictionary<string, string> { ["provider"] = provider }));
+
+    private static Transcript Seg(string id, string role, string text, bool isFinal, string provider, DateTimeOffset timestamp) =>
+        new(new TranscriptSegment(id, role, text, isFinal, provider, timestamp, ClockSource.Server));
+}
