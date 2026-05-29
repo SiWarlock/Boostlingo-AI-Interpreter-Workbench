@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text;
 using AiInterpreter.Api.Common;
@@ -192,7 +193,7 @@ public sealed class CascadeStreamingOrchestrator(
             }
         }
 
-        yield return Stamp(LatencyEventNames.TurnCompleted, LatencyStage.Capture, origin, provider: null);
+        yield return Stamp(LatencyEventNames.TurnCompleted, LatencyStage.Overall, origin, provider: null);
         yield return new Done(TurnStatus.Completed);
     }
 
@@ -266,7 +267,10 @@ public sealed class CascadeStreamingOrchestrator(
                     break;
 
                 case TranslationFinal final:
-                    yield return Stamp(LatencyEventNames.TranslationFinal, LatencyStage.Translation, origin, OpenAiProviderLabel);
+                    // C.4 FORK-1a: surface the translation token usage on the translation.final LatencyEvent's
+                    // Metadata so the WS layer can build CostUsage (the CascadeOutputEvent stream carries no
+                    // raw tokens). Minimal stamp enrichment — no contract change (Metadata is an existing field).
+                    yield return StampTranslationFinal(origin, final);
                     yield return Seg($"tgt-{segmentIndex}", RoleTarget, final.Text, true, OpenAiProviderLabel, final.Timestamp);
                     outcome.FinalText = final.Text;
                     yield break;
@@ -360,6 +364,24 @@ public sealed class CascadeStreamingOrchestrator(
         new(factory.Stamp(
             name, stage, ClockSource.Server, origin,
             provider is null ? null : new Dictionary<string, string> { ["provider"] = provider }));
+
+    // translation.final carries the token usage in Metadata (when the provider reports it) so the C.4 WS
+    // layer can price the translation stage; absent tokens are simply omitted (cost degrades, never fabricated).
+    private Latency StampTranslationFinal(DateTimeOffset origin, TranslationFinal final)
+    {
+        var metadata = new Dictionary<string, string> { ["provider"] = OpenAiProviderLabel };
+        if (final.InputTokens is int inputTokens)
+        {
+            metadata["inputTokens"] = inputTokens.ToString(CultureInfo.InvariantCulture);
+        }
+
+        if (final.OutputTokens is int outputTokens)
+        {
+            metadata["outputTokens"] = outputTokens.ToString(CultureInfo.InvariantCulture);
+        }
+
+        return new Latency(factory.Stamp(LatencyEventNames.TranslationFinal, LatencyStage.Translation, ClockSource.Server, origin, metadata));
+    }
 
     private static Transcript Seg(string id, string role, string text, bool isFinal, string provider, DateTimeOffset timestamp) =>
         new(new TranscriptSegment(id, role, text, isFinal, provider, timestamp, ClockSource.Server));

@@ -1,9 +1,12 @@
+using AiInterpreter.Api.Cascade;
 using AiInterpreter.Api.Common;
 using AiInterpreter.Api.Config;
 using AiInterpreter.Api.Cost;
 using AiInterpreter.Api.Evaluation;
 using AiInterpreter.Api.Metrics;
+using AiInterpreter.Api.Providers.Abstractions;
 using AiInterpreter.Api.Providers.Deepgram;
+using AiInterpreter.Api.Providers.Fakes;
 using AiInterpreter.Api.Providers.OpenAI;
 using AiInterpreter.Api.Realtime;
 using AiInterpreter.Api.Security;
@@ -70,6 +73,47 @@ builder.Services.AddSingleton<SessionSummaryService>();
 // writer for SessionsController. Behind ISessionService (the controller test seam, lesson §15).
 builder.Services.AddSingleton<ISessionService, SessionService>();
 
+// Cascade real providers (C.4a) — DI-swapped real<->fake by KEY PRESENCE (mirrors the B.9b ConfigService
+// rule: a stage is real iff its key is configured), with an explicit USE_FAKE_PROVIDERS override for a
+// keyless local run. The orchestrator + provider interfaces are UNCHANGED (the B.1/B.4 seam proven). The
+// OpenAI providers get a typed HttpClient (BaseAddress = the OpenAI API); Deepgram uses its SDK via IOptions.
+var useFakeProviders = builder.Configuration.GetValue<bool>("USE_FAKE_PROVIDERS");
+var deepgramConfigured = !string.IsNullOrWhiteSpace(builder.Configuration[$"{DeepgramOptions.SectionName}:ApiKey"]);
+var translationConfigured = !string.IsNullOrWhiteSpace(builder.Configuration[$"{OpenAiTranslationOptions.SectionName}:ApiKey"]);
+var ttsConfigured = !string.IsNullOrWhiteSpace(builder.Configuration[$"{OpenAiTtsOptions.SectionName}:ApiKey"]);
+
+if (!useFakeProviders && deepgramConfigured)
+{
+    builder.Services.AddSingleton<ISttProvider, DeepgramSttProvider>();
+}
+else
+{
+    builder.Services.AddSingleton<ISttProvider>(_ => new FakeSttProvider());
+}
+
+if (!useFakeProviders && translationConfigured)
+{
+    builder.Services.AddHttpClient<ITranslationProvider, OpenAiTranslationProvider>(c => c.BaseAddress = new Uri("https://api.openai.com/"));
+}
+else
+{
+    builder.Services.AddSingleton<ITranslationProvider>(_ => new FakeTranslationProvider());
+}
+
+if (!useFakeProviders && ttsConfigured)
+{
+    builder.Services.AddHttpClient<ITtsProvider, OpenAiTtsProvider>(c => c.BaseAddress = new Uri("https://api.openai.com/"));
+}
+else
+{
+    builder.Services.AddSingleton<ITtsProvider>(_ => new FakeTtsProvider());
+}
+
+// The cascade orchestrator (B.4, UNCHANGED) + the C.4a WS endpoint shell. Transient/scoped so a singleton
+// never captures a transient typed-HttpClient provider (captive-dependency); each WS turn resolves fresh.
+builder.Services.AddTransient<CascadeStreamingOrchestrator>();
+builder.Services.AddScoped<CascadeWebSocketEndpoint>();
+
 // Error sanitizer (B.8, safety invariant #4) — turns any Exception/ProviderError/Result.Error into a
 // safe normalized UiError (no stack/secret/raw-payload to the client; original logged server-side).
 // Injectable singleton (needs ILogger). Entry-point consumers are B.9 (global exception handler +
@@ -122,12 +166,16 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-// WebSocket support — the cascade WS endpoint lands in C.4; A.5 only enables support. NOTE: a WS
-// upgrade bypasses the CORS middleware, so C.4's handshake must validate the Origin itself.
+// WebSocket support. NOTE: a WS upgrade bypasses the CORS middleware, so the cascade handshake's Origin
+// validation is C.4b's job (the endpoint validates it itself); C.4a wires the core protocol.
 app.UseWebSockets();
 app.UseCors(corsPolicyName);
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
+
+// Cascade streaming WS (C.4a, ARCH-009) — the real-provider cascade turn entry point (C.1/C.2/C.3 reachable here).
+app.Map("/api/cascade/stream", (HttpContext ctx, CascadeWebSocketEndpoint endpoint) => endpoint.HandleAsync(ctx));
+
 app.MapControllers();
 
 app.Run();

@@ -18,7 +18,9 @@ public enum TurnStatus { Ready, Recording, Captured, Processing, Playing, Comple
 // Session-level status (whole evaluation session).
 public enum SessionStatus { Idle, Configured, Starting, Active, ReadyForTurn, Ending, Ended }
 
-public enum LatencyStage { Capture, Realtime, Stt, Translation, Tts, Playback, Persistence, Evaluation }
+// `Overall` (C.4) is the turn-level stage for the turn.recording.*/turn.completed lifecycle events,
+// distinct from the per-stage Capture/Stt/Translation/Tts markers (ARCH-005 / ARCH-013).
+public enum LatencyStage { Capture, Realtime, Stt, Translation, Tts, Playback, Persistence, Evaluation, Overall }
 
 public enum ClockSource { Server, Browser }
 

@@ -94,7 +94,7 @@ public class MetricsAggregatorTests
         Ev("tts.first_audio", LatencyStage.Tts, 1700),
         Ev("playback.started", LatencyStage.Playback, 1800, ClockSource.Browser),
         Ev("tts.complete", LatencyStage.Tts, 2000),                        // nice
-        Ev("turn.completed", LatencyStage.Capture, 2100),
+        Ev("turn.completed", LatencyStage.Overall, 2100), // C.4: cascade turn.completed is stamped Overall
     ];
 
     [Fact]
