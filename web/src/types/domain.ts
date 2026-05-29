@@ -191,3 +191,48 @@ export type CascadeTurnResponse = {
   audioContentType?: string
   persistenceWarning?: UiError
 }
+
+// --- Streaming wire payloads (cascade WS messages + turn-record fields, ARCH-005 mirrors) ---
+// These were inside the opaque InterpretationTurn in D.1; D.4a tightens them as the cascade WS client
+// + streaming store actions consume them. camelCase mirrors of the backend records.
+
+export type TranscriptSegment = {
+  segmentId: string
+  role: 'source' | 'target'
+  text: string
+  isFinal: boolean
+  provider: string
+  timestamp: string
+  clockSource: ClockSource
+}
+
+export type LatencyEvent = {
+  name: string
+  stage: LatencyStage
+  timestamp: string
+  relativeMs: number
+  clockSource: ClockSource
+  metadata: Record<string, string>
+}
+
+export type CostEstimate = {
+  provider: string
+  model: string
+  pricingBasis: string
+  estimatedUsd: number
+  estimatedUsdPerMinute: number | null
+  units: Record<string, number>
+  pricingConfigVersion: string
+  assumptions: string[]
+}
+
+// The normalized, UI-safe provider error carried by the cascade `error` WS frame (already sanitized
+// backend-side). Projected to a lean UiError before it reaches the store (drops provider/httpStatusCode).
+export type ProviderError = {
+  provider: string
+  stage: string
+  code: string
+  safeMessage: string
+  retryable: boolean
+  httpStatusCode?: number
+}

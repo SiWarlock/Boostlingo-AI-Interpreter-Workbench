@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createSessionStore } from './sessionStore'
-import type { ConfigResponse, InterpretationSession, UiError } from '../types/domain'
+import type {
+  ConfigResponse,
+  CostEstimate,
+  InterpretationSession,
+  LatencyEvent,
+  TranscriptSegment,
+  UiError,
+} from '../types/domain'
 
 // Minimal ConfigResponse fixture (shape mirrors GET /api/config — ARCH-009).
 const config: ConfigResponse = {
@@ -170,5 +177,136 @@ describe('sessionStore', () => {
     const s = store.getState()
     expect(s.mode).toBe('cascade') // the mode write still applies
     expect(s.sessionStatus).toBe('active') // NOT reset to 'configured' (Flow-G between-turns switch)
+  })
+})
+
+describe('sessionStore streaming actions (D.4a)', () => {
+  function sourceSeg(text: string, isFinal: boolean): TranscriptSegment {
+    return {
+      segmentId: 'seg',
+      role: 'source',
+      text,
+      isFinal,
+      provider: 'deepgram',
+      timestamp: '2026-05-29T12:00:00+00:00',
+      clockSource: 'server',
+    }
+  }
+
+  it('beginTurn sets currentTurn (empty transcripts, recording) and turnStatus recording', () => {
+    const store = createSessionStore()
+    const before = store.getState()
+    store.beginTurn({
+      turnId: 'turn_001',
+      mode: 'cascade',
+      direction: { source: 'en', target: 'es' },
+    })
+    const s = store.getState()
+    expect(s).not.toBe(before)
+    expect(s.currentTurn?.turnId).toBe('turn_001')
+    expect(s.currentTurn?.status).toBe('recording')
+    expect(s.currentTurn?.sourceTranscript).toEqual([])
+    expect(s.currentTurn?.targetTranscript).toEqual([])
+    expect(s.turnStatus).toBe('recording')
+  })
+
+  it('appendTranscriptSegment replaces the trailing partial and finalizes on isFinal (ARCH-011)', () => {
+    const store = createSessionStore()
+    store.beginTurn({ turnId: 't', mode: 'cascade', direction: { source: 'en', target: 'es' } })
+
+    store.appendTranscriptSegment(sourceSeg('ho', false))
+    expect(store.getState().currentTurn?.sourceTranscript).toEqual([{ text: 'ho', isFinal: false }])
+
+    store.appendTranscriptSegment(sourceSeg('hola', false)) // replaces the running partial
+    expect(store.getState().currentTurn?.sourceTranscript).toEqual([
+      { text: 'hola', isFinal: false },
+    ])
+
+    store.appendTranscriptSegment(sourceSeg('hola mundo', true)) // finalizes the trailing entry
+    expect(store.getState().currentTurn?.sourceTranscript).toEqual([
+      { text: 'hola mundo', isFinal: true },
+    ])
+
+    store.appendTranscriptSegment(sourceSeg('que', false)) // a partial after a final starts a NEW entry
+    expect(store.getState().currentTurn?.sourceTranscript).toEqual([
+      { text: 'hola mundo', isFinal: true },
+      { text: 'que', isFinal: false },
+    ])
+
+    // a target-role segment routes to targetTranscript, not source.
+    store.appendTranscriptSegment({ ...sourceSeg('hello', false), role: 'target' })
+    expect(store.getState().currentTurn?.targetTranscript).toEqual([
+      { text: 'hello', isFinal: false },
+    ])
+  })
+
+  it('appendLatencyEvent records per-stage timing and setTurnCost sets the cost fields', () => {
+    const store = createSessionStore()
+    store.beginTurn({ turnId: 't', mode: 'cascade', direction: { source: 'en', target: 'es' } })
+
+    const event: LatencyEvent = {
+      name: 'stt.final',
+      stage: 'stt',
+      timestamp: '2026-05-29T12:00:00+00:00',
+      relativeMs: 250,
+      clockSource: 'server',
+      metadata: {},
+    }
+    store.appendLatencyEvent(event)
+    expect(store.getState().currentTurn?.latency.stages?.['stt.final']).toBe(250)
+
+    const estimate: CostEstimate = {
+      provider: 'cascade',
+      model: 'gpt-5.4-nano',
+      pricingBasis: 'composite',
+      estimatedUsd: 0.012,
+      estimatedUsdPerMinute: 0.6,
+      units: {},
+      pricingConfigVersion: 'v1',
+      assumptions: [],
+    }
+    store.setTurnCost(estimate)
+    const turn = store.getState().currentTurn
+    expect(turn?.estimatedCostUsd).toBe(0.012)
+    expect(turn?.estimatedCostPerMinuteUsd).toBe(0.6)
+    expect(turn?.translationModelUsed).toBe('gpt-5.4-nano')
+  })
+
+  it('failTurn records the error + marks failed; completeTurn finalizes currentTurn into turns[]', () => {
+    const store = createSessionStore()
+    store.beginTurn({
+      turnId: 'turn_001',
+      mode: 'cascade',
+      direction: { source: 'en', target: 'es' },
+    })
+
+    const uiError: UiError = { code: 'stt.timeout', safeMessage: 'STT timed out.', retryable: true }
+    store.failTurn(uiError)
+    expect(store.getState().errors).toContainEqual(uiError)
+    expect(store.getState().currentTurn?.status).toBe('failed')
+    expect(store.getState().turnStatus).toBe('failed')
+
+    store.completeTurn('turn_001', 'completed')
+    const s = store.getState()
+    expect(s.currentTurn).toBeUndefined() // finalized + cleared
+    expect(s.turns).toHaveLength(1)
+    expect(s.turns[0].turnId).toBe('turn_001')
+    expect(s.turnStatus).toBe('completed')
+  })
+
+  it('completeTurn for a non-current turnId leaves the active turn untouched (stale done ignored)', () => {
+    const store = createSessionStore()
+    store.beginTurn({
+      turnId: 'turn_002',
+      mode: 'cascade',
+      direction: { source: 'en', target: 'es' },
+    })
+
+    store.completeTurn('turn_001', 'completed') // a done for a DIFFERENT (stale) turn
+
+    const s = store.getState()
+    expect(s.currentTurn?.turnId).toBe('turn_002') // active turn not clobbered
+    expect(s.turns).toHaveLength(0) // nothing finalized
+    expect(s.turnStatus).toBe('recording') // not flipped to completed by a stale done
   })
 })

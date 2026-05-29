@@ -1,11 +1,17 @@
 import { useSyncExternalStore } from 'react'
 import type {
   ConfigResponse,
+  CostEstimate,
+  InterpretationMode,
   InterpretationSession,
+  LanguageDirection,
+  LatencyEvent,
   RealtimeModel,
   SessionStatus,
+  TranscriptSegment,
   TranslationModel,
   TurnStatus,
+  TurnViewModel,
   UiError,
   UiSessionState,
 } from '../types/domain'
@@ -37,6 +43,31 @@ export type SessionStore = {
   clearErrors(): void
   sessionEnded(): void
   reset(): void
+  // --- Streaming turn actions (D.4a) — driven by the cascade WS client's dispatch ---
+  beginTurn(input: { turnId: string; mode: InterpretationMode; direction: LanguageDirection }): void
+  appendTranscriptSegment(segment: TranscriptSegment): void
+  appendLatencyEvent(event: LatencyEvent): void
+  setTurnCost(estimate: CostEstimate): void
+  failTurn(error: UiError): void
+  completeTurn(turnId: string, status: TurnStatus): void
+}
+
+// Append a transcript segment to a role's running list: replace the trailing non-final partial (a
+// later partial supersedes it; a final supersedes + finalizes it), but start a NEW running entry once
+// the trailing entry is final — so the panel renders "running partial -> finalized history" (ARCH-011).
+function appendSegment(
+  list: { text: string; isFinal: boolean }[],
+  segment: TranscriptSegment,
+): { text: string; isFinal: boolean }[] {
+  const next = [...list]
+  const entry = { text: segment.text, isFinal: segment.isFinal }
+  const last = next[next.length - 1]
+  if (last && !last.isFinal) {
+    next[next.length - 1] = entry
+  } else {
+    next.push(entry)
+  }
+  return next
 }
 
 function createInitialState(): UiSessionState {
@@ -102,6 +133,103 @@ export function createSessionStore(): SessionStore {
     clearErrors: () => set({ ...state, errors: [] }),
     sessionEnded: () => set({ ...state, sessionStatus: 'ended' }),
     reset: () => set(createInitialState()),
+
+    beginTurn: ({ turnId, mode, direction }) =>
+      set({
+        ...state,
+        currentTurn: {
+          turnId,
+          mode,
+          direction,
+          status: 'recording',
+          startedAt: new Date().toISOString(),
+          sourceTranscript: [],
+          targetTranscript: [],
+          latency: {},
+          errors: [],
+        },
+        turnStatus: 'recording',
+      }),
+
+    appendTranscriptSegment: (segment) => {
+      const turn = state.currentTurn
+      if (!turn) {
+        return // no active turn — ignore (defensive; transcripts arrive only between begin and complete)
+      }
+      const updated =
+        segment.role === 'target'
+          ? { ...turn, targetTranscript: appendSegment(turn.targetTranscript, segment) }
+          : { ...turn, sourceTranscript: appendSegment(turn.sourceTranscript, segment) }
+      set({ ...state, currentTurn: updated })
+    },
+
+    // Per-stage timeline only (keyed by event name). The top-level speech-end deltas are NOT computed
+    // here — that's the backend MetricsAggregator's domain (lesson §7: relativeMs is per-event display,
+    // not a cross-event math input); D.6 reads the backend's canonical metrics.
+    appendLatencyEvent: (event) => {
+      const turn = state.currentTurn
+      if (!turn) {
+        return
+      }
+      set({
+        ...state,
+        currentTurn: {
+          ...turn,
+          latency: {
+            ...turn.latency,
+            stages: { ...turn.latency.stages, [event.name]: event.relativeMs },
+          },
+        },
+      })
+    },
+
+    setTurnCost: (estimate) => {
+      const turn = state.currentTurn
+      if (!turn) {
+        return
+      }
+      set({
+        ...state,
+        currentTurn: {
+          ...turn,
+          estimatedCostUsd: estimate.estimatedUsd,
+          estimatedCostPerMinuteUsd: estimate.estimatedUsdPerMinute ?? undefined,
+          translationModelUsed: estimate.model,
+        },
+      })
+    },
+
+    failTurn: (error) =>
+      set({
+        ...state,
+        errors: [...state.errors, error],
+        currentTurn: state.currentTurn
+          ? { ...state.currentTurn, status: 'failed', errors: [...state.currentTurn.errors, error] }
+          : state.currentTurn,
+        turnStatus: 'failed',
+      }),
+
+    completeTurn: (turnId, status) => {
+      const nextTurnStatus: TurnStatus = status === 'failed' ? 'failed' : 'completed'
+      const turn = state.currentTurn
+      if (turn) {
+        // A done for a DIFFERENT turn than the active one is stale — ignore it entirely (don't strand
+        // the active turn or flip turnStatus out from under it).
+        if (turn.turnId !== turnId) {
+          return
+        }
+        const finalized: TurnViewModel = { ...turn, status, completedAt: new Date().toISOString() }
+        set({
+          ...state,
+          turns: [...state.turns, finalized],
+          currentTurn: undefined,
+          turnStatus: nextTurnStatus,
+        })
+      } else {
+        // No active turn — just reflect completion at the session turn-status level.
+        set({ ...state, turnStatus: nextTurnStatus })
+      }
+    },
   }
 }
 
