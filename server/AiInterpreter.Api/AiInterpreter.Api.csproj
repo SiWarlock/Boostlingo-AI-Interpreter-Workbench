@@ -12,4 +12,9 @@
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- B.6: ship the scripted WER phrases next to the host so EvaluationPhraseStore can load them. -->
+    <None Update="Evaluation/evaluation-phrases.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

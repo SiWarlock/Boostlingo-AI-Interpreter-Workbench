@@ -44,6 +44,9 @@
     <None Include="..\AiInterpreter.Api\appsettings.Development.json" Link="appsettings.Development.json" CopyToOutputDirectory="PreserveNewest" />
     <!-- A.4: the committed pricing.json (repo-root config/) feeds PricingConfigTests' valid-file load. -->
     <None Include="..\..\config\pricing.json" Link="pricing.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- B.6: the scripted WER phrases feed WerCalculatorTests + the integration host. Mirror the
+         Api layout (Evaluation/ subdir) so the EVALUATION_PHRASES_PATH default resolves in tests too. -->
+    <None Include="..\AiInterpreter.Api\Evaluation\evaluation-phrases.json" Link="Evaluation\evaluation-phrases.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

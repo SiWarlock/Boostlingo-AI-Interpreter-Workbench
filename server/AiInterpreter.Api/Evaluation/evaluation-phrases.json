@@ -1,0 +1,12 @@
+[
+  { "phraseId": "en_001", "language": "en", "referenceText": "I need help checking in for my appointment.", "category": "appointment" },
+  { "phraseId": "en_002", "language": "en", "referenceText": "Where is the pharmacy located in this building?", "category": "navigation" },
+  { "phraseId": "en_003", "language": "en", "referenceText": "Please describe your symptoms to the doctor.", "category": "intake" },
+  { "phraseId": "en_004", "language": "en", "referenceText": "Do you have any allergies to medication?", "category": "intake" },
+  { "phraseId": "en_005", "language": "en", "referenceText": "Your next visit is scheduled for Monday morning.", "category": "scheduling" },
+  { "phraseId": "es_001", "language": "es", "referenceText": "Necesito ayuda para registrarme para mi cita.", "category": "appointment" },
+  { "phraseId": "es_002", "language": "es", "referenceText": "¿Dónde está la farmacia en este edificio?", "category": "navigation" },
+  { "phraseId": "es_003", "language": "es", "referenceText": "Por favor describa sus síntomas al doctor.", "category": "intake" },
+  { "phraseId": "es_004", "language": "es", "referenceText": "¿Tiene alguna alergia a algún medicamento?", "category": "intake" },
+  { "phraseId": "es_005", "language": "es", "referenceText": "Su próxima visita está programada para el lunes.", "category": "scheduling" }
+]

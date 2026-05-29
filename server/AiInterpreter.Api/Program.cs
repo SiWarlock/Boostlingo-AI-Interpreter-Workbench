@@ -1,5 +1,6 @@
 using AiInterpreter.Api.Common;
 using AiInterpreter.Api.Cost;
+using AiInterpreter.Api.Evaluation;
 using AiInterpreter.Api.Metrics;
 using AiInterpreter.Api.Providers.Deepgram;
 using AiInterpreter.Api.Providers.OpenAI;
@@ -32,6 +33,14 @@ builder.Services.AddSingleton(PricingLoader.Load(pricingPath));
 // degrades to "estimate unavailable" on missing config. Entry-point consumers are C.4 (WS cost
 // message) + B.7 (summary aggregation) — available-in-DI now, not a silent gap.
 builder.Services.AddSingleton<CostEstimator>();
+
+// Evaluation (B.6) — WER calculator + scripted-phrase store (degrade-don't-crash load). Consumer is
+// F.1 (evaluation endpoints); available-in-DI now. EVALUATION_PHRASES_PATH overrides the default
+// content location (copied next to the host via the Api csproj).
+builder.Services.AddSingleton<WerCalculator>();
+var phrasesPath = builder.Configuration["EVALUATION_PHRASES_PATH"]
+    ?? Path.Combine(AppContext.BaseDirectory, "Evaluation", "evaluation-phrases.json");
+builder.Services.AddSingleton(new EvaluationPhraseStore(phrasesPath));
 
 // Metrics layer (B.3) — injectable clock + the latency factory/aggregator (ARCH-013). The factory
 // is the first IClock consumer; the production consumer of the trio is the B.4 cascade orchestrator
