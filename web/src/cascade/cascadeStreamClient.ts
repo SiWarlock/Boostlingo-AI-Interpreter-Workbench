@@ -239,11 +239,17 @@ export function createCascadeStreamClient(deps: {
 }
 
 // Production singleton — one client reused across turns. Construction opens NO socket (start() does).
-// onAudio is a no-op for now; D.5 wires the playback controller here (consider a settable delegate then).
-const noopAudio: (chunk: CascadeAudioChunk) => void = () => {
-  /* D.5 wires playback */
+// The audio sink is a settable delegate (default no-op): D.5 calls setAudioSink(playbackController.enqueue)
+// at the composition root, so the singleton needn't be reconstructed to wire playback.
+let audioSink: (chunk: CascadeAudioChunk) => void = () => {
+  /* no playback sink wired yet */
 }
+
+export function setAudioSink(sink: (chunk: CascadeAudioChunk) => void): void {
+  audioSink = sink
+}
+
 export const cascadeStreamClient = createCascadeStreamClient({
   store: sessionStore,
-  onAudio: noopAudio,
+  onAudio: (chunk) => audioSink(chunk),
 })
