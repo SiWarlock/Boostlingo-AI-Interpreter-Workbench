@@ -63,24 +63,6 @@ describe('sessionStore', () => {
     expect(store.getState().providerHealth).toEqual(config)
   })
 
-  it('configureSession sets the selected fields and transitions idle -> configured', () => {
-    const store = createSessionStore()
-    store.configureSession({
-      label: 'my run',
-      mode: 'cascade',
-      direction: { source: 'en', target: 'es' },
-      realtimeModel: 'gpt-realtime-mini',
-      translationModel: 'gpt-5.4-mini',
-    })
-    const s = store.getState()
-    expect(s.label).toBe('my run')
-    expect(s.mode).toBe('cascade')
-    expect(s.direction).toEqual({ source: 'en', target: 'es' })
-    expect(s.realtimeModel).toBe('gpt-realtime-mini')
-    expect(s.translationModel).toBe('gpt-5.4-mini')
-    expect(s.sessionStatus).toBe('configured')
-  })
-
   it('sessionStarted maps the wire session DTO into view state and goes active', () => {
     const store = createSessionStore()
     store.sessionStarted(wireSession)
@@ -139,5 +121,54 @@ describe('sessionStore', () => {
     unsubscribe()
     store.setTurnStatus('processing')
     expect(listener).toHaveBeenCalledTimes(1) // no further notifications after unsubscribe
+  })
+
+  it('updateSessionConfig with a full patch from idle sets all fields and configures (folds D.1 configureSession)', () => {
+    const store = createSessionStore()
+    store.updateSessionConfig({
+      label: 'my run',
+      mode: 'cascade',
+      direction: { source: 'en', target: 'es' },
+      realtimeModel: 'gpt-realtime-mini',
+      translationModel: 'gpt-5.4-mini',
+    })
+    const s = store.getState()
+    expect(s.label).toBe('my run')
+    expect(s.mode).toBe('cascade')
+    expect(s.direction).toEqual({ source: 'en', target: 'es' })
+    expect(s.realtimeModel).toBe('gpt-realtime-mini')
+    expect(s.translationModel).toBe('gpt-5.4-mini')
+    expect(s.sessionStatus).toBe('configured')
+  })
+
+  it('updateSessionConfig merges a partial patch, transitions to configured, notifies (D.2)', () => {
+    const store = createSessionStore()
+    const listener = vi.fn()
+    store.subscribe(listener)
+
+    const before = store.getState()
+    store.updateSessionConfig({ mode: 'realtime' })
+    const after = store.getState()
+
+    expect(after).not.toBe(before) // new ref
+    expect(listener).toHaveBeenCalledTimes(1) // notifies
+    expect(after.mode).toBe('realtime')
+    expect(after.sessionStatus).toBe('configured') // idle -> configured
+
+    // a second partial merges without clobbering the prior field
+    store.updateSessionConfig({ label: 'run-1' })
+    const final = store.getState()
+    expect(final.mode).toBe('realtime') // preserved
+    expect(final.label).toBe('run-1')
+    expect(final.sessionStatus).toBe('configured')
+  })
+
+  it('updateSessionConfig does NOT drag an active session back to configured (mode switch between turns)', () => {
+    const store = createSessionStore()
+    store.sessionStarted(wireSession) // -> active, mode 'realtime'
+    store.updateSessionConfig({ mode: 'cascade' })
+    const s = store.getState()
+    expect(s.mode).toBe('cascade') // the mode write still applies
+    expect(s.sessionStatus).toBe('active') // NOT reset to 'configured' (Flow-G between-turns switch)
   })
 })

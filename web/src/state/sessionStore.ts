@@ -2,7 +2,6 @@ import { useSyncExternalStore } from 'react'
 import type {
   ConfigResponse,
   InterpretationSession,
-  LanguageDirection,
   RealtimeModel,
   SessionStatus,
   TranslationModel,
@@ -19,19 +18,18 @@ import type {
 // useSyncExternalStore re-renders correctly; getState() returns a stable reference between actions
 // so getSnapshot doesn't loop.
 
-export type ConfigureSessionInput = {
-  label?: string
-  mode: UiSessionState['mode']
-  direction: LanguageDirection
-  realtimeModel: RealtimeModel
-  translationModel: TranslationModel
-}
+// A partial patch of the user-selectable session config (D.2). The setup form writes each edit into
+// the store via updateSessionConfig; Start reads the merged result. Replaces the D.1 configureSession
+// (which had no live caller — D.2 chose the merging action).
+export type SessionConfigPatch = Partial<
+  Pick<UiSessionState, 'label' | 'mode' | 'direction' | 'realtimeModel' | 'translationModel'>
+>
 
 export type SessionStore = {
   getState(): UiSessionState
   subscribe(listener: () => void): () => void
   loadConfig(config: ConfigResponse): void
-  configureSession(input: ConfigureSessionInput): void
+  updateSessionConfig(patch: SessionConfigPatch): void
   sessionStarted(session: InterpretationSession): void
   setSessionStatus(status: SessionStatus): void
   setTurnStatus(status: TurnStatus): void
@@ -75,15 +73,15 @@ export function createSessionStore(): SessionStore {
       }
     },
     loadConfig: (config) => set({ ...state, providerHealth: config }),
-    configureSession: (input) =>
+    // Merge a partial config patch. Transition idle -> configured on first config, but NEVER drag an
+    // already-started session backwards: a between-turns mode switch (Flow G, ARCH-007 inv. 9) writes
+    // the new mode while the session stays 'active'. One merging action (store = live config
+    // source-of-truth, ARCH-007) beats granular per-field setters.
+    updateSessionConfig: (patch) =>
       set({
         ...state,
-        label: input.label,
-        mode: input.mode,
-        direction: input.direction,
-        realtimeModel: input.realtimeModel,
-        translationModel: input.translationModel,
-        sessionStatus: 'configured',
+        ...patch,
+        sessionStatus: state.sessionStatus === 'idle' ? 'configured' : state.sessionStatus,
       }),
     // Maps the wire InterpretationSession DTO -> view state. The model strings come back from the
     // catalog-constrained create request, so the narrowing cast at this wire->view boundary is sound.

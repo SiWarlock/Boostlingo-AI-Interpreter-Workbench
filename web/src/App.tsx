@@ -1,6 +1,8 @@
 import { useEffect } from 'react'
 import { ApiError } from './api/http'
 import { configApi } from './api/configApi'
+import ModeToggle from './components/ModeToggle'
+import SessionSetup from './components/SessionSetup'
 import { sessionStore, useSessionState } from './state/sessionStore'
 
 // The mode-agnostic app shell. Renders ONLY from sessionStore state (clean separation, ARCH-007 /
@@ -57,6 +59,8 @@ export default function App() {
           <p>Loading configuration…</p>
         )}
       </section>
+      <ModeToggle />
+      <SessionSetup />
       {state.errors.length > 0 && (
         <section aria-label="errors">
           <ul>
