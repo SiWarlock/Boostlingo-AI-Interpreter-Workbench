@@ -1,0 +1,290 @@
+using AiInterpreter.Api.Common;
+using AiInterpreter.Api.Metrics;
+using AiInterpreter.Api.Providers.Abstractions;
+using AiInterpreter.Api.Sessions;
+
+namespace AiInterpreter.Tests;
+
+// B.7b — SessionSummaryService (ARCH-009 on-demand summary / ARCH-013 per-turn→per-mode aggregation /
+// ARCH-005 fills SessionSummary/ModeSummary/WerSummary). IMPORTANT tier (ARCH-020): aggregation math.
+//
+// Composes the REAL MetricsAggregator (the seam under reuse — never re-implement metric math) + a
+// deterministic IClock. Turns carry literal ARCH-013 wire-name LatencyEvents so the aggregator
+// produces known TurnMetrics; the service averages those. Pins: average over non-null only (absent
+// on all → null, never 0/throw — lesson §7), cascade-stage fields null for realtime turns, WER
+// unbounded (no clamp >1.0 — lesson §10), pure compute (no mutation of the session).
+public class SessionSummaryServiceTests
+{
+    private static readonly DateTimeOffset Base = new(2026, 5, 28, 15, 30, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset ComputedAt = Base.AddMinutes(10);
+
+    private sealed class FakeClock(DateTimeOffset fixedNow) : IClock
+    {
+        public DateTimeOffset UtcNow => fixedNow;
+    }
+
+    private static SessionSummaryService Service(DateTimeOffset? now = null) =>
+        new(new MetricsAggregator(), new FakeClock(now ?? ComputedAt));
+
+    private static LatencyEvent Ev(string name, DateTimeOffset ts) =>
+        new(name, LatencyStage.Stt, ts, 0, ClockSource.Server, new Dictionary<string, string>());
+
+    // A cascade turn whose aggregator metrics equal the requested values. tts.first_audio is the
+    // cascade "first output audio", so SpeechEndToFirstAudio reads from it; ttsStart is derived back
+    // from it. A null metric omits its events so the aggregator yields null for that field.
+    private static InterpretationTurn CascadeTurn(
+        string turnId,
+        double? sttFinalMs = 200, double? translationFinalMs = 300, double? ttsFirstAudioMs = 150,
+        double speechEndToFirstAudioMs = 500, double speechEndToPlaybackMs = 800,
+        decimal? costPerMin = null, int errorCount = 0, double? wer = null)
+    {
+        var speechEnd = Base.AddMilliseconds(1000);
+        var events = new List<LatencyEvent>
+        {
+            Ev(LatencyEventNames.TurnRecordingStarted, Base),
+            Ev(LatencyEventNames.TurnRecordingStopped, speechEnd),
+            Ev(LatencyEventNames.PlaybackStarted, speechEnd.AddMilliseconds(speechEndToPlaybackMs)),
+        };
+
+        if (sttFinalMs is { } stt)
+        {
+            var sttOrigin = Base.AddMilliseconds(50);
+            events.Add(Ev(LatencyEventNames.CascadeAudioReceived, sttOrigin));
+            events.Add(Ev(LatencyEventNames.SttFinal, sttOrigin.AddMilliseconds(stt)));
+        }
+        if (translationFinalMs is { } tr)
+        {
+            var trStart = Base.AddMilliseconds(1100);
+            events.Add(Ev(LatencyEventNames.TranslationStarted, trStart));
+            events.Add(Ev(LatencyEventNames.TranslationFinal, trStart.AddMilliseconds(tr)));
+        }
+        if (ttsFirstAudioMs is { } tts)
+        {
+            var firstAudio = speechEnd.AddMilliseconds(speechEndToFirstAudioMs);
+            events.Add(Ev(LatencyEventNames.TtsStarted, firstAudio.AddMilliseconds(-tts)));
+            events.Add(Ev(LatencyEventNames.TtsFirstAudio, firstAudio));
+        }
+
+        return Turn(turnId, InterpretationMode.Cascade, events, costPerMin, errorCount, wer);
+    }
+
+    // A realtime turn: universal + realtime events only, NO cascade stage events (so the cascade-only
+    // ModeSummary fields aggregate to null). realtime.first_audio_delta is the first output audio.
+    private static InterpretationTurn RealtimeTurn(
+        string turnId, double speechEndToFirstAudioMs = 400, double speechEndToPlaybackMs = 600,
+        decimal? costPerMin = null, int errorCount = 0, double? wer = null)
+    {
+        var speechEnd = Base.AddMilliseconds(1000);
+        var events = new List<LatencyEvent>
+        {
+            Ev(LatencyEventNames.TurnRecordingStarted, Base),
+            Ev(LatencyEventNames.TurnRecordingStopped, speechEnd),
+            Ev(LatencyEventNames.RealtimeFirstAudioDelta, speechEnd.AddMilliseconds(speechEndToFirstAudioMs)),
+            Ev(LatencyEventNames.PlaybackStarted, speechEnd.AddMilliseconds(speechEndToPlaybackMs)),
+        };
+        return Turn(turnId, InterpretationMode.Realtime, events, costPerMin, errorCount, wer);
+    }
+
+    private static InterpretationTurn Turn(
+        string turnId, InterpretationMode mode, List<LatencyEvent> events,
+        decimal? costPerMin, int errorCount, double? wer)
+    {
+        var dir = new LanguageDirection(LanguageCode.En, LanguageCode.Es);
+        var cost = costPerMin is null
+            ? null
+            : new CostEstimate("p", "m", "composite", 0m, costPerMin,
+                new Dictionary<string, decimal>(), "v", Array.Empty<string>());
+        var werResult = wer is null
+            ? null
+            : new WerResult("p", "r", "h", "r", "h", 0, 0, 0, 2, wer.Value);
+        var errors = new List<ProviderError>();
+        for (var i = 0; i < errorCount; i++)
+        {
+            errors.Add(new ProviderError("p", "stt", "stt.failed", "msg", false, null));
+        }
+
+        return new InterpretationTurn(
+            turnId, mode, dir, Base, Base.AddSeconds(2), 2000,
+            new List<TranscriptSegment>(), events, cost, werResult, errors,
+            TurnStatus.Completed, "gpt-5.4-nano", "alloy");
+    }
+
+    private static InterpretationSession Session(params InterpretationTurn[] turns)
+    {
+        var dir = new LanguageDirection(LanguageCode.En, LanguageCode.Es);
+        var profile = new ProviderProfile(
+            "openai", "gpt-realtime", "deepgram", "nova-3", "multi",
+            "openai", "gpt-5.4-nano", "openai", "gpt-4o-mini-tts", "alloy");
+        var config = new SessionConfig(InterpretationMode.Cascade, dir, profile);
+        return new InterpretationSession(
+            "session_x", null, Base, null, config,
+            turns.ToList(), new List<ModeTransitionEvent>(), null, "2026-05-28-payg-estimates");
+    }
+
+    // 1 — empty session: zero counts, all mode/WER summaries null, ComputedAt + version echoed, no throw.
+    [Fact]
+    public void empty_session_returns_zero_summary()
+    {
+        var summary = Service().Compute(Session());
+
+        Assert.Equal(0, summary.TurnCount);
+        Assert.Null(summary.Realtime);
+        Assert.Null(summary.Cascade);
+        Assert.Null(summary.Wer);
+        Assert.Equal(ComputedAt, summary.ComputedAt);
+        Assert.Equal("2026-05-28-payg-estimates", summary.PricingConfigVersion);
+    }
+
+    // 2 — one cascade turn: Cascade populated (avg = that turn's metrics, cost/min, ErrorCount=1); Realtime null.
+    [Fact]
+    public void single_cascade_turn_populates_cascade_summary()
+    {
+        var summary = Service().Compute(Session(CascadeTurn(
+            "t1", sttFinalMs: 200, translationFinalMs: 300, ttsFirstAudioMs: 150,
+            speechEndToFirstAudioMs: 500, speechEndToPlaybackMs: 800, costPerMin: 0.05m, errorCount: 1)));
+
+        Assert.Null(summary.Realtime);
+        var c = summary.Cascade;
+        Assert.NotNull(c);
+        Assert.Equal(1, c!.TurnCount);
+        Assert.Equal(500, c.AvgSpeechEndToFirstAudioMs);
+        Assert.Equal(800, c.AvgSpeechEndToPlaybackMs);
+        Assert.Equal(200, c.AvgSttFinalMs);
+        Assert.Equal(300, c.AvgTranslationFinalMs);
+        Assert.Equal(150, c.AvgTtsFirstAudioMs);
+        Assert.Equal(0.05m, c.EstimatedCostPerMinuteUsd);
+        Assert.Equal(1, c.ErrorCount);
+        Assert.Equal(1, summary.TurnCount);
+    }
+
+    // 3 — one realtime turn: cascade-only fields null; universal avgs present; Cascade null. (ARCH-005 line 326)
+    [Fact]
+    public void single_realtime_turn_cascade_fields_null()
+    {
+        var summary = Service().Compute(Session(RealtimeTurn(
+            "t1", speechEndToFirstAudioMs: 400, speechEndToPlaybackMs: 600)));
+
+        Assert.Null(summary.Cascade);
+        var r = summary.Realtime;
+        Assert.NotNull(r);
+        Assert.Equal(1, r!.TurnCount);
+        Assert.Equal(400, r.AvgSpeechEndToFirstAudioMs);
+        Assert.Equal(600, r.AvgSpeechEndToPlaybackMs);
+        Assert.Null(r.AvgSttFinalMs);
+        Assert.Null(r.AvgTranslationFinalMs);
+        Assert.Null(r.AvgTtsFirstAudioMs);
+    }
+
+    // 4 — two cascade turns: each Avg* is the arithmetic mean of the two. Pins the averaging math.
+    [Fact]
+    public void multi_turn_averages_metrics()
+    {
+        var summary = Service().Compute(Session(
+            CascadeTurn("t1", sttFinalMs: 200, translationFinalMs: 300, ttsFirstAudioMs: 150,
+                speechEndToFirstAudioMs: 500, speechEndToPlaybackMs: 800),
+            CascadeTurn("t2", sttFinalMs: 400, translationFinalMs: 500, ttsFirstAudioMs: 250,
+                speechEndToFirstAudioMs: 700, speechEndToPlaybackMs: 1000)));
+
+        var c = summary.Cascade!;
+        Assert.Equal(2, c.TurnCount);
+        Assert.Equal(300, c.AvgSttFinalMs);            // (200+400)/2
+        Assert.Equal(400, c.AvgTranslationFinalMs);    // (300+500)/2
+        Assert.Equal(200, c.AvgTtsFirstAudioMs);       // (150+250)/2
+        Assert.Equal(600, c.AvgSpeechEndToFirstAudioMs); // (500+700)/2
+        Assert.Equal(900, c.AvgSpeechEndToPlaybackMs);   // (800+1000)/2
+    }
+
+    // 5 — mixed-mode session: both ModeSummaries populated, each counting only its mode; top TurnCount = total.
+    [Fact]
+    public void mixed_mode_session_splits_summaries()
+    {
+        var summary = Service().Compute(Session(
+            CascadeTurn("c1"), RealtimeTurn("r1"), CascadeTurn("c2")));
+
+        Assert.Equal(3, summary.TurnCount);
+        Assert.NotNull(summary.Cascade);
+        Assert.NotNull(summary.Realtime);
+        Assert.Equal(2, summary.Cascade!.TurnCount);
+        Assert.Equal(1, summary.Realtime!.TurnCount);
+    }
+
+    // 6 — null-metric handling: mean over present values only; a metric null on every turn → null.
+    [Fact]
+    public void null_metric_excluded_from_average()
+    {
+        var summary = Service().Compute(Session(
+            CascadeTurn("t1", sttFinalMs: 200, translationFinalMs: null, ttsFirstAudioMs: 150),
+            CascadeTurn("t2", sttFinalMs: null, translationFinalMs: null, ttsFirstAudioMs: 250)));
+
+        var c = summary.Cascade!;
+        Assert.Equal(200, c.AvgSttFinalMs);       // only t1 present
+        Assert.Null(c.AvgTranslationFinalMs);     // null on both -> null (n/a, never 0/throw)
+        Assert.Equal(200, c.AvgTtsFirstAudioMs);  // (150+250)/2
+    }
+
+    // 7 — ErrorCount sums per mode (total normalized errors), NOT count-of-failed-turns.
+    [Fact]
+    public void error_count_sums_per_mode()
+    {
+        var summary = Service().Compute(Session(
+            CascadeTurn("t1", errorCount: 2), CascadeTurn("t2", errorCount: 3)));
+
+        Assert.Equal(5, summary.Cascade!.ErrorCount);
+    }
+
+    // 8 — WER session-level over both modes; unbounded (the >1.0 sample is included, never clamped);
+    // turns without WER excluded; none anywhere → null.
+    [Fact]
+    public void wer_summary_aggregates_all_turns_unbounded()
+    {
+        var summary = Service().Compute(Session(
+            CascadeTurn("t1", wer: 0.5), CascadeTurn("t2", wer: null), RealtimeTurn("t3", wer: 1.5)));
+
+        Assert.NotNull(summary.Wer);
+        Assert.Equal(2, summary.Wer!.SampleCount);   // t1 + t3 (t2 excluded)
+        Assert.Equal(1.0, summary.Wer.AvgWer);       // (0.5+1.5)/2 = 1.0 — clamping would give 0.75
+
+        Assert.Null(Service().Compute(Session(CascadeTurn("a"), CascadeTurn("b"))).Wer);
+    }
+
+    // 9 — cost/min averaged over non-null per-turn rates; all-null → null.
+    [Fact]
+    public void cost_per_minute_averaged_over_non_null()
+    {
+        var summary = Service().Compute(Session(
+            CascadeTurn("t1", costPerMin: 0.04m), CascadeTurn("t2", costPerMin: null),
+            CascadeTurn("t3", costPerMin: 0.06m)));
+
+        Assert.Equal(0.05m, summary.Cascade!.EstimatedCostPerMinuteUsd);  // (0.04+0.06)/2
+
+        var allNull = Service().Compute(Session(
+            CascadeTurn("a", costPerMin: null), CascadeTurn("b", costPerMin: null)));
+        Assert.Null(allNull.Cascade!.EstimatedCostPerMinuteUsd);
+    }
+
+    // 10 — ComputedAt == injected clock; PricingConfigVersion == the session's (ARCH-009 staleness).
+    [Fact]
+    public void computed_at_and_version_from_inputs()
+    {
+        var now = Base.AddHours(3);
+        var summary = Service(now).Compute(Session(CascadeTurn("t1")));
+
+        Assert.Equal(now, summary.ComputedAt);
+        Assert.Equal("2026-05-28-payg-estimates", summary.PricingConfigVersion);
+    }
+
+    // Pure compute: Compute does NOT mutate the session or write session.Summary (B.9 owns the snapshot).
+    [Fact]
+    public void compute_does_not_mutate_session()
+    {
+        var session = Session(CascadeTurn("t1"));
+        var turnCountBefore = session.Turns.Count;
+
+        var summary = Service().Compute(session);
+
+        Assert.NotNull(summary);                             // it actually computed...
+        Assert.Equal(1, summary.TurnCount);
+        Assert.Null(session.Summary);                        // ...without writing the snapshot (B.9 owns /end)
+        Assert.Equal(turnCountBefore, session.Turns.Count);  // source turn list left untouched
+    }
+}

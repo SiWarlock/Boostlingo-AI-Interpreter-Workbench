@@ -59,6 +59,11 @@ builder.Services.AddSingleton<SessionStore>();
 var sessionDataDir = builder.Configuration["SESSION_DATA_DIR"] ?? "../../data/sessions";
 builder.Services.AddSingleton(new SessionPersistenceWriter(sessionDataDir));
 
+// Session summary (B.7b) — pure read-only aggregation of a session into SessionSummary (reuses the
+// B.3 MetricsAggregator per turn). Stateless singleton; entry-point consumers are B.9 (GET …/summary
+// + the /end snapshot) + F.3 (ComparisonSummary) — available-in-DI now, not a silent gap.
+builder.Services.AddSingleton<SessionSummaryService>();
+
 // Shared JSON contract (A.3) on the HTTP pipeline — camelCase + enum-as-string + explicit null,
 // the same contract persistence uses, so API and persisted JSON cannot diverge.
 builder.Services.ConfigureHttpJsonOptions(o => JsonDefaults.Apply(o.SerializerOptions));
