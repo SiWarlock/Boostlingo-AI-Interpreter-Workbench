@@ -66,6 +66,10 @@ builder.Services.AddSingleton(new SessionPersistenceWriter(sessionDataDir));
 // + the /end snapshot) + F.3 (ComparisonSummary) — available-in-DI now, not a silent gap.
 builder.Services.AddSingleton<SessionSummaryService>();
 
+// Session lifecycle service (B.9c-i) — orchestrates create/get/end/summary over the store + summary +
+// writer for SessionsController. Behind ISessionService (the controller test seam, lesson §15).
+builder.Services.AddSingleton<ISessionService, SessionService>();
+
 // Error sanitizer (B.8, safety invariant #4) — turns any Exception/ProviderError/Result.Error into a
 // safe normalized UiError (no stack/secret/raw-payload to the client; original logged server-side).
 // Injectable singleton (needs ILogger). Entry-point consumers are B.9 (global exception handler +

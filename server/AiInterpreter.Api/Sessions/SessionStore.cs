@@ -96,6 +96,18 @@ public sealed class SessionStore
         }
     }
 
+    /// <summary>Snapshots a computed <c>Summary</c> into the session (B.9c-i <c>/end</c>) so a later
+    /// <see cref="Get"/> reflects it; returns the updated session, or null if unknown.</summary>
+    public InterpretationSession? SetSummary(string sessionId, SessionSummary summary)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var entry)) return null;
+        lock (entry.Gate)
+        {
+            entry.Session = entry.Session with { Summary = summary };
+            return entry.Session;
+        }
+    }
+
     // session_<short-id>: the short-id is a lowercase-hex GUID segment, so the full id matches the
     // path-traversal allowlist ^[A-Za-z0-9_-]+$ (ARCH-016 / ARCH-019).
     private static string GenerateSessionId() => "session_" + Guid.NewGuid().ToString("N")[..8];

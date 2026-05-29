@@ -162,4 +162,21 @@ public class ErrorSanitizerTests
         Assert.Equal("turn-7", sanitizer.Sanitize(new Exception("x"), turnId: "turn-7").TurnId);
         Assert.Null(sanitizer.Sanitize(new Exception("x")).TurnId);
     }
+
+    // 8 (B.9c-i) — the Result<T> SanitizeResult overload: a failed Result<string> whose Error embeds a
+    // path + secret -> a UiError echoing NEITHER (mirrors the non-generic test 4). First consumer is
+    // the /end Result<string> persistence path.
+    [Fact]
+    public void result_t_sanitize_overload_no_echo()
+    {
+        var failed = Result<string>.Failure("persistence.failed: /abs/secret/sk-x/session.json");
+
+        var ui = Sanitizer().SanitizeResult("persistence.failed", failed);
+        var json = Json(ui);
+
+        Assert.Equal("persistence.failed", ui.Code);
+        Assert.DoesNotContain("sk-x", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("/abs/secret", json, StringComparison.Ordinal);
+        Assert.False(string.IsNullOrWhiteSpace(ui.SafeMessage));
+    }
 }
