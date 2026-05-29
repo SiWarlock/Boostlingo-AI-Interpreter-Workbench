@@ -71,6 +71,14 @@ builder.Services.AddSingleton<SessionSummaryService>();
 // Result→DTO) + C.4 (WS error frames) — available-in-DI now, not a silent gap.
 builder.Services.AddSingleton<ErrorSanitizer>();
 
+// Global exception handler (B.9a, safety invariant #4 boundary) — any unhandled exception is routed
+// through the sanitizer and returned as a safe UiError, so a framework error page (stack trace in Dev)
+// never reaches the client. AddProblemDetails is required for the parameterless app.UseExceptionHandler()
+// to initialize without a startup exception; its writer is the fallback our handler never reaches (the
+// handler always handles + emits UiError + returns true). Wired into the pipeline below.
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
+
 // Shared JSON contract (A.3) on the HTTP pipeline — camelCase + enum-as-string + explicit null,
 // the same contract persistence uses, so API and persisted JSON cannot diverge.
 builder.Services.ConfigureHttpJsonOptions(o => JsonDefaults.Apply(o.SerializerOptions));
@@ -90,6 +98,11 @@ if (builder.Environment.IsDevelopment())
 }
 
 var app = builder.Build();
+
+// Global sanitizing exception handler FIRST (B.9a) — wraps the whole pipeline so any unhandled
+// exception (from minimal-API routes today, controllers in B.9b/c) is returned as a safe UiError,
+// never a framework error page (ARCH-018/019, safety invariant #4).
+app.UseExceptionHandler();
 
 if (app.Environment.IsDevelopment())
 {
