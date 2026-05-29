@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { availableModels, canToggleMode, modeAvailability } from './selectors'
-import type { ConfigResponse } from '../types/domain'
+import {
+  availableModels,
+  canStartRecording,
+  canStopRecording,
+  canToggleMode,
+  modeAvailability,
+} from './selectors'
+import type { ConfigResponse, SessionStatus, TurnStatus } from '../types/domain'
 
 function config(overrides: Partial<ConfigResponse> = {}): ConfigResponse {
   return {
@@ -84,5 +90,34 @@ describe('canToggleMode', () => {
     expect(canToggleMode('captured')).toBe(true)
     expect(canToggleMode('completed')).toBe(true)
     expect(canToggleMode('failed')).toBe(true)
+  })
+})
+
+describe('recording transitions (ARCH-007 table)', () => {
+  const at = (sessionStatus: SessionStatus, turnStatus: TurnStatus) => ({
+    sessionStatus,
+    turnStatus,
+  })
+
+  it('canStartRecording: active/readyForTurn session AND a ready/completed/failed turn', () => {
+    expect(canStartRecording(at('active', 'ready'))).toBe(true)
+    expect(canStartRecording(at('readyForTurn', 'ready'))).toBe(true)
+    expect(canStartRecording(at('active', 'completed'))).toBe(true) // start the next turn
+    expect(canStartRecording(at('active', 'failed'))).toBe(true) // retry after a failed turn
+    // blocked mid-turn
+    expect(canStartRecording(at('active', 'recording'))).toBe(false)
+    expect(canStartRecording(at('active', 'processing'))).toBe(false)
+    expect(canStartRecording(at('active', 'playing'))).toBe(false)
+    // blocked when the session isn't started
+    expect(canStartRecording(at('idle', 'ready'))).toBe(false)
+    expect(canStartRecording(at('configured', 'ready'))).toBe(false)
+    expect(canStartRecording(at('ended', 'ready'))).toBe(false)
+  })
+
+  it('canStopRecording: only while recording', () => {
+    expect(canStopRecording(at('active', 'recording'))).toBe(true)
+    expect(canStopRecording(at('active', 'ready'))).toBe(false)
+    expect(canStopRecording(at('active', 'processing'))).toBe(false)
+    expect(canStopRecording(at('active', 'playing'))).toBe(false)
   })
 })

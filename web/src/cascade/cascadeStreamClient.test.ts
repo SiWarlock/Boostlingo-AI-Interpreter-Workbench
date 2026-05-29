@@ -224,6 +224,24 @@ describe('cascadeStreamClient lifecycle', () => {
     expect(JSON.parse(fake.sent[0] as string)).toEqual(buildStartFrame(params))
   })
 
+  it('queues frames sent before open and flushes them after the start frame (D.4b race)', () => {
+    const { client, getFake } = setup()
+    client.start(params)
+    const fake = getFake()
+
+    // The socket is CONNECTING — capture frames begin flowing before open. They must NOT be sent on
+    // a not-open socket, and must NOT be dropped.
+    const buf = new ArrayBuffer(4)
+    client.sendFrame(buf)
+    expect(fake.sent).toHaveLength(0)
+
+    fake.onopen?.()
+    // on open: the start frame first, then the queued PCM frame, in order
+    expect(fake.sent).toHaveLength(2)
+    expect(JSON.parse(fake.sent[0] as string)).toEqual(buildStartFrame(params))
+    expect(fake.sent[1]).toBe(buf)
+  })
+
   it('forwards binary frames and sends the stop frame', () => {
     const { client, getFake } = setup()
     client.start(params)
@@ -318,5 +336,34 @@ describe('cascadeStreamClient lifecycle', () => {
     // the (already-detached) old socket closing must NOT fail the new turn
     fakes[0].onclose?.({ wasClean: false })
     expect(store.failTurn).not.toHaveBeenCalled()
+  })
+
+  it('defers the stop frame until open when stopped before the socket opens', () => {
+    const { client, getFake } = setup()
+    client.start(params)
+    const fake = getFake()
+
+    // Stop clicked while CONNECTING — must NOT throw / send on a not-open socket.
+    expect(() => client.stop()).not.toThrow()
+    expect(fake.sent).toHaveLength(0)
+
+    fake.onopen?.()
+    // on open: the start frame, then the deferred stop
+    expect(fake.sent).toHaveLength(2)
+    expect(JSON.parse(fake.sent[0] as string)).toEqual(buildStartFrame(params))
+    expect(fake.sent[1]).toBe(JSON.stringify({ type: 'stop' }))
+  })
+
+  it('sends exactly one stop frame on a double stop (idempotent)', () => {
+    const { client, getFake } = setup()
+    client.start(params)
+    const fake = getFake()
+    fake.onopen?.()
+
+    client.stop()
+    client.stop()
+
+    const stops = fake.sent.filter((s) => s === JSON.stringify({ type: 'stop' }))
+    expect(stops).toHaveLength(1)
   })
 })

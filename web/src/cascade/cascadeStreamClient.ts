@@ -1,3 +1,4 @@
+import { sessionStore } from '../state/sessionStore'
 import type { SessionStore } from '../state/sessionStore'
 import type {
   CostEstimate,
@@ -147,6 +148,13 @@ export function createCascadeStreamClient(deps: {
   // Set on `done` (normal end) AND on the first failure; gates the abnormal-close handler so a
   // post-done close is silent and an error-then-close fails the turn only once.
   let terminal = false
+  // Capture begins before the socket opens (D.4b), so frames can arrive while CONNECTING. Queue them
+  // until open, then flush after the start frame — never send on a not-open socket, never drop.
+  let isOpen = false
+  let pending: ArrayBufferLike[] = []
+  // Idempotent stop: deferred to onopen if stopped while CONNECTING (sending on a not-open socket
+  // throws InvalidStateError); a second stop() is a no-op.
+  let stopped = false
 
   function failIfLive(): void {
     if (!terminal) {
@@ -166,15 +174,28 @@ export function createCascadeStreamClient(deps: {
       ws.close()
       ws = null
     }
+    isOpen = false
   }
 
   function start(params: CascadeStartParams): void {
     teardown() // drop any prior socket (e.g. a previous turn) before opening a new one
     terminal = false
+    pending = []
+    stopped = false
     const base = import.meta.env.VITE_API_BASE_URL ?? ''
     ws = wsFactory(toWebSocketUrl(base, location))
     ws.binaryType = 'arraybuffer'
-    ws.onopen = () => ws?.send(JSON.stringify(buildStartFrame(params)))
+    ws.onopen = () => {
+      isOpen = true
+      ws?.send(JSON.stringify(buildStartFrame(params)))
+      for (const frame of pending) {
+        ws?.send(frame)
+      }
+      pending = []
+      if (stopped) {
+        ws?.send(JSON.stringify({ type: 'stop' })) // a stop requested while CONNECTING, deferred to here
+      }
+    }
     ws.onmessage = (event: MessageEvent) => {
       if (typeof event.data !== 'string') {
         return // binary inbound is not part of the contract; ignore
@@ -191,11 +212,22 @@ export function createCascadeStreamClient(deps: {
   }
 
   function sendFrame(frame: ArrayBufferLike): void {
-    ws?.send(frame)
+    if (isOpen && ws) {
+      ws.send(frame)
+    } else {
+      pending.push(frame) // queued until open (capture starts before the socket opens)
+    }
   }
 
   function stop(): void {
-    ws?.send(JSON.stringify({ type: 'stop' }))
+    if (stopped) {
+      return // idempotent — a double stop sends one frame
+    }
+    stopped = true
+    if (isOpen && ws) {
+      ws.send(JSON.stringify({ type: 'stop' }))
+    }
+    // else: deferred — onopen sends the stop once the socket opens (never send on a CONNECTING socket)
   }
 
   function close(): void {
@@ -205,3 +237,13 @@ export function createCascadeStreamClient(deps: {
 
   return { start, sendFrame, stop, close }
 }
+
+// Production singleton — one client reused across turns. Construction opens NO socket (start() does).
+// onAudio is a no-op for now; D.5 wires the playback controller here (consider a settable delegate then).
+const noopAudio: (chunk: CascadeAudioChunk) => void = () => {
+  /* D.5 wires playback */
+}
+export const cascadeStreamClient = createCascadeStreamClient({
+  store: sessionStore,
+  onAudio: noopAudio,
+})

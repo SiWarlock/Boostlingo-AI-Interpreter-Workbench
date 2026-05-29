@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { ApiError } from './api/http'
 import { configApi } from './api/configApi'
 import ModeToggle from './components/ModeToggle'
+import RecordingControls from './components/RecordingControls'
 import SessionSetup from './components/SessionSetup'
 import { sessionStore, useSessionState } from './state/sessionStore'
 
@@ -61,6 +62,7 @@ export default function App() {
       </section>
       <ModeToggle />
       <SessionSetup />
+      <RecordingControls />
       {state.errors.length > 0 && (
         <section aria-label="errors">
           <ul>

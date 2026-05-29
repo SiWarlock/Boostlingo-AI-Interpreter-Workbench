@@ -114,3 +114,7 @@ export function createAudioCaptureController(): AudioCaptureController {
 
   return { startStreaming, recordBlob }
 }
+
+// Production singleton — one controller reused across turns (construction touches no device APIs;
+// getUserMedia/AudioContext only fire on startStreaming/recordBlob).
+export const audioCaptureController = createAudioCaptureController()

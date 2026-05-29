@@ -1,4 +1,4 @@
-import type { ConfigResponse, TurnStatus } from '../types/domain'
+import type { ConfigResponse, TurnStatus, UiSessionState } from '../types/domain'
 
 // Pure gating/availability derivations over the GET /api/config response (ARCH-007 / ARCH-017
 // Flow A). Components render the result + dispatch intents; the gating logic is unit-tested here in
@@ -39,4 +39,19 @@ export function availableModels(config: ConfigResponse | undefined): AvailableMo
 const TOGGLE_BLOCKED = new Set<TurnStatus>(['recording', 'processing', 'playing'])
 export function canToggleMode(turnStatus: TurnStatus): boolean {
   return !TOGGLE_BLOCKED.has(turnStatus)
+}
+
+// ARCH-007 recording-transition table. Start is allowed only when the session is started AND no turn
+// is in flight; Stop only while recording.
+const SESSION_CAN_RECORD = new Set<UiSessionState['sessionStatus']>(['active', 'readyForTurn'])
+const TURN_CAN_START = new Set<TurnStatus>(['ready', 'completed', 'failed'])
+
+export function canStartRecording(
+  state: Pick<UiSessionState, 'sessionStatus' | 'turnStatus'>,
+): boolean {
+  return SESSION_CAN_RECORD.has(state.sessionStatus) && TURN_CAN_START.has(state.turnStatus)
+}
+
+export function canStopRecording(state: Pick<UiSessionState, 'turnStatus'>): boolean {
+  return state.turnStatus === 'recording'
 }
