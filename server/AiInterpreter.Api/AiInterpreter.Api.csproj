@@ -10,6 +10,13 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.27" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
+    <!-- C.1: real Deepgram STT provider (live-WS + pre-recorded REST). -->
+    <PackageReference Include="Deepgram" Version="6.6.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- C.1: expose internal provider-mapping helpers (DeepgramSttMapping) to the test project. -->
+    <InternalsVisibleTo Include="AiInterpreter.Tests" />
   </ItemGroup>
 
   <ItemGroup>
