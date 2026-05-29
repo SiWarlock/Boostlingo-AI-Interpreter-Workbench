@@ -220,7 +220,7 @@ public enum TurnStatus { Ready, Recording, Captured, Processing, Playing, Comple
 // Session-level status (whole evaluation session)
 public enum SessionStatus { Idle, Configured, Starting, Active, ReadyForTurn, Ending, Ended }
 
-public enum LatencyStage { Capture, Realtime, Stt, Translation, Tts, Playback, Persistence, Evaluation }
+public enum LatencyStage { Capture, Realtime, Stt, Translation, Tts, Playback, Persistence, Evaluation, Overall }
 public enum ClockSource { Server, Browser }
 ```
 
@@ -824,13 +824,19 @@ The PRD requires **streaming throughout, no full-utterance blocking, live transc
 
 **Fallback path** (`CascadeOrchestrator` + `POST /api/cascade/turn`): pre-recorded REST (`CreateListenRESTClient`) on the uploaded blob → single `SttFinal` (no interim); `stt.first_partial` is `n/a`. Translation + TTS still stream. Documented as the ARCH-025 fallback.
 
+> **C.1 realization.** `DeepgramSttProvider` is a thin manual-smoke transport shell over a pure, unit-TDD'd `DeepgramSttMapping` (SDK-result→`SttEvent`, REST parse, exception→`SttFailed`, schema build). The callback-based Deepgram WS SDK is bridged to the `IAsyncEnumerable<SttEvent>` contract via a `Channel<SttEvent>` (callbacks write `ToSttEvent(...)`; `TranscribeAsync` reads + yields; cancellation completes the writer + `Stop()`s the socket). One `ISttProvider` seam serves both paths — `SttRequest.Encoding == "linear16"` routes to live WS, any other (recorded-container) encoding to the REST single-shot. See `server/LESSONS.md` §18 (the real-provider pattern, reused by C.2/C.3) + §19 (SDK-hidden-status recovery). **Error-status fidelity (C.6, resolved):** Deepgram v6.6.1 discards the HTTP status on its error-body path (the exception carries only a semantic `err_code` string), so `DeepgramSttMapping` recovers the status by matching `err_code` → `ProviderErrorMapper.MapStatus` — common-path 429/401/403/400 now classify correctly (the C.1 Q5 degrade is closed; only 5xx-with-body, which uses Deepgram's `error_code` key, falls through to the honest `stt.unknown`). See the ARCH-012 mapping note.
+
 ### Translation path
 
-`OpenAiTranslationProvider` calls the **Responses API `POST /v1/responses` with `stream=true`** (Chat Completions is the documented secondary fallback). Map `response.created → TranslationStarted`; first `response.output_text.delta → translation.first_token + TranslationPartial`; subsequent deltas → `TranslationPartial`; `response.completed → TranslationFinal` (aggregated). Set `reasoning_effort="minimal"` and `text.verbosity="low"` to protect first-token latency against the <2s target. Read usage tokens off `response.completed` for cost (Chat Completions needs `stream_options.include_usage`). System instruction = the faithful-interpreter prompt (output ONLY the translation, no framing). **The translation stage must stream** — the final-only-wrap allowance (below) does not apply to it. `OPENAI_TRANSLATION_MODEL` selects `gpt-5.4-nano` (default) or `gpt-5.4-mini`; the model used is recorded per turn (`TranslationModelUsed`) for comparison.
+`OpenAiTranslationProvider` calls the **Responses API `POST /v1/responses` with `stream=true`** (Chat Completions is the documented secondary fallback). Map `response.created → TranslationStarted`; first `response.output_text.delta → translation.first_token + TranslationPartial`; subsequent deltas → `TranslationPartial`; `response.completed → TranslationFinal` (aggregated). Set **nested** `reasoning: {effort: "minimal"}` and `text: {verbosity: "low"}` to protect first-token latency against the <2s target. Read usage tokens off `response.completed` (`response.usage.input_tokens`/`output_tokens`, snake_case) for cost (Chat Completions needs `stream_options.include_usage`). System instruction = the faithful-interpreter prompt (output ONLY the translation, no framing).
+
+> **C.2 API-shape note (Step-1 verified, 2026-05-29).** On `/v1/responses` the latency params are **nested objects** — `reasoning.effort` + `text.verbosity` — **not** the top-level `reasoning_effort` field (that form is Chat-Completions-only and is rejected by the Responses API). The Responses stream has **no `[DONE]` sentinel** (unlike Chat Completions) — it ends after `response.completed`; usage lives at `response.usage.{input_tokens,output_tokens}` (snake_case, not `prompt`/`completion_tokens`). GA endpoint — Bearer auth, no `OpenAI-Beta` header. **The translation stage must stream** — the final-only-wrap allowance (below) does not apply to it. `OPENAI_TRANSLATION_MODEL` selects `gpt-5.4-nano` (default) or `gpt-5.4-mini`; the model used is recorded per turn (`TranslationModelUsed`) for comparison.
 
 ### TTS path
 
 `OpenAiTtsProvider` calls **`POST /v1/audio/speech`** with **chunk-transfer streaming** so `tts.first_audio` is the first chunk (not a relabeled completion). Default `ResponseFormat=mp3` (broad browser playback; opus-in-mp4 fails on Safari); `wav`/`pcm` are lower-latency options exposed via config. Voice is config-driven (`OPENAI_TTS_VOICE`, default `alloy`), language-agnostic for EN/ES (one voice serves both, though voices are English-optimized — a documented write-up limitation). Guard the 4096-char input cap as a non-retryable error.
+
+> **C.3 API-shape note (Step-1 verified, 2026-05-29).** For `gpt-4o-mini-tts`, `/v1/audio/speech` **defaults `stream_format` to `sse`** (base64 audio wrapped in SSE events) — to get a raw **chunked-binary** audio body the request MUST send **`"stream_format": "audio"`**. (Legacy `tts-1*` don't support `sse` and always return raw; our target is `gpt-4o-mini-tts`, so the explicit param is required.) `ContentType` is read from the response header (`audio/mpeg` for mp3). In `audio` mode there is **no in-band error frame** — a mid-stream failure is a truncated stream / read throw (→ `tts.timeout`/mapped). The 4096-char cap is enforced **pre-call** (`> 4096` → `tts.invalid_request`, non-retryable, no HTTP request) via the C.6 `ProviderErrorMapper.MapStatus(400,…)` door. See `server/LESSONS.md` §20.
 
 ### Stage events
 
@@ -848,11 +854,13 @@ The PRD requires **streaming throughout, no full-utterance blocking, live transc
 
 > Honesty note: `tts.first_audio`/`tts.complete` are **backend-measured** against the OpenAI TTS stream; `playback.started` is the only browser-side TTS-output timing.
 
-> Stage-label note (B.4): the `LatencyStage` enum (ARCH-005) has no `Overall` member — turn-lifecycle events (`turn.recording.started`/`.stopped`, `turn.completed`) are stamped `LatencyStage.Capture` (closest existing member); **"Overall" here is a descriptive grouping, not an enum value.** The aggregator keys metrics by event **name**, so the stage label is cosmetic. Add an `Overall` enum member (cross-doc: ARCH-005 + Appendix A) at C.4 — bundled with the `turn.recording.*` lifecycle events C.4 introduces — if a UI stage-grouping ever needs it.
+> Stage-label note (B.4 → resolved C.4a): turn-lifecycle events (`turn.recording.started`/`.stopped`, `turn.completed`) are stamped **`LatencyStage.Overall`** (the enum member added in C.4a; the cascade WS endpoint stamps `turn.recording.*` server-clock, the orchestrator stamps `turn.completed`). The aggregator keys metrics by event **name**, so the stage label is for doc/UI grouping fidelity. _(Pre-C.4a these were stamped `Capture` as the closest existing member; C.4a added `Overall` + re-stamped.)_
 
 ### Empty-transcript rule
 
 If STT yields an empty final: do **not** call translation or TTS; emit `cascade.empty_transcript`; persist the failed turn; UI suggests retrying.
+
+> **Ownership boundary (C.1).** The empty-transcript short-circuit is the **orchestrator's** responsibility, not the provider's. A real (or fake) STT provider emits `SttFinal("")` for a no-speech result — it never raises `cascade.empty_transcript` itself (that code belongs to stage `"cascade"`, via `ProviderErrorMapper.EmptyTranscript`, and `FakeStt.EmptyFinal` matches the `SttFinal("")` contract). The orchestrator detects the empty final and emits `cascade.empty_transcript`.
 
 ### Partial-failure rule
 
@@ -943,6 +951,8 @@ Each real provider catches its SDK/`HttpRequestException`, reads the status, set
 | 5xx / network | `<stage>.upstream_unavailable` | true | 5xx |
 | timeout | `<stage>.timeout` | true | — |
 | fallback | `<stage>.unknown` | false | — |
+
+> **`ProviderErrorMapper` entry points + SDK-hidden-status recovery (C.6).** The table above is owned by `ProviderErrorMapper` (single owner; `SafeMessage` is a fixed string per code, never echoing `ex.Message`/`err_msg`). Entry points: `Map(Exception, …)` (the catch-all — `HttpRequestException` status / `OperationCanceledException`→timeout / fallback→unknown), `MapStatus(int statusCode, …)` (**C.6** — an explicit-status door into the same table, for providers whose SDK hides the HTTP status from the exception), plus `Timeout(…)` / `EmptyTranscript(…)` for the non-exception outcomes. The mapper stays **vendor-agnostic** (no provider-SDK dependency). **Deepgram realization:** the SDK (v6.6.1) discards the numeric `StatusCode` on its error-body path — the thrown exception carries only a semantic `err_code` string — so `DeepgramSttMapping` recovers the status by matching `err_code` (`TOO_MANY_REQUESTS`→429, `INVALID_AUTH`/`INSUFFICIENT_PERMISSIONS`→401/403, `Bad Request`→400) and calls `MapStatus`; an unrecognized `err_code` (incl. 5xx-with-body, which uses Deepgram's `error_code` key) falls through to the honest `stt.unknown`. (Supersedes the C.1 Q5 limitation — common-path 429/401/403/400 now classify correctly.)
 
 ### Timeout & cancellation
 
@@ -1090,6 +1100,7 @@ Use **"Estimated cost/min"**. Never an unqualified "Cost".
 - **Cascade per-turn cost is one composite `CostEstimate`.** A cascade turn has three priced stages (STT/translation/TTS) but the turn model + the WS `cost` message carry a single `CostEstimate` — so the estimator aggregates: `Provider="cascade"`, `Model=<translation model used>` (the cascade comparison axis, so the summary groups cascade cost by translation-model variant), `PricingBasis="composite"`, `EstimatedUsd = Σ stages`, with the per-stage breakdown in `Units`. **`"composite"` is a fifth `PricingBasis` value** beyond the four basis names in the §3 `CostEstimate` comment (`usd_per_audio_minute`/`audio_output_tokens`/`characters`/`tokens`); `PricingBasis` is a `string`, so this is a documented value, not a model change. The composite degrades wholesale (any stage's pricing missing → estimate unavailable; never a partial-garbage number).
 - **Realtime audio-seconds→tokens factor is an explicit estimate.** `CostEstimator.RealtimeTokensPerAudioSecond = 50` is an **estimate pending build-time confirmation** (the `pricing.json` `estimatorNote` flags it) — it is surfaced in every realtime estimate's `Assumptions`, never presented as billing-grade. See §16 build-time-confirm items.
 - **`0.0` configured rate ≠ absent config.** A model present in `pricing.json` with a `0.0` rate (e.g. `gpt-5.4-mini`, pending confirmation) **estimates to `0.0`** (a real, if provisional, number); only genuinely-missing config / model / usage degrades to `Result.Failure` ("estimate unavailable"). All math is `decimal`, unrounded (the UI formats).
+- **Cascade cost-usage sourcing (C.4a).** The WS endpoint assembles `CostUsage` from observable signals because the orchestrator's `CascadeOutputEvent` stream carries no raw token counts: **STT** = audio-minutes from the recording duration (`turn.recording.started`→`.stopped`); **translation** = `inputTokens`/`outputTokens` read from the **`translation.final` `LatencyEvent.Metadata`** (the orchestrator stamps them there — an existing flexible field, no contract change; tokens accumulate **additively** across multi-segment turns, not overwritten); **TTS** = a **target-character proxy** (documented assumption — `/v1/audio/speech` in `stream_format:"audio"` returns **no usage block**, so precise TTS cost is unavailable without sse-mode, which would complicate the raw-byte reader). Missing any priced stage → the composite degrades wholesale to "unavailable" (never a partial-garbage number). The TTS char-proxy is a **G.5 write-up disclosure** (cost is an estimate, and the TTS component especially so).
 
 ---
 
@@ -1320,7 +1331,7 @@ Canonical home for every cross-doc-invariant model. A field change on any row re
 
 | Model | Anchor | Fields (summary) |
 |---|---|---|
-| `InterpretationMode` / `LanguageCode` / `TurnStatus` / `SessionStatus` / `LatencyStage` / `ClockSource` | ARCH-005 | enums |
+| `InterpretationMode` / `LanguageCode` / `TurnStatus` / `SessionStatus` / `LatencyStage` / `ClockSource` | ARCH-005 | enums. `LatencyStage` gained `Overall` (C.4a — turn-lifecycle stage grouping). |
 | `LanguageDirection` | ARCH-005 | Source, Target |
 | `ProviderProfile` | ARCH-005 | realtime/stt/translation/tts provider+model, SttLanguage, TtsVoice |
 | `SessionConfig` | ARCH-005 | CurrentMode, Direction, ProviderProfile |
@@ -1333,6 +1344,7 @@ Canonical home for every cross-doc-invariant model. A field change on any row re
 | `SessionSummary` / `ModeSummary` / `WerSummary` | ARCH-005, ARCH-009 | aggregates by mode + WER |
 | `EvaluationPhrase` / `WerResult` | ARCH-005, ARCH-015 | phrase ref; WER S/I/D/N + normalized text |
 | `ProviderError` | ARCH-005, ARCH-012 | provider, stage, code, safeMessage, retryable, httpStatusCode |
+| `ProviderErrorMapper` (static) | ARCH-012 | single owner of the exception/status→`ProviderError` table; entry points `Map(Exception,…)` / **`MapStatus(int,…)`** (C.6 — explicit-status door for SDK-hidden-status recovery) / `Timeout(…)` / `EmptyTranscript(…)`; vendor-agnostic; `SafeMessage` fixed-per-code (never echoes `ex.Message`/`err_msg`) |
 | `UiError` (backend record) | ARCH-007, ARCH-018, ARCH-019 | code, safeMessage, stage?, retryable, turnId? — mirror of the ARCH-007 TS `UiError`; produced by `ErrorSanitizer` (B.8); server-only `[JsonIgnore] HttpStatusCode` is **NOT** part of the wire mirror |
 | `ISttProvider` + `SttEvent`/`SttRequest`/`AudioFrame` | ARCH-012 | streaming STT contract |
 | `ITranslationProvider` + `TranslationEvent`/`TranslationRequest` | ARCH-012 | streaming translation contract |
@@ -1343,7 +1355,7 @@ Canonical home for every cross-doc-invariant model. A field change on any row re
 | `RealtimeOptions` (§`"Realtime"`) | ARCH-012, ARCH-028, ARCH-019 | ApiKey (backend-only), Model, Voice, InstructionsTemplate, ExpirySeconds=600, TokenTimeoutSeconds, TranscriptionModel=gpt-4o-transcribe |
 | `PricingOptions` | ARCH-014, ARCH-028 | Full `pricing.json` shape (A.4); file-loaded via `PRICING_CONFIG_PATH` (not section-bound); `realtime` explicit class (estimatorNote string sibling), `translation`/`tts` model-keyed dicts |
 | `UiSessionState` / `TurnViewModel` / `UiError` (TS) | ARCH-007 | frontend projections |
-| API DTOs: CreateSession, EndSessionResponse, CreateTurn(Response), CompleteTurn(Request/Response), AppendEvents, ClientSecret, CascadeStream msgs, Transcribe, Wer, ConfigResponse | ARCH-009 | camelCase serializations of the above. `CreateSession` (request) → returns the full `InterpretationSession`; `EndSessionResponse` (B.9c-i) = `{ session, persistedPath (filename-only), persistenceWarning? }` at 200; `CreateTurnResponse` = `{ turnId }`; `CompleteTurnRequest` (B.9c-ii, realtime-only) = `{ audioDurationMs?, transcripts?, status? }` (cost/WER/model/voice are NOT client-supplied); `CompleteTurnResponse` = `{ turn, persistenceWarning? }`. |
+| API DTOs: CreateSession, EndSessionResponse, CreateTurn(Response), CompleteTurn(Request/Response), AppendEvents, ClientSecret, CascadeStream msgs, Transcribe, Wer, ConfigResponse | ARCH-009 | camelCase serializations of the above. **Cascade WS (C.4a):** client `start{sessionId,turnId,direction,encoding,sampleRate,translationModel,ttsVoice}` + `stop{}`; server `transcript{segment}`/`latency{event}`/`audio{contentType,seq,base64}`/`cost{estimate}`/`error{error}`/`done{turnId,status}` (the wire contract; `CascadeOutputEvent`/`CascadeStartParams` stay **internal** — only these WS DTOs serialize). `CreateSession` (request) → returns the full `InterpretationSession`; `EndSessionResponse` (B.9c-i) = `{ session, persistedPath (filename-only), persistenceWarning? }` at 200; `CreateTurnResponse` = `{ turnId }`; `CompleteTurnRequest` (B.9c-ii, realtime-only) = `{ audioDurationMs?, transcripts?, status? }` (cost/WER/model/voice are NOT client-supplied); `CompleteTurnResponse` = `{ turn, persistenceWarning? }`. |
 
 ---
 
