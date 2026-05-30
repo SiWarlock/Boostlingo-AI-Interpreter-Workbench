@@ -1,5 +1,10 @@
+using System.Text;
 using AiInterpreter.Api.Common;
+using AiInterpreter.Api.Metrics;
+using AiInterpreter.Api.Providers.Abstractions;
+using AiInterpreter.Api.Providers.Deepgram;
 using AiInterpreter.Api.Sessions;
+using Microsoft.Extensions.Options;
 
 namespace AiInterpreter.Api.Evaluation;
 
@@ -20,14 +25,21 @@ public sealed class EvaluationService
     /// before the DP allocation (ARCH-019). ~500 words; over this → <c>evaluation.invalid_phrase</c>.</summary>
     public const int MaxHypothesisChars = 2000;
 
+    private const string SttProviderLabel = "deepgram";
+
     private readonly EvaluationPhraseStore _phrases;
     private readonly SessionStore _store;
     private readonly SessionPersistenceWriter _writer;
     private readonly Func<string, string, string, WerResult> _compute;
+    private readonly ISttProvider _stt;
+    private readonly LatencyEventFactory _latencyFactory;
+    private readonly IClock _clock;
+    private readonly DeepgramOptions _deepgramOptions;
 
     public EvaluationService(
-        EvaluationPhraseStore phrases, WerCalculator wer, SessionStore store, SessionPersistenceWriter writer)
-        : this(phrases, store, writer, wer.Compute)
+        EvaluationPhraseStore phrases, WerCalculator wer, SessionStore store, SessionPersistenceWriter writer,
+        ISttProvider stt, LatencyEventFactory latencyFactory, IClock clock, IOptions<DeepgramOptions> deepgramOptions)
+        : this(phrases, store, writer, wer.Compute, stt, latencyFactory, clock, deepgramOptions.Value)
     {
     }
 
@@ -37,12 +49,20 @@ public sealed class EvaluationService
         EvaluationPhraseStore phrases,
         SessionStore store,
         SessionPersistenceWriter writer,
-        Func<string, string, string, WerResult> compute)
+        Func<string, string, string, WerResult> compute,
+        ISttProvider stt,
+        LatencyEventFactory latencyFactory,
+        IClock clock,
+        DeepgramOptions deepgramOptions)
     {
         _phrases = phrases;
         _store = store;
         _writer = writer;
         _compute = compute;
+        _stt = stt;
+        _latencyFactory = latencyFactory;
+        _clock = clock;
+        _deepgramOptions = deepgramOptions;
     }
 
     /// <summary>The scripted evaluation phrases (ARCH-015); empty when the store failed to load
@@ -100,5 +120,87 @@ public sealed class EvaluationService
 
         var persist = await _writer.WriteAsync(session, cancellationToken); // degrades, never throws (lesson §11)
         return EvaluationWerOutcome.Computed(wer, persist);
+    }
+
+    /// <summary>
+    /// Runs STT-only over an uploaded blob (ARCH-009 transcribe) and returns the hypothesis + provider
+    /// identity + latency. Wraps the blob as a single <see cref="AudioFrame"/> through the SAME
+    /// <see cref="ISttProvider"/> the cascade uses (the derived container encoding routes the pre-recorded
+    /// REST path, C.1); collects the <see cref="SttFinal"/> text (joined across multiple finals) into the
+    /// hypothesis. NO translation/TTS (structural — this service has no such dependency). Latency events
+    /// are stamped on REAL arrival only (<c>stt.first_partial</c> if a partial arrives, <c>stt.final</c>
+    /// on the first final) — never synthesized (forbidden-pattern #3). Stateless: never persists the audio
+    /// nor writes the store (invariant #3). Upload validation is the controller's job (it runs first).
+    /// </summary>
+    public async Task<EvaluationTranscribeOutcome> TranscribeAsync(
+        byte[] audio, string encoding, LanguageCode language, string sessionId, CancellationToken cancellationToken)
+    {
+        var origin = _clock.UtcNow;
+        var request = new SttRequest(
+            OneFrameAsync(audio, cancellationToken),
+            $"audio/{encoding}",
+            encoding,
+            SampleRate: 0, // pre-recorded REST: Deepgram auto-detects the container; sample rate is moot
+            language,
+            language.ToString().ToLowerInvariant(),
+            sessionId,
+            TurnId: "evaluation"); // transcribe is turnless — a placeholder label, never a store key
+
+        var latencyEvents = new List<LatencyEvent>();
+        var hypothesis = new StringBuilder();
+        var firstPartialStamped = false;
+        var finalStamped = false;
+
+        await foreach (var ev in _stt.TranscribeAsync(request, cancellationToken).WithCancellation(cancellationToken))
+        {
+            switch (ev)
+            {
+                case SttPartial when !firstPartialStamped:
+                    firstPartialStamped = true;
+                    latencyEvents.Add(Stamp(LatencyEventNames.SttFirstPartial, origin));
+                    break;
+
+                case SttFinal final:
+                    if (!finalStamped)
+                    {
+                        finalStamped = true;
+                        latencyEvents.Add(Stamp(LatencyEventNames.SttFinal, origin));
+                    }
+
+                    // Deepgram REST may segment a phrase into >1 final; JOIN them (single space), never
+                    // last-only (which would silently truncate the hypothesis → wrong WER).
+                    if (!string.IsNullOrEmpty(final.Text))
+                    {
+                        if (hypothesis.Length > 0)
+                        {
+                            hypothesis.Append(' ');
+                        }
+
+                        hypothesis.Append(final.Text);
+                    }
+
+                    break;
+
+                case SttFailed failed:
+                    return EvaluationTranscribeOutcome.Failed(failed.Error);
+            }
+        }
+
+        return EvaluationTranscribeOutcome.Ok(new TranscribeResponse(
+            hypothesis.ToString(), SttProviderLabel, _deepgramOptions.Model, latencyEvents));
+    }
+
+    private LatencyEvent Stamp(string name, DateTimeOffset origin) =>
+        _latencyFactory.Stamp(
+            name, LatencyStage.Stt, ClockSource.Server, origin,
+            new Dictionary<string, string> { ["provider"] = SttProviderLabel });
+
+    // Wraps the uploaded blob as a one-element AudioFrame stream (mirrors CascadeOrchestrator.OneFrameAsync).
+    private async IAsyncEnumerable<AudioFrame> OneFrameAsync(
+        byte[] audio, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        await Task.CompletedTask;
+        ct.ThrowIfCancellationRequested();
+        yield return new AudioFrame(audio, _clock.UtcNow);
     }
 }

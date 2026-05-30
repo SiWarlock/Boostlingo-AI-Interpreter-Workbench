@@ -1,6 +1,11 @@
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using AiInterpreter.Api.Common;
 using AiInterpreter.Api.Evaluation;
+using AiInterpreter.Api.Metrics;
+using AiInterpreter.Api.Providers.Abstractions;
+using AiInterpreter.Api.Providers.Deepgram;
+using AiInterpreter.Api.Providers.Fakes;
 using AiInterpreter.Api.Sessions;
 
 namespace AiInterpreter.Tests;
@@ -55,10 +60,31 @@ public sealed class EvaluationServiceTests
         EvaluationPhraseStore phrases,
         SessionStore store,
         SessionPersistenceWriter writer,
-        Func<string, string, string, WerResult>? compute = null)
+        Func<string, string, string, WerResult>? compute = null,
+        ISttProvider? stt = null)
     {
         var wer = new WerCalculator();
-        return new EvaluationService(phrases, store, writer, compute ?? wer.Compute);
+        // The latency-factory clock is internal to the helper — F.1a call sites don't pass one (the WER
+        // tests don't assert latency timestamps; the transcribe tests assert latencyEvents non-empty).
+        var clock = new FixedClock();
+        return new EvaluationService(
+            phrases, store, writer, compute ?? wer.Compute,
+            stt ?? new FakeSttProvider(), new LatencyEventFactory(clock), clock, new DeepgramOptions());
+    }
+
+    // A scripted STT double yielding exactly the supplied events (ADD-2: multiple SttFinals).
+    private sealed class ScriptedSttProvider(params SttEvent[] events) : ISttProvider
+    {
+        public async IAsyncEnumerable<SttEvent> TranscribeAsync(
+            SttRequest request, [EnumeratorCancellation] CancellationToken ct)
+        {
+            await Task.CompletedTask;
+            foreach (var ev in events)
+            {
+                ct.ThrowIfCancellationRequested();
+                yield return ev;
+            }
+        }
     }
 
     // ---- #1 GET /phrases ----
@@ -251,6 +277,95 @@ public sealed class EvaluationServiceTests
         Assert.Null(outcome.Persist);
         var stored = store.Get(session.SessionId)!.Turns.Single(t => t.TurnId == turn.TurnId);
         Assert.Null(stored.WerResult); // untouched
+    }
+
+    // ---- Feature B: transcribe (STT-only) ----
+
+    // #11 — a successful STT yields the hypothesis from its final + provider/model identity + latency.
+    [Fact]
+    public async Task transcribe_returns_hypothesis_from_stt_final()
+    {
+        var clock = new FixedClock();
+        // STT-only is STRUCTURAL: EvaluationService has no ITranslationProvider/ITtsProvider dependency,
+        // so no translation/TTS stage can be reached (nothing to spy — the absence is the guarantee).
+        var service = Service(
+            PhraseStore(Phrase("en-001", "hello world")), new SessionStore(clock),
+            new SessionPersistenceWriter(NewTempDir()),
+            stt: new FakeSttProvider(FakeSttBehavior.SuccessWithPartials, final: "hello world"));
+
+        var outcome = await service.TranscribeAsync(
+            new byte[] { 1, 2, 3, 4 }, "webm", LanguageCode.En, "session_x", default);
+
+        Assert.Equal(EvaluationTranscribeStatus.Ok, outcome.Status);
+        Assert.Equal("hello world", outcome.Response!.Hypothesis);
+        Assert.Equal("deepgram", outcome.Response.SttProvider);
+        Assert.Equal("nova-3", outcome.Response.SttModel); // DeepgramOptions default
+        // Stamped on real arrival (no synthesis): a first_partial (partials arrive) + exactly one final.
+        var names = outcome.Response.LatencyEvents.Select(e => e.Name).ToList();
+        Assert.Contains(LatencyEventNames.SttFirstPartial, names);
+        Assert.Single(names, LatencyEventNames.SttFinal);
+    }
+
+    // ADD-2 — Deepgram REST can segment a phrase into >1 final; the hypothesis JOINS them (single space),
+    // never last-only (which would silently truncate the hypothesis → wrong WER). (lesson §16 family.)
+    [Fact]
+    public async Task transcribe_joins_multiple_stt_finals()
+    {
+        var clock = new FixedClock();
+        var t = clock.UtcNow;
+        var service = Service(
+            PhraseStore(Phrase("en-001", "hello world")), new SessionStore(clock),
+            new SessionPersistenceWriter(NewTempDir()),
+            stt: new ScriptedSttProvider(
+                new SttStarted(t), new SttFinal("hello", t), new SttFinal("world", t)));
+
+        var outcome = await service.TranscribeAsync(
+            new byte[] { 1 }, "webm", LanguageCode.En, "session_x", default);
+
+        Assert.Equal(EvaluationTranscribeStatus.Ok, outcome.Status);
+        Assert.Equal("hello world", outcome.Response!.Hypothesis); // joined, not "world"
+        // stt.final stamped ONCE on the first final, not per-final (consistent with the cascade idiom).
+        Assert.Single(outcome.Response.LatencyEvents, e => e.Name == LatencyEventNames.SttFinal);
+    }
+
+    // #14 — an STT failure maps to a sanitized outcome carrying the preserved provider error code.
+    [Fact]
+    public async Task transcribe_stt_failed_surfaces_provider_error()
+    {
+        var clock = new FixedClock();
+        var service = Service(
+            PhraseStore(Phrase("en-001", "hello world")), new SessionStore(clock),
+            new SessionPersistenceWriter(NewTempDir()),
+            stt: new FakeSttProvider(FakeSttBehavior.PartialsThenError));
+
+        var outcome = await service.TranscribeAsync(
+            new byte[] { 1 }, "webm", LanguageCode.En, "session_x", default);
+
+        Assert.Equal(EvaluationTranscribeStatus.SttFailed, outcome.Status);
+        Assert.NotNull(outcome.Error);
+        Assert.Equal("stt.upstream_unavailable", outcome.Error!.Code); // preserved, not re-derived
+    }
+
+    // #15 — transcribe is stateless: it neither persists the audio nor touches the session store.
+    [Fact]
+    public async Task transcribe_does_not_persist_audio_or_touch_store()
+    {
+        var clock = new FixedClock();
+        var store = new SessionStore(clock);
+        var session = store.Create(SampleConfig(), "v-test");
+        var turn = store.CreateTurn(session.SessionId)!;
+        var dataDir = NewTempDir();
+        var service = Service(
+            PhraseStore(Phrase("en-001", "hello world")), store, new SessionPersistenceWriter(dataDir),
+            stt: new FakeSttProvider(FakeSttBehavior.SuccessWithPartials));
+
+        await service.TranscribeAsync(new byte[] { 1, 2, 3 }, "webm", LanguageCode.En, session.SessionId, default);
+
+        Assert.Empty(Directory.GetFiles(dataDir));                  // no session JSON written
+        var stored = store.Get(session.SessionId)!;
+        Assert.Single(stored.Turns);                                // no new turn created
+        Assert.Null(stored.Turns[0].WerResult);                     // existing turn untouched
+        Assert.Equal(turn.TurnId, stored.Turns[0].TurnId);
     }
 
     // A compute spy that counts invocations and returns a stand-in WerResult. The stand-in WER (0.0 over

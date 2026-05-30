@@ -1,7 +1,12 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using AiInterpreter.Api.Providers.Abstractions;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace AiInterpreter.Tests;
 
@@ -132,5 +137,89 @@ public sealed class EvaluationEndpointTests : IClassFixture<WebApplicationFactor
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("turn.not_found", body.GetProperty("code").GetString());
+    }
+
+    // ---- Feature B: POST /transcribe wire (multipart) ----
+
+    private static MultipartFormDataContent TranscribeForm(
+        byte[] audio, string contentType, string language = "en", string fileName = "clip.webm")
+    {
+        var content = new MultipartFormDataContent
+        {
+            { new StringContent("session_x"), "SessionId" },
+            { new StringContent("en_001"), "PhraseId" },
+            { new StringContent(language), "Language" },
+        };
+        var file = new ByteArrayContent(audio);
+        // Parse (not the single-arg ctor) so a parameterized media type like "audio/webm; codecs=opus"
+        // (the MediaRecorder format) is sent as a proper Content-Type with its parameter, exercising the
+        // server's MIME-param stripping (lesson §23). The ctor rejects parameters.
+        file.Headers.ContentType = MediaTypeHeaderValue.Parse(contentType);
+        content.Add(file, "Audio", fileName);
+        return content;
+    }
+
+    [Fact]
+    public async Task transcribe_returns_200_hypothesis()
+    {
+        using var client = CreateClient();
+
+        var resp = await client.PostAsync(
+            "/api/evaluation/transcribe", TranscribeForm(new byte[] { 1, 2, 3, 4 }, "audio/webm"));
+
+        resp.EnsureSuccessStatusCode();
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(string.IsNullOrEmpty(body.GetProperty("hypothesis").GetString())); // fake STT → "hello world"
+        Assert.Equal("deepgram", body.GetProperty("sttProvider").GetString());
+    }
+
+    // #12 (SECURITY pin) — an oversized upload is rejected (413) BEFORE any provider call. A throwing STT
+    // proves no provider was reached: if validation didn't gate, the throw would surface as 500, not 413.
+    [Fact]
+    public async Task transcribe_oversized_413_before_provider_call()
+    {
+        using var client = _factory.WithWebHostBuilder(b =>
+        {
+            b.UseSetting("USE_FAKE_PROVIDERS", "true");
+            b.UseSetting("EVAL_MAX_UPLOAD_BYTES", "10");
+            b.ConfigureTestServices(s =>
+            {
+                s.RemoveAll<ISttProvider>();
+                s.AddSingleton<ISttProvider, ThrowingSttProvider>();
+            });
+        }).CreateClient();
+
+        var resp = await client.PostAsync(
+            "/api/evaluation/transcribe", TranscribeForm(new byte[64], "audio/webm"));
+
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, resp.StatusCode); // 413, not 500 → provider never called
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("cascade.invalid_audio", body.GetProperty("code").GetString());
+    }
+
+    // #13 — empty + off-allowlist content-type → 415; a base type carrying MIME params is accepted (the
+    // MediaRecorder "audio/webm; codecs=opus" path — params stripped before the allowlist, lesson §23).
+    [Fact]
+    public async Task transcribe_unsupported_or_empty_type_415_and_mime_params_stripped()
+    {
+        using var client = CreateClient();
+
+        var unsupported = await client.PostAsync(
+            "/api/evaluation/transcribe", TranscribeForm(new byte[] { 1, 2, 3 }, "text/plain", fileName: "notes.txt"));
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, unsupported.StatusCode); // 415
+
+        var empty = await client.PostAsync(
+            "/api/evaluation/transcribe", TranscribeForm(Array.Empty<byte>(), "audio/webm"));
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, empty.StatusCode); // 415 (empty)
+
+        var withParams = await client.PostAsync(
+            "/api/evaluation/transcribe", TranscribeForm(new byte[] { 1, 2, 3 }, "audio/webm; codecs=opus"));
+        withParams.EnsureSuccessStatusCode(); // 200 — base type on the allowlist, params stripped server-side
+    }
+
+    private sealed class ThrowingSttProvider : ISttProvider
+    {
+        public IAsyncEnumerable<SttEvent> TranscribeAsync(SttRequest request, CancellationToken ct) =>
+            throw new InvalidOperationException("STT must not be reached when upload validation rejects.");
     }
 }

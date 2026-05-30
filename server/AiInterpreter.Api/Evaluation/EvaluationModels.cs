@@ -1,7 +1,9 @@
 using System.ComponentModel.DataAnnotations;
 using AiInterpreter.Api.Common;
+using AiInterpreter.Api.Providers.Abstractions;
 using AiInterpreter.Api.Security;
 using AiInterpreter.Api.Sessions;
+using Microsoft.AspNetCore.Http;
 
 namespace AiInterpreter.Api.Evaluation;
 
@@ -60,4 +62,51 @@ public sealed record EvaluationWerOutcome(EvaluationWerStatus Status, WerResult?
     public static EvaluationWerOutcome PhraseNotFound() => new(EvaluationWerStatus.PhraseNotFound, null, null);
 
     public static EvaluationWerOutcome TurnNotFound() => new(EvaluationWerStatus.TurnNotFound, null, null);
+}
+
+// --- Transcribe (F.1b — STT-only) ---
+
+/// <summary>
+/// Multipart form binding for <c>POST /api/evaluation/transcribe</c> (a bindable class — settable
+/// properties — to avoid the record-positional-param binding gotcha, lesson §16). The <c>Audio</c>
+/// file's content-type drives BOTH the upload validation (size/type) and the derived STT container
+/// encoding (routing the pre-recorded REST path). <c>SessionId</c>/<c>PhraseId</c> are carried per the
+/// ARCH-009 contract but transcribe is stateless (no turn write); the controller caps the id lengths.
+/// </summary>
+public sealed class TranscribeForm
+{
+    public string? SessionId { get; set; }
+    public string? PhraseId { get; set; }
+    public LanguageCode Language { get; set; }
+    public IFormFile? Audio { get; set; }
+}
+
+/// <summary>
+/// <c>POST /api/evaluation/transcribe</c> response (ARCH-009): the STT hypothesis + the provider/model
+/// identity that produced it + the latency events stamped on real arrival (no synthesis). STT-only —
+/// no translation/TTS (the WER comparison is a separate <c>/wer</c> call).
+/// </summary>
+public sealed record TranscribeResponse(
+    string Hypothesis, string SttProvider, string SttModel, List<LatencyEvent> LatencyEvents);
+
+/// <summary>Outcome status of <see cref="EvaluationService.TranscribeAsync"/> (area-local).</summary>
+public enum EvaluationTranscribeStatus
+{
+    Ok,
+    SttFailed, // the STT provider emitted SttFailed → surface the preserved ProviderError, sanitized
+}
+
+/// <summary>
+/// The discriminated result of <see cref="EvaluationService.TranscribeAsync"/> (area-local; not
+/// serialized). On <see cref="EvaluationTranscribeStatus.SttFailed"/>, <see cref="Error"/> carries the
+/// already-safe <see cref="ProviderError"/> the controller projects to a <see cref="UiError"/>.
+/// </summary>
+public sealed record EvaluationTranscribeOutcome(
+    EvaluationTranscribeStatus Status, TranscribeResponse? Response, ProviderError? Error)
+{
+    public static EvaluationTranscribeOutcome Ok(TranscribeResponse response) =>
+        new(EvaluationTranscribeStatus.Ok, response, null);
+
+    public static EvaluationTranscribeOutcome Failed(ProviderError error) =>
+        new(EvaluationTranscribeStatus.SttFailed, null, error);
 }

@@ -124,11 +124,16 @@ builder.Services.AddHttpClient<RealtimeClientSecretService>(c => c.BaseAddress =
 // Origin check (C.4b; the WS upgrade bypasses CORS, so the endpoint validates Origin itself).
 var frontendOrigin = builder.Configuration["FRONTEND_ORIGIN"] ?? "http://localhost:5173";
 
-// Bound the request body to the cascade upload cap + a small multipart-envelope headroom (C.5, ARCH-019):
-// an oversized upload is rejected at the framework boundary instead of buffered to the 128MB default. The
-// PRECISE per-file cap + the cascade.invalid_audio 413 still come from CascadeUploadValidation in the
-// controller; this just closes the buffering/DoS window. (CASCADE_MAX_UPLOAD_BYTES also configures the cap.)
-var maxUploadBytes = builder.Configuration.GetValue<long?>("CASCADE_MAX_UPLOAD_BYTES") ?? CascadeUploadValidation.DefaultMaxBytes;
+// Bound the request body to the largest audio-upload cap + a small multipart-envelope headroom (C.5/F.1b,
+// ARCH-019): an oversized upload is rejected at the framework boundary instead of buffered to the 128MB
+// default. The PRECISE per-file cap + the *.invalid_audio 413 still come from CascadeUploadValidation in
+// each controller; this just closes the buffering/DoS window. The backstop is the MAX of every audio
+// route's cap (cascade /turn = CASCADE_MAX_UPLOAD_BYTES, evaluation /transcribe = EVAL_MAX_UPLOAD_BYTES
+// which falls back to the cascade cap) so a higher per-route cap is never preempted by a framework 500
+// before its controller can return the clean 413.
+var cascadeMaxUploadBytes = builder.Configuration.GetValue<long?>("CASCADE_MAX_UPLOAD_BYTES") ?? CascadeUploadValidation.DefaultMaxBytes;
+var evalMaxUploadBytes = builder.Configuration.GetValue<long?>("EVAL_MAX_UPLOAD_BYTES") ?? cascadeMaxUploadBytes;
+var maxUploadBytes = Math.Max(cascadeMaxUploadBytes, evalMaxUploadBytes);
 var maxRequestBodyBytes = maxUploadBytes + (1 * 1024 * 1024);
 builder.Services.Configure<FormOptions>(o => o.MultipartBodyLengthLimit = maxRequestBodyBytes);
 builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = maxRequestBodyBytes);
