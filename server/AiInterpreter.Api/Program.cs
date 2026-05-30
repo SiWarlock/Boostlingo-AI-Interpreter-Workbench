@@ -48,6 +48,10 @@ builder.Services.AddSingleton<WerCalculator>();
 var phrasesPath = builder.Configuration["EVALUATION_PHRASES_PATH"]
     ?? Path.Combine(AppContext.BaseDirectory, "Evaluation", "evaluation-phrases.json");
 builder.Services.AddSingleton(new EvaluationPhraseStore(phrasesPath));
+// F.1 — evaluation endpoints (EvaluationController): phrase listing + WER compute (hypothesis-length
+// cap before the DP allocation, ARCH-019) + the optional turn-attach/persist. Reuses the store +
+// calculator above + the SessionStore/PersistenceWriter registered below.
+builder.Services.AddSingleton<EvaluationService>();
 
 // Metrics layer (B.3) — injectable clock + the latency factory/aggregator (ARCH-013). The factory
 // is the first IClock consumer; the production consumer of the trio is the B.4 cascade orchestrator

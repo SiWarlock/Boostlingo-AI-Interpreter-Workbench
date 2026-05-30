@@ -125,6 +125,8 @@ public sealed class ErrorSanitizer
         "persistence.failed" => "Saving the session failed; the session continues.",
         "session.not_found" => "Session not found.",
         "turn.not_found" => "Turn not found.",
+        "evaluation.invalid_phrase" => "The submitted text is too long or invalid.",
+        "evaluation.phrase_not_found" => "Evaluation phrase not found.",
         _ => GenericMessage,
     };
 }
