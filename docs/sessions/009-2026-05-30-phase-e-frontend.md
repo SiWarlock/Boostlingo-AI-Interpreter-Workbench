@@ -3,7 +3,7 @@
 - **Date:** 2026-05-30
 - **Phase:** E (Realtime Mode) — the frontend round (the backend round was session 008)
 - **Predecessor:** [008-2026-05-30-phase-e-backend.md](008-2026-05-30-phase-e-backend.md)
-- **Successor:** _(next session)_
+- **Successor:** [010-2026-05-30-phase-f-f1-evaluation-endpoints.md](010-2026-05-30-phase-f-f1-evaluation-endpoints.md)
 - **Area:** `web/` (frontend implementer)
 - **Slice commits:** E.3 `87d77d0` · E.4a `7b63fc4` · E.4b `f2b5647` · E.5a `a09c15e` · E.5b `f95bea6`
 - **Web suite:** 97 → **157 green** (+60 across the round); typecheck + ESLint clean every slice.
