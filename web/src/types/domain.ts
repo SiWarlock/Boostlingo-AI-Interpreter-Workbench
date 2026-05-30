@@ -285,3 +285,61 @@ export type ProviderError = {
   retryable: boolean
   httpStatusCode?: number
 }
+
+// --- Evaluation wire mirrors (F.2 — ARCH-015 / ARCH-009 evaluation endpoints) ---
+// camelCase mirrors of the F.1 backend DTOs (Evaluation/EvaluationModels.cs + Sessions/SessionModels.cs).
+// WER is STT-only (Flow D): /transcribe yields a hypothesis, /wer scores it against a scripted phrase
+// and (with a turnId) persists the WerResult onto a turn for F.3's WerSummary aggregation.
+
+export type EvaluationPhrase = {
+  phraseId: string
+  language: LanguageCode
+  referenceText: string
+  category: string
+}
+
+export type WerResult = {
+  phraseId: string
+  reference: string
+  hypothesis: string
+  normalizedReference: string
+  normalizedHypothesis: string
+  substitutions: number
+  insertions: number
+  deletions: number
+  referenceWordCount: number
+  wer: number
+}
+
+// POST /api/evaluation/transcribe multipart fields (mirror of the backend TranscribeForm — the audio
+// Blob rides separately). Mirrors the CascadeTurnParams shape (request fields, not a nested DTO).
+export type TranscribeParams = {
+  sessionId: string
+  phraseId: string
+  language: LanguageCode
+}
+
+// POST /api/evaluation/transcribe response — STT-only: the hypothesis + the provider/model that
+// produced it + the latency events stamped on real arrival (no translation/TTS).
+export type TranscribeResponse = {
+  hypothesis: string
+  sttProvider: string
+  sttModel: string
+  latencyEvents: LatencyEvent[]
+}
+
+// POST /api/evaluation/wer request. turnId is optional on the wire; F.2 ALWAYS sends one (a dedicated
+// eval turn) so the WerResult is attached + persisted (the F.3 WerSummary dependency).
+export type WerRequest = {
+  sessionId: string
+  turnId?: string
+  phraseId: string
+  hypothesis: string
+}
+
+// POST /api/evaluation/wer response. persistenceWarning is the best-effort turn-attach degrade (200
+// with a warning, never 500) — surfaced via the store (mirrors EndSessionResponse).
+export type WerResponse = {
+  result: WerResult
+  persistenceWarning?: UiError
+}

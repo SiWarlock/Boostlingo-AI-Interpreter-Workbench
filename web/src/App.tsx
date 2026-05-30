@@ -4,6 +4,7 @@ import { configApi } from './api/configApi'
 import { sessionsApi } from './api/sessionsApi'
 import CostPanel from './components/CostPanel'
 import ErrorBanner from './components/ErrorBanner'
+import EvaluationPanel from './components/EvaluationPanel'
 import MetricsPanel from './components/MetricsPanel'
 import ModeToggle from './components/ModeToggle'
 import RecordingControls from './components/RecordingControls'
@@ -100,6 +101,7 @@ export default function App() {
       <TranscriptPanel />
       <MetricsPanel onRefresh={refreshSummary} />
       <CostPanel />
+      <EvaluationPanel />
       <ErrorBanner />
     </main>
   )
