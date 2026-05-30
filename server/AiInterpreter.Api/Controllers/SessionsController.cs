@@ -25,8 +25,8 @@ public sealed class SessionsController : ControllerBase
     }
 
     [HttpPost]
-    public ActionResult<InterpretationSession> Create([FromBody] CreateSessionRequest request)
-        => Ok(_sessions.Create(request));
+    public async Task<ActionResult<InterpretationSession>> Create([FromBody] CreateSessionRequest request)
+        => Ok(await _sessions.CreateAsync(request));
 
     [HttpGet("{id}")]
     public ActionResult<InterpretationSession> Get(string id)

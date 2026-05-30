@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Linq;
 using AiInterpreter.Api.Common;
 using AiInterpreter.Api.Providers.Abstractions;
 
@@ -44,6 +45,15 @@ public sealed class SessionStore
         _sessions[session.SessionId] = new Entry { Session = session };
         return session;
     }
+
+    /// <summary>
+    /// Ids of all currently un-ended sessions (<c>EndedAt == null</c>) — the Flow-H stale-flush set (E.5).
+    /// Enumeration over the <see cref="ConcurrentDictionary{TKey,TValue}"/> is snapshot-safe and each session
+    /// reference is read atomically (a concurrent <see cref="End"/> swap is seen whole, never torn). A pure
+    /// read: the caller ends each via the existing <see cref="End"/>/persist seam (its own gate).
+    /// </summary>
+    public IReadOnlyList<string> ActiveSessionIds() =>
+        [.. _sessions.Where(kvp => kvp.Value.Session.EndedAt is null).Select(kvp => kvp.Key)];
 
     /// <summary>
     /// Returns the LIVE session reference (not a snapshot) by id, or null if unknown. Reads are

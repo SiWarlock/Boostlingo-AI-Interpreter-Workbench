@@ -2,6 +2,7 @@ using AiInterpreter.Api.Common;
 using AiInterpreter.Api.Cost;
 using AiInterpreter.Api.Providers.Deepgram;
 using AiInterpreter.Api.Providers.OpenAI;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace AiInterpreter.Api.Sessions;
@@ -13,7 +14,10 @@ namespace AiInterpreter.Api.Sessions;
 /// </summary>
 public interface ISessionService
 {
-    InterpretationSession Create(CreateSessionRequest request);
+    // Async because creating a session FLUSHES any prior un-ended (abandoned/refreshed) session through the
+    // EndAsync finalize+persist seam first (Flow H, ARCH-017) — so an abandoned session still produces its
+    // JSON artifact. The flush degrades on persist failure and never blocks the new session (lesson §11).
+    Task<InterpretationSession> CreateAsync(CreateSessionRequest request);
     InterpretationSession? Get(string sessionId);
     Task<EndSessionOutcome?> EndAsync(string sessionId, CancellationToken cancellationToken = default);
     SessionSummary? Summary(string sessionId);
@@ -44,6 +48,7 @@ public sealed class SessionService : ISessionService
     private readonly OpenAiTtsOptions _tts;
     private readonly Result<PricingOptions> _pricing;
     private readonly CostEstimator _costEstimator;
+    private readonly ILogger<SessionService> _logger;
 
     public SessionService(
         SessionStore store,
@@ -53,7 +58,8 @@ public sealed class SessionService : ISessionService
         IOptions<DeepgramOptions> deepgram,
         IOptions<OpenAiTtsOptions> tts,
         Result<PricingOptions> pricing,
-        CostEstimator costEstimator)
+        CostEstimator costEstimator,
+        ILogger<SessionService> logger)
     {
         _store = store;
         _summaryService = summaryService;
@@ -63,10 +69,15 @@ public sealed class SessionService : ISessionService
         _tts = tts.Value;
         _pricing = pricing;
         _costEstimator = costEstimator;
+        _logger = logger;
     }
 
-    public InterpretationSession Create(CreateSessionRequest request)
+    public async Task<InterpretationSession> CreateAsync(CreateSessionRequest request)
     {
+        // Flow H (ARCH-017): flush any prior un-ended (refreshed/abandoned) session FIRST — before the new
+        // session is registered, so it can't flush itself — reusing the EndAsync finalize+persist seam.
+        await FlushStaleSessionsAsync();
+
         // Assemble the full ProviderProfile: client supplies the selectable models; the rest comes from
         // the A.2 Options (providers fixed). (ARCH-009 example values are these Options defaults.)
         var profile = new ProviderProfile(
@@ -83,6 +94,30 @@ public sealed class SessionService : ISessionService
 
         var config = new SessionConfig(request.Mode, request.Direction, profile);
         return _store.Create(config, PricingVersion(), request.Label);
+    }
+
+    // Flow-H stale-session flush (E.5): end + persist every prior un-ended session via the EndAsync seam.
+    private async Task FlushStaleSessionsAsync()
+    {
+        // ActiveSessionIds() is a materialized snapshot, so ending each (which swaps EndedAt) mid-iteration
+        // is safe. Reuse EndAsync (no duplicated persistence) — it degrades on a persist failure (returns a
+        // failed Result, never throws), so a flush can never block the new session.
+        foreach (var staleId in _store.ActiveSessionIds())
+        {
+            // CancellationToken.None: the abandoned session's owed artifact write must COMPLETE and must not
+            // be abortable by the (possibly-cancelled) new request — else the stale session would end in
+            // memory with no JSON artifact, the exact half-state this flush exists to prevent.
+            var outcome = await EndAsync(staleId, CancellationToken.None);
+
+            // Null-safe: EndAsync returns nullable, though an id from ActiveSessionIds always resolves (the
+            // store has no eviction). A persist failure degrades (lesson §11) — EndedAt already flipped, only
+            // the disk write failed — so log it (single-lined, §13) + continue; never block the new session.
+            if (outcome is not null && !outcome.Persist.IsSuccess)
+            {
+                _logger.LogWarning("Stale-session flush persist failed for {SessionId}: {Error}",
+                    staleId, outcome.Persist.Error?.ReplaceLineEndings(" "));
+            }
+        }
     }
 
     public InterpretationSession? Get(string sessionId) => _store.Get(sessionId);

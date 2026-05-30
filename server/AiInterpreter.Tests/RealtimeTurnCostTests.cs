@@ -4,6 +4,7 @@ using AiInterpreter.Api.Metrics;
 using AiInterpreter.Api.Providers.Deepgram;
 using AiInterpreter.Api.Providers.OpenAI;
 using AiInterpreter.Api.Sessions;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace AiInterpreter.Tests;
@@ -71,7 +72,7 @@ public class RealtimeTurnCostTests
     public async Task realtime_complete_pricing_absent_degrades_null()
     {
         var svc = Build(Result<PricingOptions>.Failure("no config"));
-        var session = svc.Create(Req(InterpretationMode.Realtime, "gpt-realtime"));
+        var session = await svc.CreateAsync(Req(InterpretationMode.Realtime, "gpt-realtime"));
         var turnId = svc.CreateTurn(session.SessionId)!;
 
         var outcome = await svc.CompleteTurnAsync(session.SessionId, turnId, new CompleteTurnRequest(10_000, null, null));
@@ -85,7 +86,7 @@ public class RealtimeTurnCostTests
     public async Task realtime_complete_idempotent_cost()
     {
         var svc = Build();
-        var session = svc.Create(Req(InterpretationMode.Realtime, "gpt-realtime"));
+        var session = await svc.CreateAsync(Req(InterpretationMode.Realtime, "gpt-realtime"));
         var turnId = svc.CreateTurn(session.SessionId)!;
 
         var first = await svc.CompleteTurnAsync(session.SessionId, turnId, new CompleteTurnRequest(10_000, null, null, 4_000));
@@ -106,7 +107,7 @@ public class RealtimeTurnCostTests
     public async Task realtime_complete_zero_duration_degrades_null()
     {
         var svc = Build();
-        var session = svc.Create(Req(InterpretationMode.Realtime, "gpt-realtime"));
+        var session = await svc.CreateAsync(Req(InterpretationMode.Realtime, "gpt-realtime"));
         var turnId = svc.CreateTurn(session.SessionId)!;
 
         // No audioDurationMs reported (turn keeps CreateTurn's 0 default) → no usable audio signal → null,
@@ -147,7 +148,7 @@ public class RealtimeTurnCostTests
     private static async Task<CostEstimate?> CompleteTurn(
         SessionService svc, InterpretationMode mode, string realtimeModel, long audioDurationMs, long? outputAudioDurationMs = null)
     {
-        var session = svc.Create(Req(mode, realtimeModel));
+        var session = await svc.CreateAsync(Req(mode, realtimeModel));
         var turnId = svc.CreateTurn(session.SessionId)!;
         var outcome = await svc.CompleteTurnAsync(
             session.SessionId, turnId, new CompleteTurnRequest(audioDurationMs, null, null, outputAudioDurationMs));
@@ -168,6 +169,6 @@ public class RealtimeTurnCostTests
         return new SessionService(
             store, summary, writer, clock,
             Options.Create(new DeepgramOptions()), Options.Create(new OpenAiTtsOptions()),
-            resolved, new CostEstimator(resolved));
+            resolved, new CostEstimator(resolved), NullLogger<SessionService>.Instance);
     }
 }
