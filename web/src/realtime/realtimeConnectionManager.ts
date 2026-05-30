@@ -1,6 +1,6 @@
 import { sessionStore } from '../state/sessionStore'
 import type { SessionStore } from '../state/sessionStore'
-import type { LatencyEvent, UiError } from '../types/domain'
+import type { InterpretationMode, LatencyEvent, UiError } from '../types/domain'
 import { realtimeWebRtcClient } from './realtimeWebRtcClient'
 import type { RealtimeWebRtcClient } from './realtimeWebRtcClient'
 
@@ -14,6 +14,8 @@ type Clock = () => string
 export type RealtimeConnectionManager = {
   ensureConnected: () => Promise<void>
   teardown: () => void
+  // Flow-G (ARCH-017): on a mode-switch AWAY from realtime, release the realtime pc/mic/<audio> (no double-mic).
+  onModeSwitch: (from: InterpretationMode, to: InterpretationMode) => void
 }
 
 export type RealtimeConnectionDeps = {
@@ -88,7 +90,15 @@ export function createRealtimeConnectionManager(
     connectionStarted = false // reset so a fresh session re-connects (one pc per session)
   }
 
-  return { ensureConnected, teardown }
+  function onModeSwitch(from: InterpretationMode, to: InterpretationMode): void {
+    // Switch AWAY from realtime → tear down so the realtime mic/pc/<audio> don't linger while cascade
+    // captures its own mic (no double-mic, ARCH-010). cascade→realtime reconnects lazily on the next turn.
+    if (from === 'realtime' && to !== 'realtime') {
+      teardown()
+    }
+  }
+
+  return { ensureConnected, teardown, onModeSwitch }
 }
 
 // Production singleton — wires the real store + client (wall clock).

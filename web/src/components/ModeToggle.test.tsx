@@ -1,7 +1,15 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+// Mock the connection manager so the mode-switch-away test asserts the teardown DISPATCH (E.5b), not the
+// manager internals. Harmless to the disabled-state test below (it never clicks).
+vi.mock('../realtime/realtimeConnectionManager', () => ({
+  realtimeConnectionManager: { onModeSwitch: vi.fn(), teardown: vi.fn(), ensureConnected: vi.fn() },
+}))
+
 import ModeToggle from './ModeToggle'
+import { realtimeConnectionManager } from '../realtime/realtimeConnectionManager'
 import { sessionStore } from '../state/sessionStore'
 import type { ConfigResponse, TurnStatus } from '../types/domain'
 
@@ -47,5 +55,21 @@ describe('ModeToggle — mode-toggle-disabled-during-active-turn (ARCH-020)', ()
     act(() => sessionStore.setTurnStatus('completed'))
     expect(cascade).toBeEnabled()
     expect(realtime).toBeEnabled()
+  })
+})
+
+describe('ModeToggle — Flow-G mode-switch teardown (E.5b)', () => {
+  it('invokes the realtime teardown handler when switching realtime -> cascade', () => {
+    sessionStore.reset()
+    sessionStore.loadConfig(fullConfig) // both modes available
+    sessionStore.updateSessionConfig({ mode: 'realtime' }) // currently realtime
+    sessionStore.setTurnStatus('ready') // toggle enabled (no turn in flight)
+    render(<ModeToggle />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cascade' }))
+
+    // the toggle hands the manager (prev, next) so it can tear down on a switch-AWAY from realtime
+    expect(realtimeConnectionManager.onModeSwitch).toHaveBeenCalledWith('realtime', 'cascade')
+    expect(sessionStore.getState().mode).toBe('cascade') // the store mode still flips (additive to teardown)
   })
 })

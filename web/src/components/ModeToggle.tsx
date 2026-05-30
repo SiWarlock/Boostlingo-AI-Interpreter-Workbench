@@ -1,3 +1,4 @@
+import { realtimeConnectionManager } from '../realtime/realtimeConnectionManager'
 import { canToggleMode, modeAvailability } from '../state/selectors'
 import { sessionStore, useSessionState } from '../state/sessionStore'
 import type { InterpretationMode } from '../types/domain'
@@ -25,7 +26,15 @@ export default function ModeToggle() {
           type="button"
           aria-pressed={state.mode === value}
           disabled={!availability[value] || !toggleAllowed}
-          onClick={() => sessionStore.updateSessionConfig({ mode: value })}
+          onClick={() => {
+            if (value === state.mode) {
+              return // clicking the already-active mode is a no-op (no spurious store write / teardown)
+            }
+            // Flow G (E.5b): tear down the realtime connection on a switch-AWAY from realtime (no double-mic)
+            // before flipping the mode. cascade→realtime reconnects lazily on the next turn.
+            realtimeConnectionManager.onModeSwitch(state.mode, value)
+            sessionStore.updateSessionConfig({ mode: value })
+          }}
         >
           {label}
         </button>

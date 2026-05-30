@@ -106,4 +106,29 @@ describe('createRealtimeConnectionManager', () => {
     await manager.ensureConnected()
     expect(client.connect).toHaveBeenCalledTimes(2)
   })
+
+  it('tears down the realtime connection on a realtime->cascade switch-away (Flow G, no double-mic)', () => {
+    const { client, manager } = setup(false)
+
+    manager.onModeSwitch('realtime', 'cascade')
+
+    expect(client.teardown).toHaveBeenCalledTimes(1)
+  })
+
+  it('does NOT tear down on a cascade->realtime switch (realtime reconnects lazily next turn)', () => {
+    const { client, manager } = setup(false)
+
+    manager.onModeSwitch('cascade', 'realtime')
+
+    expect(client.teardown).not.toHaveBeenCalled()
+  })
+
+  it('does NOT tear down when the mode does not switch away from realtime (no-op / same mode)', () => {
+    const { client, manager } = setup(false)
+
+    manager.onModeSwitch('cascade', 'cascade')
+    manager.onModeSwitch('realtime', 'realtime')
+
+    expect(client.teardown).not.toHaveBeenCalled()
+  })
 })
