@@ -738,6 +738,8 @@ Response (GA `client_secrets`): **top-level** `value` (the ephemeral `ek_...` to
 
 After the data channel opens, send a `session.update` with `session.audio.input.turn_detection = null` (authoritative; mint-time setting is a backup). On **Start Recording**: `input_audio_buffer.clear` then stream the mic track. On **Stop Recording**: `input_audio_buffer.commit` then `response.create` over the data channel. Record `turn.recording.stopped` at the `response.create` moment (speech-end proxy).
 
+> **E.4b frontend realization (2026-05-30).** `realtimeTurnController` (the web §11/§17 cascade-recording analogue) sends these as `oai-events` DC frames: `session.update` = `{ "type":"session.update", "session":{ "audio":{ "input":{ "turn_detection":null }}}}` (Start, before clear) → `input_audio_buffer.clear` (Start) → `input_audio_buffer.commit` + `response.create` (Stop). The mic track streams **continuously** (E.3 `addTrack`) — turns are **buffer-delimited**, no per-turn mic toggle. `turn.recording.started`/`.stopped` are stamped browser-clock by the controller; `playback.started` is stamped once on the remote-`<audio>` `playing` event (the realtime first-audio fallback if the DC emits no `output_audio.delta`). `RecordingControls` dispatches to this controller when `currentMode==='realtime'` (the real entry point, `App.tsx`). Lazy-connect is the E.4b interim; E.5 hoists to a persistent pc + teardown. **Confirm the exact frame envelopes at the first real-key smoke** (the §18/§20 verify-the-real-shape discipline).
+
 ### Interpreter prompt (session instructions)
 
 ```text
@@ -757,6 +759,8 @@ Do not answer as an assistant. Do not add explanations or framing.
 | response lifecycle | `response.created` / `response.done` |
 | `realtime.session.disconnected` | ICE connectionstate `failed`/`disconnected` |
 
+> **E.3 frontend realization (2026-05-30).** The browser-side normalizer (`web/src/realtime/realtimeEvents.ts` — `parseRealtimeEvent` + `normalizeRealtimeEvent`) classifies these GA events into a **pure, stateless** `NormalizedRealtimeEvent` union (audioDelta / targetTranscriptDelta / sourceTranscriptDelta / sourceTranscriptCompleted / responseCreated / responseDone / error); E.4 maps the union to store actions + browser-clock latency stamps (the first-of-type stamping is stateful → E.4's layer, mirroring the cascade pure-router/store-action split, web §9/§10). Field reads are pinned by E.3 tests but **smoke-pending** against a live key: output-audio + transcript **deltas** read `delta`; `conversation.item.input_audio_transcription.completed` reads `transcript` (the full text, not a delta); an `error`/`response.error` event reads the nested `error.code` (the raw `error.message` is **never** echoed — classification only; E.5 builds the safe `ProviderError`/`UiError`). The legacy `response.audio.delta` alias is accepted for `response.output_audio.delta`; `response.done` is the target-transcript-final signal. **Confirm the exact `type` strings + the error envelope at the first real-key smoke** and re-pin this table if the live API differs (the §18/§20 "verify the real API shape" discipline). The `ek_` authorizes the SDP exchange transiently (`realtimeWebRtcClient.exchangeSdpOffer`, Bearer) and is never persisted (invariant #2).
+
 ### Metrics (computed off the first event of each type)
 
 ```text
@@ -764,6 +768,8 @@ speech_end_to_first_audio_ms = realtime.first_audio_delta − turn.recording.sto
 speech_end_to_playback_ms    = playback.started        − turn.recording.stopped
 total_turn_ms                = turn.completed          − turn.recording.started
 ```
+
+> **E.4a frontend realization (2026-05-30) — the metrics split + a first-audio smoke-confirm.** The browser stamps these markers across slices and reports them to the backend (`POST …/turns/{turnId}/events`), which aggregates the **canonical** realtime top-level metrics (unlike cascade, which the frontend computes — ARCH-013, web §13/§16). **Stamp ownership:** **E.4a** stamps the event-derived `realtime.first_audio_delta` + `realtime.first_transcript_delta` (off the GA deltas, browser clock, first-of-type) and lets the store own `turn.completed`; **E.4b** stamps `turn.recording.started`/`.stopped` (turn control); **E.5** stamps `realtime.session.connecting`/`.connected`/`.disconnected` (connection). **Smoke-confirm:** `speech_end_to_first_audio_ms` assumes `response.output_audio.delta` arrives on the `oai-events` data channel — but in WebRTC mode the audio is the media track (`pc.ontrack`), so the DC may not emit `output_audio.delta` at all (it may be WebSocket-transport-only). If absent, `realtime.first_audio_delta` stays honest `n/a` and `speech_end_to_playback_ms` (`playback.started` = the `<audio>` playing event) is the reliable browser-side first-audio timing. Confirm at the first real-key smoke.
 
 ### Connection lifecycle
 
@@ -773,6 +779,8 @@ total_turn_ms                = turn.completed          − turn.recording.starte
 
 - **Mid-session disconnect:** on ICE `failed`/`disconnected`, persist `realtime.session.disconnected` on the turn and surface it (never swallow). Default behavior = detect + persist + advise switch-to-Cascade. Optional nice-to-have: auto-reconnect (re-mint secret + rebuild pc, ≤2 attempts).
 - **Ephemeral expiry:** frontend tracks `expiresAt`; re-mint before expiry / on disconnect via a fresh `POST /api/realtime/client-secret` (standard key never leaves backend).
+
+> **E.5a frontend realization (2026-05-30).** `realtimeConnectionManager` holds one pc across turns (idempotent `ensureConnected`; the connect latch **resets on a failed connect** so a transient failure doesn't permanently brick the mode — the controller catches → `failTurn`+abort). `realtime.session.connecting` is stamped at connect-**initiation** (browser clock → `realtime_connect_ms`); `connected`/`disconnected` from the pc `connectionstate` (a settable `onConnectionState` shell delegate → a tested mapper). A disconnect → a frontend-synthesized sanitized `realtime.session.disconnected` `UiError` → `failTurn` (active turn, populating its `errors`) / `addError` (between turns) + `errorCopy` advise-switch-to-Cascade (never swallowed). `teardown()` (close DC/pc, stop tracks, release stream, detach `<audio>`, reset latches) is wired into `SessionSetup`'s End. **Re-mint on `expiresAt` + auto-reconnect are E.5b / documented fallbacks** (the 60-min cap > the 5-min demo). Confirm the pc `connectionState` event names (`connected`/`failed`/`disconnected`) at first real-key smoke.
 
 ### Realtime models
 
