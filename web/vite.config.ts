@@ -7,8 +7,9 @@ import { defineConfig } from 'vitest/config'
 // check (FRONTEND_ORIGIN) is satisfied for both proxy and direct modes.
 //
 // Vitest config lives in the `test` block (vitest/config re-exports Vite's defineConfig with `test`
-// typed). environment stays `node` — D.1 has only pure-logic tests; jsdom + Testing Library land in
-// D.7 when real component render tests arrive.
+// typed). The default environment stays `node` (the pure-logic suite); the D.7 component tests opt into
+// jsdom per-file via `// @vitest-environment jsdom`, so the node-env tests (fetch/FormData/Blob as node
+// globals) are untouched. `setupFiles` registers the jest-dom matchers globally (DOM-free at import).
 export default defineConfig({
   plugins: [react()],
   server: {
@@ -22,5 +23,6 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    setupFiles: ['src/test/setup.ts'],
   },
 })

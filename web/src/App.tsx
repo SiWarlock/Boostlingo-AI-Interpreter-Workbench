@@ -3,6 +3,7 @@ import { ApiError } from './api/http'
 import { configApi } from './api/configApi'
 import { sessionsApi } from './api/sessionsApi'
 import CostPanel from './components/CostPanel'
+import ErrorBanner from './components/ErrorBanner'
 import MetricsPanel from './components/MetricsPanel'
 import ModeToggle from './components/ModeToggle'
 import RecordingControls from './components/RecordingControls'
@@ -99,15 +100,7 @@ export default function App() {
       <TranscriptPanel />
       <MetricsPanel onRefresh={refreshSummary} />
       <CostPanel />
-      {state.errors.length > 0 && (
-        <section aria-label="errors">
-          <ul>
-            {state.errors.map((error, index) => (
-              <li key={`${error.code}-${index}`}>{error.safeMessage}</li>
-            ))}
-          </ul>
-        </section>
-      )}
+      <ErrorBanner />
     </main>
   )
 }
