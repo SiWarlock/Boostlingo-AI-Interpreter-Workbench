@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { sessionsApi } from './sessionsApi'
-import type { CreateSessionRequest, InterpretationSession } from '../types/domain'
+import { ApiError } from './http'
+import type { CreateSessionRequest, InterpretationSession, LatencyEvent } from '../types/domain'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -124,5 +125,40 @@ describe('sessionsApi', () => {
     expect(url).toBe('/api/sessions/session_abc/summary')
     expect((init as RequestInit).method).toBe('GET')
     expect(result.cascade?.estimatedCostPerMinuteUsd).toBe(0.42)
+  })
+
+  it('appendTurnEvents POSTs {events} to /api/sessions/{id}/turns/{turnId}/events', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ turnId: 'turn_001' }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const event: LatencyEvent = {
+      name: 'realtime.first_audio_delta',
+      stage: 'realtime',
+      timestamp: '2026-05-29T12:00:00.000+00:00',
+      relativeMs: 0,
+      clockSource: 'browser',
+      metadata: {},
+    }
+    await sessionsApi.appendTurnEvents('session_abc', 'turn_001', [event])
+
+    const [url, init] = fetchMock.mock.calls[0]
+    const reqInit = init as RequestInit
+    expect(url).toBe('/api/sessions/session_abc/turns/turn_001/events')
+    expect(reqInit.method).toBe('POST')
+    expect(new Headers(reqInit.headers).get('Content-Type')).toBe('application/json')
+    expect(JSON.parse(reqInit.body as string)).toEqual({ events: [event] }) // AppendEventsRequest wire shape
+  })
+
+  it('appendTurnEvents surfaces a non-OK status as ApiError', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ code: 'turn.not_found' }, 404))
+    vi.stubGlobal('fetch', fetchMock)
+
+    let caught: unknown
+    try {
+      await sessionsApi.appendTurnEvents('session_abc', 'turn_001', [])
+    } catch (e) {
+      caught = e
+    }
+    expect(caught).toBeInstanceOf(ApiError)
   })
 })

@@ -3,6 +3,8 @@ import type {
   CreateTurnResponse,
   EndSessionResponse,
   InterpretationSession,
+  InterpretationTurn,
+  LatencyEvent,
   SessionSummary,
 } from '../types/domain'
 import { request } from './http'
@@ -43,5 +45,25 @@ export const sessionsApi = {
     return request<SessionSummary>(`/api/sessions/${encodeURIComponent(sessionId)}/summary`, {
       method: 'GET',
     })
+  },
+
+  // POST /api/sessions/{id}/turns/{turnId}/events (ARCH-009 §6; B.9c-ii) — reports a turn's client-stamped
+  // latency events to the backend, which persists them (with clockSource) + aggregates the canonical
+  // realtime metrics (the §13 realtime half: realtime CAN report client timing, unlike cascade). Body
+  // { events } matches the backend AppendEventsRequest; the endpoint returns the updated InterpretationTurn
+  // (Ok(turn)). The realtime E.4 reporting path; cascade is priced/timed over its WS instead.
+  appendTurnEvents(
+    sessionId: string,
+    turnId: string,
+    events: LatencyEvent[],
+  ): Promise<InterpretationTurn> {
+    return request<InterpretationTurn>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/events`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ events }),
+      },
+    )
   },
 }
