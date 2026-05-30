@@ -1,9 +1,13 @@
-import { useEffect } from 'react'
+import { useCallback, useEffect } from 'react'
 import { ApiError } from './api/http'
 import { configApi } from './api/configApi'
+import { sessionsApi } from './api/sessionsApi'
+import CostPanel from './components/CostPanel'
+import MetricsPanel from './components/MetricsPanel'
 import ModeToggle from './components/ModeToggle'
 import RecordingControls from './components/RecordingControls'
 import SessionSetup from './components/SessionSetup'
+import TranscriptPanel from './components/TranscriptPanel'
 import { sessionStore, useSessionState } from './state/sessionStore'
 
 // The mode-agnostic app shell. Renders ONLY from sessionStore state (clean separation, ARCH-007 /
@@ -37,6 +41,35 @@ export default function App() {
     }
   }, [])
 
+  // Session-averages source (ARCH-009 / ARCH-014): fetch the backend-canonical summary -> store. The
+  // shell owns the fetch (mirrors the config bootstrap above); the panels stay dumb store projections.
+  // Sanitized failures go to the error sink — never an unhandled rejection.
+  const refreshSummary = useCallback(() => {
+    const sessionId = sessionStore.getState().sessionId
+    if (!sessionId) return
+    sessionsApi
+      .getSummary(sessionId)
+      .then((summary) => sessionStore.setSummary(summary))
+      .catch((error: unknown) => {
+        const uiError =
+          error instanceof ApiError
+            ? error.uiError
+            : {
+                code: 'summary.load_failed',
+                safeMessage: 'Could not load the session summary.',
+                retryable: true,
+              }
+        sessionStore.addError(uiError)
+      })
+  }, [])
+
+  // Refresh the summary each time a turn finalizes (turns grows) — plus the manual Refresh button.
+  useEffect(() => {
+    if (state.sessionId && state.turns.length > 0) {
+      refreshSummary()
+    }
+  }, [state.sessionId, state.turns.length, refreshSummary])
+
   const health = state.providerHealth
 
   return (
@@ -63,6 +96,9 @@ export default function App() {
       <ModeToggle />
       <SessionSetup />
       <RecordingControls />
+      <TranscriptPanel />
+      <MetricsPanel onRefresh={refreshSummary} />
+      <CostPanel />
       {state.errors.length > 0 && (
         <section aria-label="errors">
           <ul>
