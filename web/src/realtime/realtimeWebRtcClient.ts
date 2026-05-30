@@ -1,16 +1,19 @@
+import { realtimeApi } from '../api/realtimeApi'
 import { ApiError } from '../api/http'
+import { sessionStore } from '../state/sessionStore'
 import type { RealtimeTokenResponse, UiError } from '../types/domain'
-import { normalizeRealtimeEvent, parseRealtimeEvent } from './realtimeEvents'
-import type { NormalizedRealtimeEvent } from './realtimeEvents'
 
 // The browser Realtime WebRTC transport (ARCH-010 §7). Two layers:
 //   1. PURE, unit-tested handshake seams — `realtimeCallsUrl` + `exchangeSdpOffer` (fetch-mock'd).
-//   2. `createRealtimeWebRtcClient` — a MANUAL-SMOKE-EXEMPT shell wiring RTCPeerConnection + the `oai-events`
-//      data channel + getUserMedia/addTrack + the SDP handshake (browser-internal per the root CLAUDE.md TDD
-//      posture; verified by the ARCH-020 demo-checklist with a real OpenAI key, deferred).
+//   2. `createRealtimeWebRtcClient` — a MANUAL-SMOKE-EXEMPT shell: RTCPeerConnection + the `oai-events` data
+//      channel + getUserMedia/addTrack + the SDP handshake (browser-internal per the root CLAUDE.md TDD
+//      posture; verified by the ARCH-020 demo-checklist with a real OpenAI key, deferred). E.4b adds the DC
+//      send/receive surface (`sendClientEvent` + a settable raw `onServerEvent`) — the controller's USE of
+//      them is what's unit-tested (the normalize→sink wiring lives in the controller, not this shell).
 // Clean separation (ARCH-007): components never import this; it owns all WebRTC wire detail. SAFETY
-// (invariant #2): the ephemeral `ek_…` is a transient LOCAL here — used only as the SDP-exchange Bearer —
-// NEVER returned to the store layer, persisted, or logged.
+// (invariant #2): the ephemeral `ek_…` is a transient LOCAL — used only as the SDP-exchange Bearer — NEVER
+// returned to the store layer, persisted, or logged. Invariant #3: the remote audio is a LIVE WebRTC track
+// played directly, never captured/stored.
 
 // GA realtime calls endpoint. The model is FIXED by the minted session — appending `?model=` returns HTTP
 // 400 (ARCH-010 §7). Do NOT add a query string. Hardcoded: a third-party GA endpoint, not operator-
@@ -61,23 +64,26 @@ export async function exchangeSdpOffer(offerSdp: string, ephemeralSecret: string
 export type RealtimeWebRtcClient = {
   connect: () => Promise<void>
   close: () => void
+  // Send a client control frame over the `oai-events` data channel (ARCH-010 §7: session.update,
+  // input_audio_buffer.clear/commit, response.create). No-op if the channel isn't open yet.
+  sendClientEvent: (event: object) => void
+  // Settable per-turn delegate: raw inbound server frames (the controller does parse→normalize→sink).
+  onServerEvent: ((raw: string) => void) | null
 }
 
 export type RealtimeWebRtcDeps = {
   // Mints a fresh ephemeral secret from our backend (realtimeApi.mintClientSecret bound with the session).
   mint: () => Promise<RealtimeTokenResponse>
-  // Normalized inbound GA events from the `oai-events` data channel (E.4 stamps latency + dispatches).
-  onEvent: (event: NormalizedRealtimeEvent) => void
-  // Remote translated-audio track (E.4/E.5 route to playback).
+  // Remote translated-audio track (E.4b interim playback routes it to a detached <audio>).
   onRemoteTrack: (stream: MediaStream) => void
   // Injectable for the (deferred) smoke harness; default to the browser globals.
   getUserMedia?: (constraints: MediaStreamConstraints) => Promise<MediaStream>
   createPeerConnection?: () => RTCPeerConnection
 }
 
-// Build a single Realtime WebRTC session shell (ARCH-010 §7 handshake). E.4 drives manual turns over the
-// returned data channel; E.5 owns the persistent-pc-across-turns lifecycle + teardown + re-mint. This
-// foundation slice only stands the shell up — it is consumer-pending (wired by E.4/E.5).
+// Build a single Realtime WebRTC session shell (ARCH-010 §7 handshake). E.4b drives manual turns over the
+// data channel via `sendClientEvent`/`onServerEvent`; E.5 owns the persistent-pc-across-turns lifecycle +
+// teardown + re-mint.
 export function createRealtimeWebRtcClient(deps: RealtimeWebRtcDeps): RealtimeWebRtcClient {
   const getUserMedia =
     deps.getUserMedia ?? ((constraints) => navigator.mediaDevices.getUserMedia(constraints))
@@ -85,6 +91,14 @@ export function createRealtimeWebRtcClient(deps: RealtimeWebRtcDeps): RealtimeWe
 
   let pc: RTCPeerConnection | null = null
   let micStream: MediaStream | null = null
+  let dataChannel: RTCDataChannel | null = null
+
+  const client: RealtimeWebRtcClient = {
+    connect,
+    close,
+    sendClientEvent: (event) => dataChannel?.send(JSON.stringify(event)),
+    onServerEvent: null,
+  }
 
   async function connect(): Promise<void> {
     // Invariant #2: the ek_ is a transient local — used only as the exchange Bearer below, never stored.
@@ -101,15 +115,12 @@ export function createRealtimeWebRtcClient(deps: RealtimeWebRtcDeps): RealtimeWe
       }
     }
 
-    // Server events arrive on the `oai-events` data channel (ARCH-010 §7 step 2).
-    const dataChannel = pc.createDataChannel('oai-events')
+    // Server events arrive on the `oai-events` data channel (ARCH-010 §7 step 2) — forwarded RAW to the
+    // settable delegate (the controller owns parse→normalize→sink, so that wiring is unit-tested).
+    dataChannel = pc.createDataChannel('oai-events')
     dataChannel.onmessage = (event: MessageEvent) => {
-      if (typeof event.data !== 'string') {
-        return
-      }
-      const normalized = normalizeRealtimeEvent(parseRealtimeEvent(event.data))
-      if (normalized) {
-        deps.onEvent(normalized)
+      if (typeof event.data === 'string') {
+        client.onServerEvent?.(event.data)
       }
     }
 
@@ -142,7 +153,51 @@ export function createRealtimeWebRtcClient(deps: RealtimeWebRtcDeps): RealtimeWe
       pc.close()
       pc = null
     }
+    dataChannel = null
   }
 
-  return { connect, close }
+  return client
 }
+
+// ---- Production singleton + interim realtime audio output (E.4b; E.5 hardens reuse/teardown) ----
+
+// The remote translated voice is a LIVE WebRTC track — play it directly via a detached <audio> (never
+// captured/stored, invariant #3). Stamp `playback.started` on the `playing` event (browser clock): the
+// realtime speech_end→playback timing, and the fallback first-audio marker if WebRTC emits no
+// `output_audio.delta` on the DC (the E.4a smoke-uncertainty). All browser-internal (manual-smoke).
+let remoteAudio: HTMLAudioElement | null = null
+
+function attachRemoteAudio(stream: MediaStream): void {
+  remoteAudio ??= new Audio()
+  let stamped = false // stamp playback.started ONCE per attach — the `playing` event can re-fire (pause/resume)
+  remoteAudio.onplaying = () => {
+    if (stamped) {
+      return
+    }
+    stamped = true
+    sessionStore.appendLatencyEvent({
+      name: 'playback.started',
+      stage: 'playback',
+      timestamp: new Date().toISOString(),
+      relativeMs: 0,
+      clockSource: 'browser',
+      metadata: {},
+    })
+  }
+  remoteAudio.srcObject = stream
+  void remoteAudio.play()
+}
+
+// One realtime client reused across turns (lazy connect via the controller). `mint` reads the live session
+// from the store at connect time; the standard key never leaves the backend (invariant #1).
+export const realtimeWebRtcClient = createRealtimeWebRtcClient({
+  mint: () => {
+    const state = sessionStore.getState()
+    return realtimeApi.mintClientSecret({
+      sessionId: state.sessionId ?? '',
+      direction: state.direction,
+      model: state.realtimeModel,
+    })
+  },
+  onRemoteTrack: (stream) => attachRemoteAudio(stream),
+})
