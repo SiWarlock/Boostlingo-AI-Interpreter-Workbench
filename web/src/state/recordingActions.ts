@@ -6,13 +6,17 @@ import { cascadeStreamClient } from '../cascade/cascadeStreamClient'
 import type { CascadeStreamClient } from '../cascade/cascadeStreamClient'
 import { sessionStore } from './sessionStore'
 import type { SessionStore } from './sessionStore'
+import type { LatencyEvent } from '../types/domain'
 
 // The recording orchestration (ARCH-011): sequences the whole cascade turn. DI'd + unit-tested against
 // mocks; the production singleton wires the real store/api/client/capture. The controller holds the
 // capture handle between start and stop. The component stays a thin store/selectors projection.
 
 export type RecordingDeps = {
-  store: Pick<SessionStore, 'getState' | 'beginTurn' | 'failTurn' | 'addError' | 'setTurnStatus'>
+  store: Pick<
+    SessionStore,
+    'getState' | 'beginTurn' | 'failTurn' | 'addError' | 'setTurnStatus' | 'appendLatencyEvent'
+  >
   createTurn: (sessionId: string) => Promise<{ turnId: string }>
   client: Pick<CascadeStreamClient, 'start' | 'sendFrame' | 'stop'>
   capture: Pick<AudioCaptureController, 'startStreaming'>
@@ -21,6 +25,20 @@ export type RecordingDeps = {
 export type RecordingController = {
   startRecording: () => Promise<void>
   stopRecording: () => void
+}
+
+// A browser-clock turn-lifecycle marker (relativeMs is a placeholder — the top-level latency deltas
+// use absolute timestamps, never relativeMs; D.6). recording.started/stopped give the frontend the
+// client timestamps deriveTurnMetrics needs (the backend can't supply them for cascade).
+function recordingMarker(name: string): LatencyEvent {
+  return {
+    name,
+    stage: 'overall',
+    timestamp: new Date().toISOString(),
+    relativeMs: 0,
+    clockSource: 'browser',
+    metadata: {},
+  }
 }
 
 export function createRecordingController(deps: RecordingDeps): RecordingController {
@@ -69,6 +87,9 @@ export function createRecordingController(deps: RecordingDeps): RecordingControl
         return // mic denied / capture failed — onError already surfaced; do not open the WS
       }
 
+      // Capture is live → stamp recording.started (browser clock) as the totalTurn origin (D.6).
+      deps.store.appendLatencyEvent(recordingMarker('turn.recording.started'))
+
       deps.client.start({
         sessionId,
         turnId,
@@ -85,6 +106,9 @@ export function createRecordingController(deps: RecordingDeps): RecordingControl
   function stopRecording(): void {
     captureHandle?.stop()
     captureHandle = null
+    // Stamp recording.stopped — the speechEnd marker every speechEnd->* delta measures from (browser
+    // clock, D.6). The store no-ops if there's no current turn, so this is safe without a prior start.
+    deps.store.appendLatencyEvent(recordingMarker('turn.recording.stopped'))
     deps.client.stop()
     deps.store.setTurnStatus('processing') // awaiting trailing finals + the `done` -> completeTurn
   }

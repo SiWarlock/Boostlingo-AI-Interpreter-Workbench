@@ -8,6 +8,7 @@ import type {
   LatencyEvent,
   RealtimeModel,
   SessionStatus,
+  SessionSummary,
   TranscriptSegment,
   TranslationModel,
   TurnStatus,
@@ -41,6 +42,7 @@ export type SessionStore = {
   setTurnStatus(status: TurnStatus): void
   addError(error: UiError): void
   clearErrors(): void
+  setSummary(summary: SessionSummary): void
   sessionEnded(): void
   reset(): void
   // --- Streaming turn actions (D.4a) — driven by the cascade WS client's dispatch ---
@@ -131,6 +133,9 @@ export function createSessionStore(): SessionStore {
     setTurnStatus: (status) => set({ ...state, turnStatus: status }),
     addError: (error) => set({ ...state, errors: [...state.errors, error] }),
     clearErrors: () => set({ ...state, errors: [] }),
+    // The backend-canonical session aggregate (GET /summary) — the MetricsPanel session-averages
+    // source. Held on state so the panel renders only from the store (ARCH-007), D.6.
+    setSummary: (summary) => set({ ...state, summary }),
     sessionEnded: () => set({ ...state, sessionStatus: 'ended' }),
     reset: () => set(createInitialState()),
 
@@ -146,6 +151,7 @@ export function createSessionStore(): SessionStore {
           sourceTranscript: [],
           targetTranscript: [],
           latency: {},
+          latencyEvents: [],
           errors: [],
         },
         turnStatus: 'recording',
@@ -163,9 +169,13 @@ export function createSessionStore(): SessionStore {
       set({ ...state, currentTurn: updated })
     },
 
-    // Per-stage timeline only (keyed by event name). The top-level speech-end deltas are NOT computed
-    // here — that's the backend MetricsAggregator's domain (lesson §7: relativeMs is per-event display,
-    // not a cross-event math input); D.6 reads the backend's canonical metrics.
+    // Retain BOTH projections of each latency event: `stages` (per-event relativeMs, for the per-stage
+    // display passthrough) AND `latencyEvents` (the raw timeline with absolute timestamps). The
+    // top-level speech-end deltas are computed by deriveTurnMetrics from the raw timestamps — NEVER
+    // from relativeMs (lesson §7: relativeMs is per-event display, not a cross-event math input). For
+    // cascade the backend can't compute these (no client->server latency channel), so the frontend's
+    // browser-clock markers (recording.started/stopped, playback.started, turn.completed) are the only
+    // source; the backend GET /summary still owns the session averages.
     appendLatencyEvent: (event) => {
       const turn = state.currentTurn
       if (!turn) {
@@ -179,6 +189,7 @@ export function createSessionStore(): SessionStore {
             ...turn.latency,
             stages: { ...turn.latency.stages, [event.name]: event.relativeMs },
           },
+          latencyEvents: [...(turn.latencyEvents ?? []), event],
         },
       })
     },
@@ -195,6 +206,7 @@ export function createSessionStore(): SessionStore {
           estimatedCostUsd: estimate.estimatedUsd,
           estimatedCostPerMinuteUsd: estimate.estimatedUsdPerMinute ?? undefined,
           translationModelUsed: estimate.model,
+          cost: estimate, // full estimate for the CostPanel (model + the assumptions tooltip), D.6
         },
       })
     },
@@ -218,7 +230,25 @@ export function createSessionStore(): SessionStore {
         if (turn.turnId !== turnId) {
           return
         }
-        const finalized: TurnViewModel = { ...turn, status, completedAt: new Date().toISOString() }
+        // The backend stamps turn.completed on finalize but does NOT stream it over the cascade WS —
+        // the frontend's turn-complete signal is the WS `done` -> completeTurn. Stamp a browser-clock
+        // turn.completed onto the timeline here (the canonical totalTurn endpoint; D.6) BEFORE the turn
+        // moves into turns[]. deriveTurnMetrics prefers it; tts.complete (server) is the fallback.
+        const now = new Date().toISOString()
+        const completedEvent: LatencyEvent = {
+          name: 'turn.completed',
+          stage: 'overall',
+          timestamp: now,
+          relativeMs: 0,
+          clockSource: 'browser',
+          metadata: {},
+        }
+        const finalized: TurnViewModel = {
+          ...turn,
+          status,
+          completedAt: now,
+          latencyEvents: [...(turn.latencyEvents ?? []), completedEvent],
+        }
         set({
           ...state,
           turns: [...state.turns, finalized],

@@ -110,6 +110,27 @@ describe('sessionStore', () => {
     expect(store.getState().errors).toEqual([])
   })
 
+  it('setSummary stores the backend session summary (the MetricsPanel session-averages source, D.6)', () => {
+    const store = createSessionStore()
+    const summary = {
+      turnCount: 2,
+      cascade: {
+        turnCount: 2,
+        avgSpeechEndToFirstAudioMs: null,
+        avgSpeechEndToPlaybackMs: null,
+        estimatedCostPerMinuteUsd: 0.5,
+        errorCount: 0,
+        avgSttFinalMs: 120,
+        avgTranslationFinalMs: 240,
+        avgTtsFirstAudioMs: 360,
+      },
+      computedAt: '2026-05-29T12:00:00+00:00',
+      pricingConfigVersion: '2026-05-28-payg-estimates',
+    }
+    store.setSummary(summary)
+    expect(store.getState().summary).toEqual(summary)
+  })
+
   it('subscribe notifies, unsubscribe stops, and state ref changes on mutation (stable when unread)', () => {
     const store = createSessionStore()
     const before = store.getState()
@@ -254,6 +275,10 @@ describe('sessionStore streaming actions (D.4a)', () => {
     }
     store.appendLatencyEvent(event)
     expect(store.getState().currentTurn?.latency.stages?.['stt.final']).toBe(250)
+    // D.6: the RAW event (with its absolute timestamp) is also retained on the turn timeline so
+    // deriveTurnMetrics can compute top-level deltas via absolute-timestamp Between (the stages map
+    // keeps only relativeMs, which must never be used for cross-event math — lesson §7).
+    expect(store.getState().currentTurn?.latencyEvents).toContainEqual(event)
 
     const estimate: CostEstimate = {
       provider: 'cascade',
@@ -263,13 +288,15 @@ describe('sessionStore streaming actions (D.4a)', () => {
       estimatedUsdPerMinute: 0.6,
       units: {},
       pricingConfigVersion: 'v1',
-      assumptions: [],
+      assumptions: ['TTS cost uses a character-count proxy'],
     }
     store.setTurnCost(estimate)
     const turn = store.getState().currentTurn
     expect(turn?.estimatedCostUsd).toBe(0.012)
     expect(turn?.estimatedCostPerMinuteUsd).toBe(0.6)
     expect(turn?.translationModelUsed).toBe('gpt-5.4-nano')
+    // D.6: the FULL estimate is retained too (the CostPanel renders model + the assumptions tooltip).
+    expect(turn?.cost).toEqual(estimate)
   })
 
   it('failTurn records the error + marks failed; completeTurn finalizes currentTurn into turns[]', () => {
@@ -308,5 +335,34 @@ describe('sessionStore streaming actions (D.4a)', () => {
     expect(s.currentTurn?.turnId).toBe('turn_002') // active turn not clobbered
     expect(s.turns).toHaveLength(0) // nothing finalized
     expect(s.turnStatus).toBe('recording') // not flipped to completed by a stale done
+    // a stale done must not leak a turn.completed onto the still-live turn
+    expect(s.currentTurn?.latencyEvents ?? []).not.toContainEqual(
+      expect.objectContaining({ name: 'turn.completed' }),
+    )
+  })
+
+  // D.6 (orchestrator ADD): the backend stamps turn.completed on finalize but does NOT stream it over
+  // the cascade WS — the frontend's turn-complete signal is the `done` message → completeTurn. So
+  // completeTurn stamps a browser-clock turn.completed onto the finalized turn timeline; this is the
+  // canonical totalTurn endpoint (recording.started → turn.completed, both browser-clock = clean),
+  // with tts.complete (server, cross-clock) as the deriveTurnMetrics fallback.
+  it('completeTurn stamps a browser-clock turn.completed onto the finalized turn (totalTurn endpoint)', () => {
+    const store = createSessionStore()
+    store.beginTurn({
+      turnId: 'turn_001',
+      mode: 'cascade',
+      direction: { source: 'en', target: 'es' },
+    })
+
+    store.completeTurn('turn_001', 'completed')
+
+    const finalized = store.getState().turns[0]
+    const completedEvent = finalized.latencyEvents?.find((e) => e.name === 'turn.completed')
+    expect(completedEvent).toMatchObject({
+      name: 'turn.completed',
+      stage: 'overall',
+      clockSource: 'browser',
+    })
+    expect(Number.isNaN(Date.parse(completedEvent!.timestamp))).toBe(false) // a real ISO timestamp
   })
 })

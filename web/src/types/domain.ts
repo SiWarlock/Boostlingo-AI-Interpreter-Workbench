@@ -69,9 +69,15 @@ export type TurnViewModel = {
     totalTurnMs?: number
     stages?: Record<string, number>
   }
+  // Raw latency timeline (with absolute timestamps), retained so deriveTurnMetrics can compute the
+  // top-level client-timing deltas via absolute-timestamp Between (the `stages` map above keeps only
+  // relativeMs, which must never be used for cross-event math — lesson §7 / D.6). (D.6)
+  latencyEvents?: LatencyEvent[]
   estimatedCostUsd?: number
   estimatedCostPerMinuteUsd?: number
   translationModelUsed?: string
+  // Full cost estimate retained for the CostPanel (model + assumptions tooltip). (D.6)
+  cost?: CostEstimate
   werWer?: number
   errors: UiError[]
 }
@@ -94,10 +100,35 @@ export type UiSessionState = {
 }
 
 // --- Deferred wire mirrors (pragmatic-accrete) ---
-// Opaque until the slice that first RENDERS them tightens the shape against Appendix A. D.1 only
-// passes these through the clients / carries them on state; it never reads their fields.
-export type SessionSummary = Record<string, unknown> // F.3 ComparisonSummary tightens
-export type InterpretationTurn = Record<string, unknown> // D.4/D.6 render → tighten then
+// Opaque until the slice that first RENDERS them tightens the shape against Appendix A. The frontend
+// builds TurnViewModel from the cascade WS, not the raw wire turn, so this may stay opaque.
+export type InterpretationTurn = Record<string, unknown>
+
+// --- Session summary mirrors (GET /api/sessions/{id}/summary — ARCH-009 / Appendix A) ---
+// camelCase mirrors of the backend SessionSummary/ModeSummary/WerSummary (Sessions/SessionModels.cs).
+// Nullable backend doubles serialize as explicit null (JsonDefaults) → `?: number | null`. Tightened
+// from D.1's opaque Record at D.6 (MetricsPanel session averages); F.3 (ComparisonSummary) reuses.
+export type ModeSummary = {
+  turnCount: number
+  avgSpeechEndToFirstAudioMs?: number | null
+  avgSpeechEndToPlaybackMs?: number | null
+  estimatedCostPerMinuteUsd?: number | null
+  errorCount: number
+  avgSttFinalMs?: number | null
+  avgTranslationFinalMs?: number | null
+  avgTtsFirstAudioMs?: number | null
+}
+
+export type WerSummary = { sampleCount: number; avgWer: number }
+
+export type SessionSummary = {
+  turnCount: number
+  realtime?: ModeSummary | null
+  cascade?: ModeSummary | null
+  wer?: WerSummary | null
+  computedAt: string
+  pricingConfigVersion: string
+}
 
 // --- Wire DTOs the D.1 clients parse (ARCH-009 / Appendix A) ---
 

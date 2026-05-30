@@ -26,6 +26,7 @@ function setup(state: UiSessionState = baseState()) {
     failTurn: vi.fn(),
     addError: vi.fn(),
     setTurnStatus: vi.fn(),
+    appendLatencyEvent: vi.fn(),
   }
   const deps = {
     store,
@@ -158,5 +159,56 @@ describe('stopRecording', () => {
     expect(() => controller.stopRecording()).not.toThrow() // captureHandle?.stop() is null-safe
     expect(deps.client.stop).toHaveBeenCalledTimes(1)
     expect(store.setTurnStatus).toHaveBeenCalledWith('processing')
+  })
+})
+
+// --- D.6: the client-clock recording markers the top-level latency deltas need ----------------
+// turn.recording.started / turn.recording.stopped are browser-clock LatencyEvents stamped via the
+// store; deriveTurnMetrics reads their absolute timestamps to compute speechEnd→* + totalTurn.
+describe('recording stamps (top-level latency markers)', () => {
+  function stampNamed(store: ReturnType<typeof setup>['store'], name: string) {
+    return store.appendLatencyEvent.mock.calls.map((c) => c[0]).find((e) => e.name === name)
+  }
+
+  it('startRecording stamps turn.recording.started (browser clock, overall) once capture starts', async () => {
+    const { deps, store } = setup()
+    const controller = createRecordingController(deps)
+
+    await controller.startRecording()
+
+    const ev = stampNamed(store, 'turn.recording.started')
+    expect(ev).toMatchObject({
+      name: 'turn.recording.started',
+      stage: 'overall',
+      clockSource: 'browser',
+    })
+    expect(typeof ev?.timestamp).toBe('string')
+    expect(Number.isNaN(Date.parse(ev!.timestamp))).toBe(false) // a real ISO timestamp, not a placeholder
+  })
+
+  it('does NOT stamp turn.recording.started when the mic is denied (capture returns null)', async () => {
+    const { deps, store } = setup()
+    deps.capture.startStreaming.mockResolvedValue(null) // mic-denied / capture-failed → no audio captured
+    const controller = createRecordingController(deps)
+
+    await controller.startRecording()
+
+    expect(stampNamed(store, 'turn.recording.started')).toBeUndefined()
+  })
+
+  it('stopRecording stamps turn.recording.stopped (browser clock, overall) when stop is sent', async () => {
+    const { deps, store } = setup()
+    const controller = createRecordingController(deps)
+    await controller.startRecording()
+
+    controller.stopRecording()
+
+    const ev = stampNamed(store, 'turn.recording.stopped')
+    expect(ev).toMatchObject({
+      name: 'turn.recording.stopped',
+      stage: 'overall',
+      clockSource: 'browser',
+    })
+    expect(Number.isNaN(Date.parse(ev!.timestamp))).toBe(false)
   })
 })

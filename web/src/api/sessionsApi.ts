@@ -3,6 +3,7 @@ import type {
   CreateTurnResponse,
   EndSessionResponse,
   InterpretationSession,
+  SessionSummary,
 } from '../types/domain'
 import { request } from './http'
 
@@ -32,6 +33,15 @@ export const sessionsApi = {
   endSession(sessionId: string): Promise<EndSessionResponse> {
     return request<EndSessionResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/end`, {
       method: 'POST',
+    })
+  },
+
+  // Backend-canonical session aggregation (ARCH-009) — the MetricsPanel's "session averages by mode"
+  // reads ModeSummary from here (per-stage avgs are present for cascade; AvgSpeechEnd* is n/a for
+  // cascade — the backend has no client-timing for it). Fetched on turn-completion + manual refresh.
+  getSummary(sessionId: string): Promise<SessionSummary> {
+    return request<SessionSummary>(`/api/sessions/${encodeURIComponent(sessionId)}/summary`, {
+      method: 'GET',
     })
   },
 }

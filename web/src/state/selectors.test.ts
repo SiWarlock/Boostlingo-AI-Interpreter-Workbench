@@ -4,9 +4,18 @@ import {
   canStartRecording,
   canStopRecording,
   canToggleMode,
+  deriveTurnMetrics,
+  formatCostPerMinute,
   modeAvailability,
 } from './selectors'
-import type { ConfigResponse, SessionStatus, TurnStatus } from '../types/domain'
+import type {
+  ConfigResponse,
+  CostEstimate,
+  LatencyEvent,
+  SessionStatus,
+  TurnStatus,
+  TurnViewModel,
+} from '../types/domain'
 
 function config(overrides: Partial<ConfigResponse> = {}): ConfigResponse {
   return {
@@ -119,5 +128,146 @@ describe('recording transitions (ARCH-007 table)', () => {
     expect(canStopRecording(at('active', 'ready'))).toBe(false)
     expect(canStopRecording(at('active', 'processing'))).toBe(false)
     expect(canStopRecording(at('active', 'playing'))).toBe(false)
+  })
+})
+
+// --- D.6 metrics derivation -------------------------------------------------------------------
+
+function latencyEvent(
+  name: string,
+  timestamp: string,
+  overrides: Partial<LatencyEvent> = {},
+): LatencyEvent {
+  return {
+    name,
+    stage: 'overall',
+    timestamp,
+    relativeMs: 0,
+    clockSource: 'browser',
+    metadata: {},
+    ...overrides,
+  }
+}
+
+function turn(overrides: Partial<TurnViewModel> = {}): TurnViewModel {
+  return {
+    turnId: 'turn_001',
+    mode: 'cascade',
+    direction: { source: 'en', target: 'es' },
+    status: 'completed',
+    startedAt: '2026-05-29T00:00:00.000Z',
+    sourceTranscript: [],
+    targetTranscript: [],
+    latency: {},
+    errors: [],
+    ...overrides,
+  }
+}
+
+describe('deriveTurnMetrics', () => {
+  it('computes top-level deltas via absolute-timestamp Between (never relativeMs)', () => {
+    // relativeMs is left at the placeholder 0 on every event — proving the math uses absolute
+    // timestamps, not relativeMs (lesson §7 / the load-bearing metrics-sourcing design).
+    const t = turn({
+      latencyEvents: [
+        latencyEvent('turn.recording.started', '2026-05-29T00:00:00.000Z'),
+        latencyEvent('turn.recording.stopped', '2026-05-29T00:00:02.000Z'), // speechEnd @ +2000ms
+        latencyEvent('tts.first_audio', '2026-05-29T00:00:02.600Z', {
+          stage: 'tts',
+          clockSource: 'server',
+        }), // +600ms from speechEnd
+        latencyEvent('playback.started', '2026-05-29T00:00:02.900Z'), // +900ms from speechEnd
+        latencyEvent('tts.complete', '2026-05-29T00:00:03.500Z', {
+          stage: 'tts',
+          clockSource: 'server',
+        }), // +3500ms from start
+      ],
+    })
+
+    const m = deriveTurnMetrics(t)
+
+    expect(m.speechEndToFirstAudioMs).toBe(600)
+    expect(m.speechEndToPlaybackMs).toBe(900)
+    expect(m.totalTurnMs).toBe(3500)
+  })
+
+  it('a metric whose endpoint event is absent → undefined (renders n/a, never 0)', () => {
+    const t = turn({
+      latencyEvents: [
+        latencyEvent('turn.recording.started', '2026-05-29T00:00:00.000Z'),
+        latencyEvent('turn.recording.stopped', '2026-05-29T00:00:02.000Z'),
+        // no tts.first_audio, no playback.started, no terminal event
+      ],
+    })
+
+    const m = deriveTurnMetrics(t)
+
+    expect(m.speechEndToFirstAudioMs).toBeUndefined()
+    expect(m.speechEndToPlaybackMs).toBeUndefined()
+    expect(m.totalTurnMs).toBeUndefined()
+  })
+
+  it('does NOT clamp a cross-clock negative delta (ARCH-013 discloses skew, never hides it)', () => {
+    const t = turn({
+      latencyEvents: [
+        latencyEvent('turn.recording.stopped', '2026-05-29T00:00:02.000Z'), // browser clock
+        // server clock slightly behind → first_audio timestamp precedes the browser speechEnd
+        latencyEvent('tts.first_audio', '2026-05-29T00:00:01.950Z', {
+          stage: 'tts',
+          clockSource: 'server',
+        }),
+      ],
+    })
+
+    expect(deriveTurnMetrics(t).speechEndToFirstAudioMs).toBe(-50) // NOT clamped to 0
+  })
+
+  it('prefers turn.completed over tts.complete as the totalTurn endpoint (backend-canonical terminal)', () => {
+    const t = turn({
+      latencyEvents: [
+        latencyEvent('turn.recording.started', '2026-05-29T00:00:00.000Z'),
+        latencyEvent('tts.complete', '2026-05-29T00:00:03.500Z', {
+          stage: 'tts',
+          clockSource: 'server',
+        }),
+        latencyEvent('turn.completed', '2026-05-29T00:00:03.800Z', { clockSource: 'server' }),
+      ],
+    })
+
+    expect(deriveTurnMetrics(t).totalTurnMs).toBe(3800)
+  })
+
+  it('passes per-stage values through from currentTurn.latency.stages (server-computed; not recomputed)', () => {
+    const stages = { 'stt.final': 120, 'translation.final': 240, 'tts.first_audio': 360 }
+    const t = turn({ latency: { stages }, latencyEvents: [] })
+
+    expect(deriveTurnMetrics(t).stages).toEqual(stages)
+  })
+})
+
+describe('formatCostPerMinute', () => {
+  function cost(overrides: Partial<CostEstimate> = {}): CostEstimate {
+    return {
+      provider: 'cascade',
+      model: 'gpt-5.4-nano',
+      pricingBasis: 'composite',
+      estimatedUsd: 0.0021,
+      estimatedUsdPerMinute: 0.42,
+      units: {},
+      pricingConfigVersion: '2026-05-28-payg-estimates',
+      assumptions: ['TTS cost uses a character-count proxy'],
+      ...overrides,
+    }
+  }
+
+  it('formats an available per-minute estimate as a qualified "Estimated $X.XX/min" string', () => {
+    expect(formatCostPerMinute(cost())).toBe('Estimated $0.42/min')
+    expect(formatCostPerMinute(cost({ estimatedUsdPerMinute: 1 }))).toBe('Estimated $1.00/min')
+  })
+
+  it('returns n/a when the per-minute estimate is unavailable (null value or absent estimate)', () => {
+    expect(formatCostPerMinute(cost({ estimatedUsdPerMinute: null }))).toBe('n/a')
+    expect(formatCostPerMinute(undefined)).toBe('n/a')
+    expect(formatCostPerMinute(null)).toBe('n/a')
   })
 })

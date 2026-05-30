@@ -1,4 +1,11 @@
-import type { ConfigResponse, TurnStatus, UiSessionState } from '../types/domain'
+import type {
+  ConfigResponse,
+  CostEstimate,
+  LatencyEvent,
+  TurnStatus,
+  TurnViewModel,
+  UiSessionState,
+} from '../types/domain'
 
 // Pure gating/availability derivations over the GET /api/config response (ARCH-007 / ARCH-017
 // Flow A). Components render the result + dispatch intents; the gating logic is unit-tested here in
@@ -54,4 +61,60 @@ export function canStartRecording(
 
 export function canStopRecording(state: Pick<UiSessionState, 'turnStatus'>): boolean {
   return state.turnStatus === 'recording'
+}
+
+// --- D.6 metrics derivation (the load-bearing three-source model) ---------------------------------
+// Per-stage latency comes from the store's `stages` map (server-computed relativeMs — passed through,
+// NOT recomputed; lesson §7). Top-level client-timing deltas are computed HERE from the raw event
+// timeline's absolute timestamps, because for cascade the backend structurally cannot (no
+// client->server latency channel). Session averages come from GET /summary (backend-canonical), not here.
+
+// Wall-clock millisecond difference between two events' absolute timestamps, or undefined if either
+// endpoint is absent. Mirrors the backend MetricsAggregator.Between: deliberately NOT clamped — a small
+// cross-clock negative is disclosed (ARCH-013), never hidden. relativeMs is never used for this math.
+function between(from: LatencyEvent | undefined, to: LatencyEvent | undefined): number | undefined {
+  if (!from || !to) {
+    return undefined
+  }
+  return new Date(to.timestamp).getTime() - new Date(from.timestamp).getTime()
+}
+
+// A turn's display metrics: top-level deltas (absolute-timestamp Between over the raw timeline) + the
+// per-stage passthrough. A metric whose endpoint event is absent stays undefined -> the panel renders n/a.
+export function deriveTurnMetrics(turn: TurnViewModel): TurnViewModel['latency'] {
+  const byName = new Map<string, LatencyEvent>()
+  for (const event of turn.latencyEvents ?? []) {
+    // First arrival wins (mirrors the orchestrator's first-arrival stamping); these markers occur once.
+    if (!byName.has(event.name)) {
+      byName.set(event.name, event)
+    }
+  }
+  const recordingStarted = byName.get('turn.recording.started')
+  const speechEnd = byName.get('turn.recording.stopped')
+  // turn.completed (browser-clock, stamped on the WS `done`) is the canonical totalTurn terminal;
+  // tts.complete (server-clock) is the cross-clock fallback when turn.completed isn't present.
+  const terminal = byName.get('turn.completed') ?? byName.get('tts.complete')
+  return {
+    speechEndToFirstAudioMs: between(speechEnd, byName.get('tts.first_audio')),
+    speechEndToPlaybackMs: between(speechEnd, byName.get('playback.started')),
+    totalTurnMs: between(recordingStarted, terminal),
+    stages: turn.latency.stages,
+  }
+}
+
+// Formats a USD-per-minute figure as the always-qualified "Estimated $X.XX/min" (ARCH-014); returns the
+// shared 'n/a' token when unavailable (never a bare 0, never an error). The single source of the
+// qualified per-minute string — reused for both per-turn (via formatCostPerMinute) and per-mode
+// session figures (ModeSummary.estimatedCostPerMinuteUsd).
+export function formatUsdPerMinute(value: number | null | undefined): string {
+  if (value === null || value === undefined) {
+    return 'n/a'
+  }
+  return `Estimated $${value.toFixed(2)}/min`
+}
+
+// Per-turn convenience over a CostEstimate. The model + assumptions for the tooltip the CostPanel reads
+// off the estimate directly.
+export function formatCostPerMinute(estimate: CostEstimate | null | undefined): string {
+  return formatUsdPerMinute(estimate?.estimatedUsdPerMinute)
 }

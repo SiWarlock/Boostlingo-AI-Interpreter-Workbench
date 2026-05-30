@@ -98,4 +98,31 @@ describe('sessionsApi', () => {
     expect(result.session.sessionId).toBe('session_abc')
     expect(result.persistedPath).toBe('session_abc.json')
   })
+
+  it('getSummary GETs /api/sessions/{id}/summary and parses the SessionSummary', async () => {
+    const summary = {
+      turnCount: 1,
+      cascade: {
+        turnCount: 1,
+        avgSpeechEndToFirstAudioMs: null, // n/a for cascade — the backend has no client-timing for it
+        avgSpeechEndToPlaybackMs: null,
+        estimatedCostPerMinuteUsd: 0.42,
+        errorCount: 0,
+        avgSttFinalMs: 120,
+        avgTranslationFinalMs: 240,
+        avgTtsFirstAudioMs: 360,
+      },
+      computedAt: '2026-05-29T12:00:00+00:00',
+      pricingConfigVersion: '2026-05-28-payg-estimates',
+    }
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(summary))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await sessionsApi.getSummary('session_abc')
+
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/sessions/session_abc/summary')
+    expect((init as RequestInit).method).toBe('GET')
+    expect(result.cascade?.estimatedCostPerMinuteUsd).toBe(0.42)
+  })
 })
