@@ -34,7 +34,11 @@ describe('createRealtimeConnectionManager', () => {
 
     const connecting = stamps(store, 'realtime.session.connecting')
     expect(connecting).toHaveLength(1)
-    expect(connecting[0]).toMatchObject({ stage: 'realtime', clockSource: 'browser', timestamp: FIXED_TS })
+    expect(connecting[0]).toMatchObject({
+      stage: 'realtime',
+      clockSource: 'browser',
+      timestamp: FIXED_TS,
+    })
     // connected has NOT been stamped yet — that waits for the pc connectionstate event
     expect(stamps(store, 'realtime.session.connected')).toHaveLength(0)
   })

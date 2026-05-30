@@ -22,7 +22,9 @@ describe('createRealtimeEventSink', () => {
 
     sink.handle({ kind: 'targetTranscriptDelta', text: 'hola' })
 
-    expect(store.getState().currentTurn?.targetTranscript).toEqual([{ text: 'hola', isFinal: false }])
+    expect(store.getState().currentTurn?.targetTranscript).toEqual([
+      { text: 'hola', isFinal: false },
+    ])
   })
 
   it('appends a non-final source segment on sourceTranscriptDelta', () => {
@@ -31,7 +33,9 @@ describe('createRealtimeEventSink', () => {
 
     sink.handle({ kind: 'sourceTranscriptDelta', text: 'hel' })
 
-    expect(store.getState().currentTurn?.sourceTranscript).toEqual([{ text: 'hel', isFinal: false }])
+    expect(store.getState().currentTurn?.sourceTranscript).toEqual([
+      { text: 'hel', isFinal: false },
+    ])
   })
 
   it('appends a FINAL source segment on sourceTranscriptCompleted', () => {
@@ -40,7 +44,9 @@ describe('createRealtimeEventSink', () => {
 
     sink.handle({ kind: 'sourceTranscriptCompleted', text: 'hello' })
 
-    expect(store.getState().currentTurn?.sourceTranscript).toEqual([{ text: 'hello', isFinal: true }])
+    expect(store.getState().currentTurn?.sourceTranscript).toEqual([
+      { text: 'hello', isFinal: true },
+    ])
   })
 
   it('replaces accumulated source partials with the authoritative final on sourceTranscriptCompleted', () => {
@@ -53,7 +59,9 @@ describe('createRealtimeEventSink', () => {
 
     // The running cumulative partial ('hello') is replaced by the authoritative final segment; a later
     // stray delta would start a fresh partial (accumulator reset), not concatenate onto stale text.
-    expect(store.getState().currentTurn?.sourceTranscript).toEqual([{ text: 'hello', isFinal: true }])
+    expect(store.getState().currentTurn?.sourceTranscript).toEqual([
+      { text: 'hello', isFinal: true },
+    ])
   })
 
   it('accumulates incremental target tokens into one cumulative partial + stamps first_transcript_delta once', () => {
@@ -65,7 +73,9 @@ describe('createRealtimeEventSink', () => {
 
     // The store's appendSegment (§10) REPLACES the trailing non-final partial (cascade-cumulative model),
     // so the sink passes CUMULATIVE text — the panel shows the growing transcript, not just the last token.
-    expect(store.getState().currentTurn?.targetTranscript).toEqual([{ text: 'hola', isFinal: false }])
+    expect(store.getState().currentTurn?.targetTranscript).toEqual([
+      { text: 'hola', isFinal: false },
+    ])
     const events = store.getState().currentTurn?.latencyEvents ?? []
     expect(events.filter((e) => e.name === 'realtime.first_transcript_delta')).toHaveLength(1)
   })
@@ -81,7 +91,11 @@ describe('createRealtimeEventSink', () => {
       (e) => e.name === 'realtime.first_audio_delta',
     )
     expect(audioStamps).toHaveLength(1)
-    expect(audioStamps[0]).toMatchObject({ stage: 'realtime', clockSource: 'browser', timestamp: FIXED_TS })
+    expect(audioStamps[0]).toMatchObject({
+      stage: 'realtime',
+      clockSource: 'browser',
+      timestamp: FIXED_TS,
+    })
   })
 
   it('NEVER writes audio or a transcript to the store on audioDelta (invariant #3 sentinel)', () => {
@@ -108,7 +122,9 @@ describe('createRealtimeEventSink', () => {
     expect(state.turns).toHaveLength(1)
     expect(state.turns[0]).toMatchObject({ turnId: 'turn_1', status: 'completed' })
     // The store's completeTurn (D.6) OWNS the turn.completed stamp — the sink must NOT double-stamp.
-    const completedStamps = (state.turns[0].latencyEvents ?? []).filter((e) => e.name === 'turn.completed')
+    const completedStamps = (state.turns[0].latencyEvents ?? []).filter(
+      (e) => e.name === 'turn.completed',
+    )
     expect(completedStamps).toHaveLength(1)
     // No target deltas this turn → no empty final target segment emitted.
     expect(state.turns[0].targetTranscript).toEqual([])

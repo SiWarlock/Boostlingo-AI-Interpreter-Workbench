@@ -4,7 +4,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // Mock both turn controllers so the test asserts DISPATCH-BY-MODE, not the controllers' internals.
 vi.mock('../state/recordingActions', () => ({
-  recordingController: { startRecording: vi.fn().mockResolvedValue(undefined), stopRecording: vi.fn() },
+  recordingController: {
+    startRecording: vi.fn().mockResolvedValue(undefined),
+    stopRecording: vi.fn(),
+  },
 }))
 vi.mock('../realtime/realtimeTurnController', () => ({
   realtimeTurnController: { startTurn: vi.fn().mockResolvedValue(undefined), stopTurn: vi.fn() },

@@ -18,7 +18,9 @@ describe('parseRealtimeEvent', () => {
 
 describe('normalizeRealtimeEvent', () => {
   it('maps response.output_audio.delta -> audioDelta', () => {
-    expect(normalizeRealtimeEvent({ type: 'response.output_audio.delta', delta: 'YmFzZTY0' })).toEqual({
+    expect(
+      normalizeRealtimeEvent({ type: 'response.output_audio.delta', delta: 'YmFzZTY0' }),
+    ).toEqual({
       kind: 'audioDelta',
       base64: 'YmFzZTY0',
     })
@@ -53,7 +55,9 @@ describe('normalizeRealtimeEvent', () => {
   })
 
   it('maps response lifecycle events (created/done)', () => {
-    expect(normalizeRealtimeEvent({ type: 'response.created' })).toEqual({ kind: 'responseCreated' })
+    expect(normalizeRealtimeEvent({ type: 'response.created' })).toEqual({
+      kind: 'responseCreated',
+    })
     expect(normalizeRealtimeEvent({ type: 'response.done' })).toEqual({ kind: 'responseDone' })
   })
 

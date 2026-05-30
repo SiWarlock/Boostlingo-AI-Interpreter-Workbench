@@ -89,10 +89,14 @@ describe('createRealtimeTurnController', () => {
       (e) => e.name === 'turn.recording.started',
     )
     expect(started).toHaveLength(1)
-    expect(started[0]).toMatchObject({ stage: 'overall', clockSource: 'browser', timestamp: FIXED_TS })
+    expect(started[0]).toMatchObject({
+      stage: 'overall',
+      clockSource: 'browser',
+      timestamp: FIXED_TS,
+    })
   })
 
-  it('ensures the connection via the manager on each startTurn (idempotency is the manager\'s job)', async () => {
+  it("ensures the connection via the manager on each startTurn (idempotency is the manager's job)", async () => {
     const { connectionManager, api, controller } = setup()
     api.createTurn.mockReset()
     api.createTurn
@@ -112,9 +116,13 @@ describe('createRealtimeTurnController', () => {
     const { store, client, controller } = setup()
 
     await controller.startTurn()
-    client.onServerEvent?.(JSON.stringify({ type: 'response.output_audio_transcript.delta', delta: 'hola' }))
+    client.onServerEvent?.(
+      JSON.stringify({ type: 'response.output_audio_transcript.delta', delta: 'hola' }),
+    )
 
-    expect(store.getState().currentTurn?.targetTranscript).toEqual([{ text: 'hola', isFinal: false }])
+    expect(store.getState().currentTurn?.targetTranscript).toEqual([
+      { text: 'hola', isFinal: false },
+    ])
   })
 
   it('stopTurn commits the buffer, requests a response, and stamps recording.stopped', async () => {

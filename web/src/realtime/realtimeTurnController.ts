@@ -34,7 +34,11 @@ export type RealtimeTurnDeps = {
   connectionManager: Pick<RealtimeConnectionManager, 'ensureConnected'>
   api: {
     createTurn: (sessionId: string) => Promise<{ turnId: string }>
-    appendTurnEvents: (sessionId: string, turnId: string, events: LatencyEvent[]) => Promise<unknown>
+    appendTurnEvents: (
+      sessionId: string,
+      turnId: string,
+      events: LatencyEvent[],
+    ) => Promise<unknown>
   }
   clock: Clock
 }
@@ -53,7 +57,14 @@ export function createRealtimeTurnController(deps: RealtimeTurnDeps): RealtimeTu
   // A browser-clock turn-lifecycle marker (stage 'overall'; relativeMs is a placeholder — the top-level
   // latency deltas use absolute timestamps, never relativeMs; lesson §13 / the recordingActions precedent).
   function marker(name: string): LatencyEvent {
-    return { name, stage: 'overall', timestamp: clock(), relativeMs: 0, clockSource: 'browser', metadata: {} }
+    return {
+      name,
+      stage: 'overall',
+      timestamp: clock(),
+      relativeMs: 0,
+      clockSource: 'browser',
+      metadata: {},
+    }
   }
 
   // On responseDone the turn is finalized (moved into turns[]) — report its accumulated client events to the
@@ -69,7 +80,11 @@ export function createRealtimeTurnController(deps: RealtimeTurnDeps): RealtimeTu
       store.addError(
         error instanceof ApiError
           ? error.uiError
-          : { code: 'realtime.report_failed', safeMessage: 'Could not report turn metrics.', retryable: true },
+          : {
+              code: 'realtime.report_failed',
+              safeMessage: 'Could not report turn metrics.',
+              retryable: true,
+            },
       )
     })
   }
@@ -92,7 +107,11 @@ export function createRealtimeTurnController(deps: RealtimeTurnDeps): RealtimeTu
         store.addError(
           error instanceof ApiError
             ? error.uiError
-            : { code: 'turn.create_failed', safeMessage: 'Could not start the turn.', retryable: true },
+            : {
+                code: 'turn.create_failed',
+                safeMessage: 'Could not start the turn.',
+                retryable: true,
+              },
         )
         return // abort before any client wiring
       }
@@ -110,7 +129,8 @@ export function createRealtimeTurnController(deps: RealtimeTurnDeps): RealtimeTu
             ? error.uiError
             : {
                 code: 'realtime.connect',
-                safeMessage: 'Could not establish the realtime voice connection. Retry, or switch to Cascade.',
+                safeMessage:
+                  'Could not establish the realtime voice connection. Retry, or switch to Cascade.',
                 retryable: true,
               },
         )

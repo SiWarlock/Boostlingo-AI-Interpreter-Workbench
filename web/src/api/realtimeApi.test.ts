@@ -73,7 +73,9 @@ describe('realtimeApi.mintClientSecret', () => {
   })
 
   it('surfaces a non-OK status as ApiError, never leaking the raw body', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ secret: 'sk-should-never-surface' }, 500))
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ secret: 'sk-should-never-surface' }, 500))
     vi.stubGlobal('fetch', fetchMock)
 
     let caught: unknown

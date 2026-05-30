@@ -4,7 +4,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // Mock the connection manager (assert teardown dispatch) + sessionActions (avoid the real endSession fetch).
 vi.mock('../realtime/realtimeConnectionManager', () => ({
-  realtimeConnectionManager: { teardown: vi.fn(), ensureConnected: vi.fn().mockResolvedValue(undefined) },
+  realtimeConnectionManager: {
+    teardown: vi.fn(),
+    ensureConnected: vi.fn().mockResolvedValue(undefined),
+  },
 }))
 vi.mock('../state/sessionActions', () => ({
   endSession: vi.fn().mockResolvedValue(undefined),

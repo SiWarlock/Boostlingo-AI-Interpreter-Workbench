@@ -11,7 +11,15 @@ import type { TranscriptSegment } from '../types/domain'
 // is off). web §14 (per-file jsdom + cleanup).
 
 function seg(role: 'source' | 'target', text: string, isFinal: boolean): TranscriptSegment {
-  return { segmentId: `${role}-1`, role, text, isFinal, provider: 'openai-realtime', timestamp: 't', clockSource: 'browser' }
+  return {
+    segmentId: `${role}-1`,
+    role,
+    text,
+    isFinal,
+    provider: 'openai-realtime',
+    timestamp: 't',
+    clockSource: 'browser',
+  }
 }
 
 afterEach(() => {
@@ -21,7 +29,11 @@ afterEach(() => {
 
 describe('TranscriptPanel — source unavailable (PRD must-have 6)', () => {
   it('shows an explicit "source unavailable" note for a realtime turn with no source segments', () => {
-    sessionStore.beginTurn({ turnId: 't1', mode: 'realtime', direction: { source: 'en', target: 'es' } })
+    sessionStore.beginTurn({
+      turnId: 't1',
+      mode: 'realtime',
+      direction: { source: 'en', target: 'es' },
+    })
     sessionStore.appendTranscriptSegment(seg('target', 'hola', false))
 
     render(<TranscriptPanel />)
@@ -31,7 +43,11 @@ describe('TranscriptPanel — source unavailable (PRD must-have 6)', () => {
   })
 
   it('renders both source and target transcripts when both are present', () => {
-    sessionStore.beginTurn({ turnId: 't2', mode: 'realtime', direction: { source: 'en', target: 'es' } })
+    sessionStore.beginTurn({
+      turnId: 't2',
+      mode: 'realtime',
+      direction: { source: 'en', target: 'es' },
+    })
     sessionStore.appendTranscriptSegment(seg('source', 'hello', true))
     sessionStore.appendTranscriptSegment(seg('target', 'hola', false))
 
