@@ -202,3 +202,34 @@ Two playback truths worth pinning:
 > Note (cascade limitation): `playback.started` is a **frontend display marker** — the cascade WS has no client→server latency channel, so it never reaches the persisted turn (realtime reports via `POST …/events`). The persisted/aggregated cascade summary shows speechEnd→playback `n/a`. And `relativeMs` on the client-stamped marker is a placeholder (`0`) — its real value is its absolute browser `timestamp`; a consumer computing speechEnd→playback must use the timestamp delta, never the placeholder (streaming-honesty).
 
 **Rule:** Playback is a manual-smoke MSE/`HTMLAudioElement` shell over pure helpers (decode / no-overlap / once-`playback.started` / content-type clamp); MSE is primary (append on `updateend`), the blob fallback is best-effort (a static element `src` can't progressively play a live stream); audio is held transiently (never in the store, revoke the URL on reset); wire the client's `onAudio` via a settable delegate at the composition root.
+
+---
+
+## <a id="13"></a>13. Cascade metrics — three sources; the frontend computes the top-level deltas the backend structurally can't
+
+**Date:** 2026-05-29.
+**Source slice:** D.6 (transcript/metrics/cost panels).
+
+Cascade latency display draws from **three distinct sources — do not conflate them**:
+1. **Per-stage latency (stt/translation/tts) → from the store.** The cascade WS streams `latency` events; the store keeps `currentTurn.latency.stages[name] = relativeMs` (server-computed). `deriveTurnMetrics` **passes these through** — it does NOT recompute them (lesson §7: `relativeMs` is per-event display; the backend owns that math).
+2. **Top-level deltas (speechEnd→firstAudio/playback, totalTurn) → frontend-computed, because the backend STRUCTURALLY CANNOT for cascade.** They need the client-side events `turn.recording.started`/`stopped`/`completed` + `playback.started`, which never reach the backend (the cascade WS has no client→server latency channel; the turn is persisted on `done`). So the frontend stamps those (browser clock) and computes the deltas itself, mirroring the backend `MetricsAggregator.Between` — **absolute-`Timestamp` subtraction, NEVER `relativeMs`**, an absent endpoint → `null`/`n/a`, cross-clock negatives **disclosed, not clamped** (ARCH-013). `speechEnd→playback` is browser-clean (both client stamps); `speechEnd→firstAudio` mixes browser-stopped + server-firstAudio (cross-clock — accurate on localhost where the clocks match). This is NOT re-implementing the aggregator redundantly — for cascade client-timing it's the ONLY source. (Realtime (E) reports client events via `POST …/events`, so the backend computes realtime top-level canonically — read the summary there.)
+3. **Session averages → from the backend `GET /api/sessions/{id}/summary` (canonical).** The MetricsPanel reads `ModeSummary` for the by-mode averages; cascade's `AvgSpeechEnd*` is `n/a` (per #2's persistence gap), the per-stage avgs are present.
+
+To make #2 reachable, the store had to **retain what D.4a dropped**: `appendLatencyEvent` keeps the raw `latencyEvents[]` (with absolute timestamps — `stages` alone is insufficient), and `setTurnCost` keeps the full `CostEstimate` (the CostPanel's model + assumptions tooltip). `completeTurn` stamps `turn.completed` (browser, before finalize) so the totalTurn terminal is present + browser-clean (the WS doesn't stream it); `tts.complete` (server) is the documented cross-clock fallback. (Footnote: `deriveTurnMetrics`'s by-name de-dup is FIRST-wins, mirroring the backend's first-arrival; the store's `stages` map is LAST-wins — benign, since the server stamps each event name once per turn.)
+
+**Rule:** Cascade metrics = per-stage from the store (passed through, never recomputed) + top-level client-timing deltas frontend-computed (`Between` on absolute timestamps, the ONLY source since the backend can't for cascade) + session-averages from the backend `GET /summary`. Retain the raw `latencyEvents[]` + full `cost` in the store; stamp the client lifecycle markers (recording.started/stopped/completed) browser-clock; cross-clock disclosed, never clamped.
+
+---
+
+## <a id="14"></a>14. jsdom/Testing-Library component tests — per-file env to keep the node suite untouched; `errorCopy` is the single never-raw map
+
+**Date:** 2026-05-29.
+**Source slice:** D.7 (error banner + the 2 PRD component tests) — closes Phase D.
+
+The project's first component-render tests stand up jsdom + Testing-Library **without disturbing the existing node-env unit suite** (the clients/store/selectors tests rely on node's `fetch`/`FormData`/`Blob` globals; a global `test.environment: 'jsdom'` switch risks changing their fetch/Response behavior). The pattern: keep `vite.config.ts` `test.environment: 'node'` as the default; mark ONLY the component test files with **`// @vitest-environment jsdom`** (per-file); a `setupFiles` that does only `import '@testing-library/jest-dom/vitest'` (registers matchers — DOM-free at import, safe in the node files); `afterEach(cleanup)` inside each jsdom file (node files never import `@testing-library/react`). Mock `navigator.mediaDevices.getUserMedia` via **`vi.stubGlobal`** (symmetric teardown via `unstubAllGlobals`), not `Object.defineProperty`. Reuse lesson §4 (a `Response` body is single-read → `mockImplementation`, not `mockResolvedValue`) for any fetch stub the render path hits.
+
+`ErrorBanner` renders the store's `UiError[]` via **`errorCopy(error) → string`**, a pure code→actionable-copy map that reads ONLY `error.code` and returns fixed copy — it **never echoes `safeMessage`** (structural never-raw guarantee, ARCH-007/018; pinned by a planted-`RAW-PROVIDER-LEAK` sentinel that must be absent for both mapped and unmapped codes). It supersedes any inline raw-`safeMessage` rendering. An unmapped code → a safe generic ("Something went wrong. Please retry."), never blank/raw.
+
+Spec note (carried into ARCH-020 / MVP_TASKS D.7 at this round): mic-denied → the turn **fails** (Stop disabled), and **Start is RE-ENABLED for retry** (matching the "Enable mic access and retry" copy + the D.2 retry-after-fail design) — NOT "Start disabled" (which would trap the user, there being no dismiss). The component test asserts that truthful settled state.
+
+**Rule:** Stand up jsdom/Testing-Library with per-file `// @vitest-environment jsdom` (node default preserved) + a matcher-only `setupFiles` + per-file `cleanup`; mock browser globals via `vi.stubGlobal`; render error copy through a single pure `errorCopy(code)` map that never echoes `safeMessage` (sentinel-pinned).

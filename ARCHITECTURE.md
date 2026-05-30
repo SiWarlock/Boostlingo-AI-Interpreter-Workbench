@@ -422,8 +422,10 @@ export type TurnViewModel = {
   targetTranscript: { text: string; isFinal: boolean }[];
   latency: { speechEndToFirstAudioMs?: number; speechEndToPlaybackMs?: number; totalTurnMs?: number;
              stages?: Record<string, number> };  // e.g. { sttFinalMs, translationFinalMs, ttsFirstAudioMs }
+  latencyEvents?: LatencyEvent[];  // (D.6) raw client+server timeline (absolute timestamps); deriveTurnMetrics computes the top-level deltas from these (the cascade WS gives the frontend the client-side markers the backend can't persist)
   estimatedCostUsd?: number;
   estimatedCostPerMinuteUsd?: number;
+  cost?: CostEstimate;             // (D.6) full estimate retained for the CostPanel's model + assumptions tooltip
   translationModelUsed?: string;
   werWer?: number;
   errors: UiError[];
@@ -1311,7 +1313,7 @@ Test the **architecture seams**, not browser audio internals. Critical surfaces:
 | `ErrorSanitizerTests` | THIN-IF-NEEDED | given an exception containing an API-key substring + stack, `SafeMessage` contains neither; `HttpStatusCode`/`Retryable` preserved |
 | `ConfigEndpointTests` | IMPORTANT | `configured=false` when a key is absent; no secret echo |
 
-**Frontend (intentionally light — PRD-aligned):** two transitions held to a bar — mode-toggle disabled during recording/processing/playing, and **mic-denied** (`getUserMedia` rejection → error status, Start disabled). Manual for mic/playback.
+**Frontend (intentionally light — PRD-aligned):** two transitions held to a bar — mode-toggle disabled during recording/processing/playing, and **mic-denied** (`getUserMedia` rejection → an actionable `mic.permission_denied` error surfaces + the turn fails: **Stop disabled, Start RE-ENABLED for retry** — matching the "enable mic access and retry" copy + the D.2 retry-after-fail design; "Start disabled" referred only to the transient in-flight moment, not the settled state — clarified D.7). Manual for mic/playback.
 
 **Manual preflight (before demo):** backend starts; frontend starts; mic works; config endpoint reports correctly; Realtime client-secret works; Realtime connects + interprets; Cascade streams (source partials live, target + audio stream); session JSON writes; summary updates; WER returns a score; **5-minute run → (1) no disconnect, (2) no audio drift/overlap, (3) no memory leak**.
 
