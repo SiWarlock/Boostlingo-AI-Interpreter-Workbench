@@ -43,6 +43,7 @@ public sealed class SessionService : ISessionService
     private readonly DeepgramOptions _deepgram;
     private readonly OpenAiTtsOptions _tts;
     private readonly Result<PricingOptions> _pricing;
+    private readonly CostEstimator _costEstimator;
 
     public SessionService(
         SessionStore store,
@@ -51,7 +52,8 @@ public sealed class SessionService : ISessionService
         IClock clock,
         IOptions<DeepgramOptions> deepgram,
         IOptions<OpenAiTtsOptions> tts,
-        Result<PricingOptions> pricing)
+        Result<PricingOptions> pricing,
+        CostEstimator costEstimator)
     {
         _store = store;
         _summaryService = summaryService;
@@ -60,6 +62,7 @@ public sealed class SessionService : ISessionService
         _deepgram = deepgram.Value;
         _tts = tts.Value;
         _pricing = pricing;
+        _costEstimator = costEstimator;
     }
 
     public InterpretationSession Create(CreateSessionRequest request)
@@ -121,16 +124,30 @@ public sealed class SessionService : ISessionService
     public async Task<CompleteTurnOutcome?> CompleteTurnAsync(
         string sessionId, string turnId, CompleteTurnRequest request, CancellationToken cancellationToken = default)
     {
+        // The realtime model (E.2b per-turn cost) — SessionConfig is immutable post-create, so reading it
+        // outside the FinalizeTurn lock is safe; null if the session is unknown (FinalizeTurn returns null too).
+        var realtimeModel = _store.Get(sessionId)?.Config.ProviderProfile.RealtimeModel;
+
         // Idempotent terminal finalize (C.4b): the WS terminal path can collide with this HTTP /complete, so
         // route through FinalizeTurn — an already-terminal turn is returned unchanged (no status overwrite).
-        var result = _store.FinalizeTurn(sessionId, turnId, turn => turn with
+        var result = _store.FinalizeTurn(sessionId, turnId, turn =>
         {
-            AudioDurationMs = request.AudioDurationMs ?? turn.AudioDurationMs,
-            Transcripts = request.Transcripts ?? turn.Transcripts,
-            // /complete always produces a TERMINAL turn: honor a client-reported Failed, otherwise
-            // Completed. A non-terminal client value (Ready/Recording/…) can't drag the turn backwards.
-            Status = request.Status == TurnStatus.Failed ? TurnStatus.Failed : TurnStatus.Completed,
-            CompletedAt = _clock.UtcNow,
+            var finalized = turn with
+            {
+                AudioDurationMs = request.AudioDurationMs ?? turn.AudioDurationMs,
+                Transcripts = request.Transcripts ?? turn.Transcripts,
+                // /complete always produces a TERMINAL turn: honor a client-reported Failed, otherwise
+                // Completed. A non-terminal client value (Ready/Recording/…) can't drag the turn backwards.
+                Status = request.Status == TurnStatus.Failed ? TurnStatus.Failed : TurnStatus.Completed,
+                CompletedAt = _clock.UtcNow,
+            };
+
+            // Realtime per-turn cost (E.2b): cascade turns are priced by the C.4 WS — never here. Computed
+            // INSIDE the transform so cost lands atomically with the terminal status (idempotent re-complete
+            // skips it). Degrades to null on Unavailable (never 0 — lesson §9/§12).
+            return finalized.Mode == InterpretationMode.Realtime && realtimeModel is not null
+                ? finalized with { CostEstimate = EstimateRealtimeCost(realtimeModel, finalized, request) }
+                : finalized;
         });
         if (result is null)
         {
@@ -149,6 +166,46 @@ public sealed class SessionService : ISessionService
         // resolved this session entry and the store has no eviction path.
         var persist = await _writer.WriteAsync(_store.Get(sessionId)!, cancellationToken);
         return new CompleteTurnOutcome(result.Turn, persist);
+    }
+
+    // Realtime per-turn cost via the existing CostEstimator.EstimateRealtime (E.2b — wiring, not new math).
+    // Input seconds from the merged turn duration; output seconds from the optional client-reported field.
+    private CostEstimate? EstimateRealtimeCost(string realtimeModel, InterpretationTurn turn, CompleteTurnRequest request)
+    {
+        // No reported input audio duration (CreateTurn's 0 default never overwritten by a client value) → the
+        // turn carries no usable audio signal; degrade to null rather than emit a synthetic $0.00 (lesson
+        // §9/§12 — absent data is "unavailable", never a zero charge).
+        if (turn.AudioDurationMs <= 0)
+        {
+            return null;
+        }
+
+        var outputSeconds = request.OutputAudioDurationMs is { } outputMs ? outputMs / 1000m : (decimal?)null;
+        var usage = new CostUsage
+        {
+            AudioInputSeconds = turn.AudioDurationMs / 1000m,
+            AudioOutputSeconds = outputSeconds,
+        };
+
+        var result = _costEstimator.EstimateRealtime(realtimeModel, usage, turn.AudioDurationMs);
+        if (!result.IsSuccess)
+        {
+            // Honest degrade: no estimate rather than a synthetic 0 (lesson §9/§12); the summary tolerates null.
+            return null;
+        }
+
+        var cost = result.Value;
+        if (outputSeconds is null)
+        {
+            // EstimateRealtime treats absent output as 0; disclose it (E.4 will report output duration) so the
+            // output side is never SILENTLY priced as 0 (streaming-honesty / ARCH-014).
+            cost = cost with
+            {
+                Assumptions = [.. cost.Assumptions, "Realtime output audio duration not reported; output cost not included."],
+            };
+        }
+
+        return cost;
     }
 
     private string PricingVersion() =>

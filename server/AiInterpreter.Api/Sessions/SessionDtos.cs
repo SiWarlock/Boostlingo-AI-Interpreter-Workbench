@@ -50,11 +50,15 @@ public sealed record AppendEventsRequest(
 /// All optional; merged into the turn that already holds its <c>/events</c> latency. <c>Status</c> is
 /// coerced to a terminal value: <c>Failed</c> if explicitly reported, otherwise <c>Completed</c> (a
 /// non-terminal value can't drag the turn backwards) — so <c>null</c> ⇒ <c>Completed</c>.
+/// <c>OutputAudioDurationMs</c> (E.2b, optional) is the realtime OUTPUT audio the client played, used to
+/// price the output side of the turn's realtime cost (E.4 reports it); absent → output cost is disclosed-
+/// unavailable in the estimate's <c>Assumptions</c>, never silently 0 (ARCH-014 / streaming-honesty).
 /// </summary>
 public sealed record CompleteTurnRequest(
     long? AudioDurationMs,
     [MaxLength(500)] List<TranscriptSegment>? Transcripts,
-    TurnStatus? Status);
+    TurnStatus? Status,
+    [Range(0, long.MaxValue)] long? OutputAudioDurationMs = null); // non-negative ms; null ⇒ output cost disclosed-unavailable
 
 /// <summary>
 /// <c>POST …/turns/{turnId}/complete</c> response. The turn is always Completed in-memory; the per-turn
