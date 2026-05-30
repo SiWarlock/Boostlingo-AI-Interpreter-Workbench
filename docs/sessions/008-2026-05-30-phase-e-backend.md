@@ -4,7 +4,7 @@
 - **Phase:** E (backend, `server/`) — the Realtime backend obligations: ephemeral-credential broker (E.1), realtime per-turn cost wiring (E.2b), stale-session auto-end/flush (E.5-backend). **Backend Phase E is now COMPLETE.**
 - **Area:** `server/` (.NET 8 / C# backend)
 - **Predecessor session:** [007 — Phase D close (D.6 panels + D.7 error banner / component tests)](007-2026-05-29-phase-d-d6-d7.md)
-- **Successor session:** _(Phase E frontend — E.3 browser WebRTC client; a fresh `web/` implementer cycles in. Backend→frontend transition at this round-seal.)_
+- **Successor session:** [009 — Phase E frontend (E.3 + E.4a + E.4b + E.5a + E.5b)](009-2026-05-30-phase-e-frontend.md)
 - **Preflight at close:** GREEN — `dotnet format --verify-no-changes` (clean) · `dotnet build` (0 warnings / 0 errors, warnings-as-errors) · `dotnet test` **316/316**. (Frontend untouched this session.)
 
 ---
