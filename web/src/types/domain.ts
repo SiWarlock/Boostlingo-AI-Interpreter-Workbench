@@ -204,6 +204,24 @@ export type EndSessionResponse = {
   persistenceWarning?: UiError
 }
 
+// POST /api/realtime/client-secret (ARCH-009 §6 / ARCH-010) — mirror of the E.1 backend
+// RealtimeTokenRequest/RealtimeTokenResponse DTOs (Realtime/RealtimeModels.cs). The response's
+// clientSecret (`ek_…`) is the ONLY provider credential the frontend ever holds; it is used transiently
+// to authorize the WebRTC SDP exchange and is NEVER written to the store / persisted / logged (root Key
+// safety rule #2; invariant #2; ARCH-016). `model` is optional on the request — omitting it lets the
+// backend resolve the configured default. (E.3)
+export type RealtimeTokenRequest = {
+  sessionId: string
+  direction: LanguageDirection
+  model?: string
+}
+
+export type RealtimeTokenResponse = {
+  clientSecret: string
+  expiresAt: string
+  model: string
+}
+
 // POST /api/cascade/turn — the params the cascade client packs into the multipart form. `source` +
 // `target` are SEPARATE fields (CascadeTurnForm), not a nested direction; always sent (C.5 mitigation).
 export type CascadeTurnParams = {
