@@ -110,6 +110,12 @@ else
     builder.Services.AddSingleton<ITtsProvider>(_ => new FakeTtsProvider());
 }
 
+// Realtime ephemeral-credential broker (E.1, SAFETY invariants #1/#2) — registered UNCONDITIONALLY (it
+// reads the standard key at call time + short-circuits to a sanitized failure when absent; key-presence DI
+// would 404 the route instead of returning a clean error). Typed HttpClient → the OpenAI API; the standard
+// key is Bearer-only and the minted ek_… is response-only (never persisted/logged). Consumer: E.3 browser.
+builder.Services.AddHttpClient<RealtimeClientSecretService>(c => c.BaseAddress = new Uri("https://api.openai.com/"));
+
 // The local frontend origin (ARCH-019) — the single source for both CORS (below) and the cascade WS
 // Origin check (C.4b; the WS upgrade bypasses CORS, so the endpoint validates Origin itself).
 var frontendOrigin = builder.Configuration["FRONTEND_ORIGIN"] ?? "http://localhost:5173";
