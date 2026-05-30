@@ -38,16 +38,22 @@ function setup() {
   const store = createSessionStore()
   store.sessionStarted(realtimeSession()) // sessionId + mode:realtime + direction + active
   const client = {
-    connect: vi.fn().mockResolvedValue(undefined),
     sendClientEvent: vi.fn(),
     onServerEvent: null as ((raw: string) => void) | null,
   }
+  const connectionManager = { ensureConnected: vi.fn().mockResolvedValue(undefined) }
   const api = {
     createTurn: vi.fn().mockResolvedValue({ turnId: 'turn_1' }),
     appendTurnEvents: vi.fn().mockResolvedValue({}),
   }
-  const controller = createRealtimeTurnController({ store, client, api, clock: () => FIXED_TS })
-  return { store, client, api, controller }
+  const controller = createRealtimeTurnController({
+    store,
+    client,
+    connectionManager,
+    api,
+    clock: () => FIXED_TS,
+  })
+  return { store, client, connectionManager, api, controller }
 }
 
 function eventTypes(client: ReturnType<typeof setup>['client']): string[] {
@@ -86,8 +92,8 @@ describe('createRealtimeTurnController', () => {
     expect(started[0]).toMatchObject({ stage: 'overall', clockSource: 'browser', timestamp: FIXED_TS })
   })
 
-  it('connects lazily on the first startTurn and not again when already connected', async () => {
-    const { client, api, controller } = setup()
+  it('ensures the connection via the manager on each startTurn (idempotency is the manager\'s job)', async () => {
+    const { connectionManager, api, controller } = setup()
     api.createTurn.mockReset()
     api.createTurn
       .mockResolvedValueOnce({ turnId: 'turn_1' })
@@ -96,7 +102,9 @@ describe('createRealtimeTurnController', () => {
     await controller.startTurn()
     await controller.startTurn()
 
-    expect(client.connect).toHaveBeenCalledTimes(1)
+    // the controller delegates connect to the manager every turn; the persistent-pc idempotency lives in
+    // the manager (its own test), so the controller just ensures-connected per turn.
+    expect(connectionManager.ensureConnected).toHaveBeenCalledTimes(2)
     expect(api.createTurn).toHaveBeenCalledTimes(2)
   })
 
@@ -158,5 +166,19 @@ describe('createRealtimeTurnController', () => {
     const added = store.getState().errors.find((e) => e.code === 'realtime.report_failed')
     expect(added).toBeDefined()
     expect(added?.safeMessage).not.toContain('raw-network-detail') // fixed generic, never the raw error
+  })
+
+  it('fails + aborts the turn when the connection cannot be established (no raw leak)', async () => {
+    const { store, client, connectionManager, controller } = setup()
+    connectionManager.ensureConnected.mockRejectedValue(new Error('connect boom'))
+
+    await controller.startTurn()
+
+    const turn = store.getState().currentTurn
+    expect(turn?.status).toBe('failed')
+    expect(turn?.errors.some((e) => e.code === 'realtime.connect')).toBe(true)
+    expect(turn?.errors[0].safeMessage).not.toContain('connect boom') // fixed generic
+    // aborted before any control frame / recording stamp went out
+    expect(client.sendClientEvent).not.toHaveBeenCalled()
   })
 })

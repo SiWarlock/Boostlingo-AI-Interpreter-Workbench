@@ -23,6 +23,8 @@ export function errorCopy(error: UiError): string {
       return 'Could not start the turn. Retry.'
     case 'rate_limited':
       return 'The provider is rate-limiting requests. Wait a moment and retry.'
+    case 'realtime.session.disconnected':
+      return 'Realtime connection lost — switch to Cascade mode and retry.'
   }
 
   const { code } = error

@@ -18,7 +18,9 @@ describe('errorCopy', () => {
     expect(errorCopy(err('stt.timeout'))).toMatch(/stt|speech-to-text/i)
     expect(errorCopy(err('translation.unknown'))).toMatch(/translation/i)
     expect(errorCopy(err('tts.unknown'))).toMatch(/tts|text-to-speech/i)
-    expect(errorCopy(err('realtime.session.disconnected'))).toMatch(/realtime/i)
+    const disconnected = errorCopy(err('realtime.session.disconnected'))
+    expect(disconnected).toMatch(/lost/i) // the specific disconnect copy (E.5a) — not the generic realtime fallback
+    expect(disconnected).toMatch(/cascade/i) // advise switch-to-Cascade (ARCH-010)
     expect(errorCopy(err('persistence.failed'))).toMatch(/may not have been saved/i)
 
     // specific-code branches (real app-emitted codes — pin them so the switch can't silently fall through)

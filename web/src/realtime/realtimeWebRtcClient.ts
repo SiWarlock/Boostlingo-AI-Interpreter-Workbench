@@ -63,12 +63,16 @@ export async function exchangeSdpOffer(offerSdp: string, ephemeralSecret: string
 
 export type RealtimeWebRtcClient = {
   connect: () => Promise<void>
-  close: () => void
+  // Teardown on End/mode-switch: close DC/pc, stop tracks, release the stream, detach the remote <audio>.
+  teardown: () => void
   // Send a client control frame over the `oai-events` data channel (ARCH-010 §7: session.update,
   // input_audio_buffer.clear/commit, response.create). No-op if the channel isn't open yet.
   sendClientEvent: (event: object) => void
   // Settable per-turn delegate: raw inbound server frames (the controller does parse→normalize→sink).
   onServerEvent: ((raw: string) => void) | null
+  // Settable delegate: the pc connectionState (`connected`/`failed`/`disconnected`) — the connection
+  // manager maps it to the timing stamps + disconnect-surfacing.
+  onConnectionState: ((state: string) => void) | null
 }
 
 export type RealtimeWebRtcDeps = {
@@ -95,9 +99,10 @@ export function createRealtimeWebRtcClient(deps: RealtimeWebRtcDeps): RealtimeWe
 
   const client: RealtimeWebRtcClient = {
     connect,
-    close,
+    teardown,
     sendClientEvent: (event) => dataChannel?.send(JSON.stringify(event)),
     onServerEvent: null,
+    onConnectionState: null,
   }
 
   async function connect(): Promise<void> {
@@ -106,6 +111,14 @@ export function createRealtimeWebRtcClient(deps: RealtimeWebRtcDeps): RealtimeWe
 
     micStream = await getUserMedia({ audio: true })
     pc = createPeerConnection()
+
+    // Surface the connection state (ARCH-010 §7) — the connection manager maps connected/failed/disconnected
+    // to the timing stamps + disconnect-surfacing.
+    pc.onconnectionstatechange = () => {
+      if (pc) {
+        client.onConnectionState?.(pc.connectionState)
+      }
+    }
 
     // Remote (translated) audio arrives via ontrack (ARCH-010 §7 step 7).
     pc.ontrack = (event: RTCTrackEvent) => {
@@ -140,9 +153,9 @@ export function createRealtimeWebRtcClient(deps: RealtimeWebRtcDeps): RealtimeWe
     await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp })
   }
 
-  // Teardown discipline (ARCH-010 §7): stop tracks, close the pc, release the stream. E.5 extends this for
-  // ICE-disconnect surfacing + the across-turns lifecycle.
-  function close(): void {
+  // Teardown discipline (ARCH-010 §7): stop tracks, close the DC + pc, release the stream, detach the remote
+  // <audio>, and clear the settable delegates. Called on End Session / mode-switch (E.5a/E.5b).
+  function teardown(): void {
     if (micStream) {
       for (const track of micStream.getTracks()) {
         track.stop()
@@ -150,10 +163,15 @@ export function createRealtimeWebRtcClient(deps: RealtimeWebRtcDeps): RealtimeWe
       micStream = null
     }
     if (pc) {
+      pc.onconnectionstatechange = null
+      pc.ontrack = null
       pc.close()
       pc = null
     }
     dataChannel = null
+    client.onServerEvent = null
+    client.onConnectionState = null
+    detachRemoteAudio()
   }
 
   return client
@@ -186,6 +204,16 @@ function attachRemoteAudio(stream: MediaStream): void {
   }
   remoteAudio.srcObject = stream
   void remoteAudio.play()
+}
+
+// Detach + drop the remote <audio> on teardown (End/mode-switch) — the next attach gets a fresh element with
+// a fresh playback.started once-guard (discharges the <audio>-lifecycle reset).
+function detachRemoteAudio(): void {
+  if (remoteAudio) {
+    remoteAudio.onplaying = null
+    remoteAudio.srcObject = null
+    remoteAudio = null
+  }
 }
 
 // One realtime client reused across turns (lazy connect via the controller). `mint` reads the live session

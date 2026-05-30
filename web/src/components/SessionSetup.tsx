@@ -1,4 +1,5 @@
 import { sessionsApi } from '../api/sessionsApi'
+import { realtimeConnectionManager } from '../realtime/realtimeConnectionManager'
 import { endSession, startSession } from '../state/sessionActions'
 import { availableModels } from '../state/selectors'
 import { sessionStore, useSessionState } from '../state/sessionStore'
@@ -95,7 +96,11 @@ export default function SessionSetup() {
       <button
         type="button"
         disabled={!active}
-        onClick={() => void endSession({ store: sessionStore, api: sessionsApi })}
+        onClick={() => {
+          void endSession({ store: sessionStore, api: sessionsApi })
+          // Tear down the realtime connection on End (idempotent — a no-op for cascade). E.5a.
+          realtimeConnectionManager.teardown()
+        }}
       >
         End session
       </button>

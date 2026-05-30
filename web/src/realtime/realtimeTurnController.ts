@@ -5,6 +5,8 @@ import type { SessionStore } from '../state/sessionStore'
 import type { LatencyEvent } from '../types/domain'
 import { createRealtimeEventSink } from './realtimeEventSink'
 import { normalizeRealtimeEvent, parseRealtimeEvent } from './realtimeEvents'
+import { realtimeConnectionManager } from './realtimeConnectionManager'
+import type { RealtimeConnectionManager } from './realtimeConnectionManager'
 import { realtimeWebRtcClient } from './realtimeWebRtcClient'
 import type { RealtimeWebRtcClient } from './realtimeWebRtcClient'
 
@@ -27,7 +29,9 @@ export type RealtimeTurnDeps = {
     | 'completeTurn'
     | 'addError'
   >
-  client: Pick<RealtimeWebRtcClient, 'connect' | 'sendClientEvent' | 'onServerEvent'>
+  client: Pick<RealtimeWebRtcClient, 'sendClientEvent' | 'onServerEvent'>
+  // Persistent connect is delegated here (E.5a) — the manager holds one pc across turns (idempotent).
+  connectionManager: Pick<RealtimeConnectionManager, 'ensureConnected'>
   api: {
     createTurn: (sessionId: string) => Promise<{ turnId: string }>
     appendTurnEvents: (sessionId: string, turnId: string, events: LatencyEvent[]) => Promise<unknown>
@@ -41,10 +45,10 @@ export type RealtimeTurnController = {
 }
 
 export function createRealtimeTurnController(deps: RealtimeTurnDeps): RealtimeTurnController {
-  const { store, client, api, clock } = deps
-  // Guards a re-entrant start (web §11); the lazy-connect latch is the E.4b interim (E.5 hoists connect).
+  const { store, client, connectionManager, api, clock } = deps
+  // Guards a re-entrant start (web §11). Connect is now persistent — delegated to the connection manager
+  // (one pc held across turns, idempotent), no longer a per-turn lazy-connect.
   let inFlight = false
-  let connected = false
 
   // A browser-clock turn-lifecycle marker (stage 'overall'; relativeMs is a placeholder — the top-level
   // latency deltas use absolute timestamps, never relativeMs; lesson §13 / the recordingActions precedent).
@@ -95,9 +99,22 @@ export function createRealtimeTurnController(deps: RealtimeTurnDeps): RealtimeTu
 
       store.beginTurn({ turnId, mode: 'realtime', direction })
 
-      if (!connected) {
-        await client.connect() // lazy — E.5 hoists to session-start
-        connected = true
+      // Persistent connect: the manager holds one pc across turns (idempotent), stamps connecting/connected,
+      // and surfaces disconnects. The first turn connects; subsequent turns reuse the live pc. A failed
+      // connect fails + aborts THIS turn (the manager reset its latch so a later turn can retry).
+      try {
+        await connectionManager.ensureConnected()
+      } catch (error) {
+        store.failTurn(
+          error instanceof ApiError
+            ? error.uiError
+            : {
+                code: 'realtime.connect',
+                safeMessage: 'Could not establish the realtime voice connection. Retry, or switch to Cascade.',
+                retryable: true,
+              },
+        )
+        return
       }
 
       // A fresh per-turn sink (E.4a) wired to the client's server-event stream: raw frame → parse → normalize
@@ -149,6 +166,7 @@ export function createRealtimeTurnController(deps: RealtimeTurnDeps): RealtimeTu
 export const realtimeTurnController = createRealtimeTurnController({
   store: sessionStore,
   client: realtimeWebRtcClient,
+  connectionManager: realtimeConnectionManager,
   api: {
     createTurn: (sessionId) => sessionsApi.createTurn(sessionId),
     appendTurnEvents: (sessionId, turnId, events) =>
