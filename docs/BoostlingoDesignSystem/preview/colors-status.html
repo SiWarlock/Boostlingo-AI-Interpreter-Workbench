@@ -1,0 +1,29 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body{margin:0;background:var(--surface);}
+  .wrap{padding:22px 24px;font-family:var(--font-sans);}
+  .grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;}
+  .pill{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;font-size:12px;font-weight:600;font-family:var(--font-mono);white-space:nowrap;}
+  .dot{width:7px;height:7px;border-radius:50%;background:currentColor;}
+  .lbl{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-3);margin:0 0 11px;}
+  .lbl2{margin-top:18px;}
+</style></head>
+<body class="bl"><div class="wrap">
+  <p class="lbl">sessionStatus</p>
+  <div class="grid">
+    <span class="pill" style="background:var(--st-idle-bg);color:var(--st-idle-fg)"><i class="dot"></i>idle</span>
+    <span class="pill" style="background:var(--st-config-bg);color:var(--st-config-fg)"><i class="dot"></i>configured</span>
+    <span class="pill" style="background:var(--st-starting-bg);color:var(--st-starting-fg)"><i class="dot"></i>starting</span>
+    <span class="pill" style="background:var(--st-active-bg);color:var(--st-active-fg)"><i class="dot"></i>active</span>
+    <span class="pill" style="background:var(--st-ended-bg);color:var(--st-ended-fg)"><i class="dot"></i>ended</span>
+  </div>
+  <p class="lbl lbl2">turnStatus</p>
+  <div class="grid">
+    <span class="pill" style="background:var(--st-idle-bg);color:var(--st-idle-fg)"><i class="dot"></i>ready</span>
+    <span class="pill" style="background:var(--st-recording-bg);color:var(--st-recording-fg)"><i class="dot"></i>recording</span>
+    <span class="pill" style="background:var(--st-processing-bg);color:var(--st-processing-fg)"><i class="dot"></i>processing</span>
+    <span class="pill" style="background:var(--st-playing-bg);color:var(--st-playing-fg)"><i class="dot"></i>playing</span>
+    <span class="pill" style="background:var(--st-failed-bg);color:var(--st-failed-fg)"><i class="dot"></i>failed</span>
+  </div>
+</div></body></html>

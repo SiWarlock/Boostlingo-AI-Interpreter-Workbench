@@ -1,0 +1,165 @@
+/* ============================================================================
+   Boostlingo AI Interpreter Workbench — Design Tokens & Base Styles
+   Import this everywhere:  <link rel="stylesheet" href="colors_and_type.css">
+   ----------------------------------------------------------------------------
+   Fonts: Plus Jakarta Sans (UI/display) + IBM Plex Mono (numbers/data).
+   These are Google Fonts SUBSTITUTIONS for Boostlingo's brand typeface — flagged
+   in README CAVEATS. Replace the @import + --font-* vars if real fonts arrive.
+   ============================================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,500&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap');
+
+:root {
+  /* ---------------------------------------------------------------- BRAND */
+  --bl-blue:        #2F6BFF;   /* Boostlingo "Blue Ribbon" — primary / Realtime identity */
+  --bl-blue-600:    #1F54E0;   /* hover / pressed */
+  --bl-blue-700:    #1A45BD;   /* deep */
+  --bl-blue-tint:   #EAF0FF;   /* soft fill behind blue stats */
+  --bl-blue-tint-2: #DCE7FF;   /* slightly stronger blue fill */
+
+  --bl-violet:      #6E56F0;   /* Cascade identity — keep distinct from blue */
+  --bl-violet-600:  #5A41E0;
+  --bl-violet-tint: #EFEBFE;
+
+  --bl-coral:       #FF5C35;   /* "Trinidad" accent — emphasis / live energy (sparingly) */
+  --bl-coral-600:   #E8451F;
+  --bl-coral-tint:  #FFEDE7;
+
+  /* ----------------------------------------------------------- NEUTRALS / INK */
+  --ink:            #14161B;   /* primary text + the "dark pill" stat treatment */
+  --ink-soft:       #23262E;   /* dark surfaces / hover on dark */
+  --fg-1:           #14161B;   /* primary text */
+  --fg-2:           #5B6170;   /* secondary text / labels */
+  --fg-3:           #8A909E;   /* tertiary / muted / placeholder */
+  --fg-on-dark:     #FFFFFF;
+  --fg-on-dark-2:   #B9C0CF;   /* secondary text on dark pills */
+
+  --canvas:         #F5F6F8;   /* app background */
+  --surface:        #FFFFFF;   /* cards */
+  --surface-2:      #FBFBFD;   /* subtle inset / striped rows */
+  --surface-sunken: #F1F2F5;   /* ghost-button fill / wells */
+
+  --border:         #E9EBF0;   /* default hairline */
+  --border-soft:    #EEF0F4;   /* very light divider */
+  --border-strong:  #D7DAE3;   /* input rest border */
+
+  /* ----------------------------------------------------------- SEMANTIC */
+  --success:        #18A957;   --success-tint: #E6F6EC;   --success-600: #128A47;
+  --warn:           #E8A317;   --warn-tint:    #FDF3DD;   --warn-600:    #C2851A;
+  --danger:         #E5484D;   --danger-tint:  #FDECEC;   --danger-600:  #C93B40;
+  --info:           var(--bl-blue); --info-tint: var(--bl-blue-tint);
+
+  /* Latency-vs-target scale (good under target → over target) */
+  --metric-good:    var(--success);
+  --metric-warn:    var(--warn);
+  --metric-over:    var(--danger);
+  --metric-na:      #B6BBC6;   /* n/a — muted, NOT error */
+
+  /* Status pill palettes (bg / fg pairs) — sessionStatus + turnStatus */
+  --st-idle-bg:#EEF0F4;       --st-idle-fg:#6B7280;
+  --st-config-bg:#E7ECFF;     --st-config-fg:#2F4BCB;
+  --st-starting-bg:#FDF3DD;   --st-starting-fg:#9A6B12;
+  --st-active-bg:#E6F6EC;     --st-active-fg:#0E7A3D;
+  --st-ready-bg:#E6F6EC;      --st-ready-fg:#0E7A3D;
+  --st-ended-bg:#EEF0F4;      --st-ended-fg:#6B7280;
+  --st-recording-bg:#FFEDE7;  --st-recording-fg:#C5371B;
+  --st-processing-bg:#E7ECFF; --st-processing-fg:#2F4BCB;
+  --st-playing-bg:#EFEBFE;    --st-playing-fg:#5235C9;
+  --st-completed-bg:#E6F6EC;  --st-completed-fg:#0E7A3D;
+  --st-failed-bg:#FDECEC;     --st-failed-fg:#C93B40;
+
+  /* ----------------------------------------------------- PASTEL CATEGORY TINTS
+     Soft fills behind grouped stats / category chips (from aesthetic reference). */
+  --pastel-sky:   #D6E4FB;
+  --pastel-lilac: #E7E3F7;
+  --pastel-coral: #FBE0D6;
+  --pastel-mint:  #D9F2E4;
+  --pastel-peach: #FBE7C9;
+  --pastel-gray:  #ECEEF2;
+
+  /* ---------------------------------------------------------------- TYPE */
+  --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SF Mono', ui-monospace, 'Cascadia Code', monospace;
+
+  /* Type scale (px) — UI-dense dashboard */
+  --t-display: 40px;   /* big headline metric */
+  --t-h1:      28px;   /* app title */
+  --t-h2:      20px;   /* region / card titles */
+  --t-h3:      16px;   /* sub-titles */
+  --t-body:    14px;   /* default body / controls */
+  --t-sm:      13px;   /* secondary */
+  --t-xs:      12px;   /* labels / captions */
+  --t-2xs:     11px;   /* eyebrow / chip / overline */
+
+  --lh-tight:  1.12;
+  --lh-snug:   1.3;
+  --lh-normal: 1.5;
+
+  --fw-regular: 400;
+  --fw-medium:  500;
+  --fw-semi:    600;
+  --fw-bold:    700;
+  --fw-extra:   800;
+
+  --tracking-eyebrow: .08em;   /* uppercase overlines */
+  --tracking-tight:  -0.01em;
+
+  /* ---------------------------------------------------------------- SPACE */
+  --sp-1: 4px;   --sp-2: 8px;   --sp-3: 12px;  --sp-4: 16px;
+  --sp-5: 20px;  --sp-6: 24px;  --sp-8: 32px;  --sp-10: 40px; --sp-12: 48px;
+
+  /* ---------------------------------------------------------------- RADIUS */
+  --r-card:   24px;
+  --r-panel:  16px;
+  --r-control:12px;   /* buttons / inputs / selects */
+  --r-chip:   8px;
+  --r-pill:   999px;
+
+  /* ---------------------------------------------------------------- SHADOW */
+  --sh-xs: 0 1px 2px rgba(20,22,27,.05);
+  --sh-sm: 0 1px 2px rgba(20,22,27,.04), 0 8px 24px rgba(20,22,27,.06);
+  --sh-md: 0 4px 8px rgba(20,22,27,.06), 0 18px 48px rgba(20,22,27,.12);
+  --focus-ring: 0 0 0 3px rgba(47,107,255,.18);
+
+  /* ---------------------------------------------------------------- MOTION */
+  --ease: cubic-bezier(.2,.7,.2,1);
+  --dur-fast: 120ms;
+  --dur:      160ms;
+}
+
+/* ============================================================ SEMANTIC BASE
+   Lightweight, opt-in helpers. The UI kit uses tokens directly; these give
+   plain HTML (preview cards, docs) sensible defaults. */
+
+.bl-root, body.bl {
+  background: var(--canvas);
+  color: var(--fg-1);
+  font-family: var(--font-sans);
+  font-size: var(--t-body);
+  line-height: var(--lh-normal);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.bl-display { font-size: var(--t-display); font-weight: var(--fw-extra); line-height: var(--lh-tight); letter-spacing: var(--tracking-tight); }
+.bl-h1 { font-size: var(--t-h1); font-weight: var(--fw-bold); line-height: var(--lh-tight); letter-spacing: var(--tracking-tight); }
+.bl-h2 { font-size: var(--t-h2); font-weight: var(--fw-bold); line-height: var(--lh-snug); }
+.bl-h3 { font-size: var(--t-h3); font-weight: var(--fw-semi); line-height: var(--lh-snug); }
+.bl-body { font-size: var(--t-body); font-weight: var(--fw-regular); }
+.bl-sm  { font-size: var(--t-sm);  color: var(--fg-2); }
+.bl-eyebrow {
+  font-size: var(--t-2xs); font-weight: var(--fw-semi);
+  letter-spacing: var(--tracking-eyebrow); text-transform: uppercase; color: var(--fg-3);
+}
+
+/* Numbers / data — always mono, tabular */
+.bl-num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+.bl-metric { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: var(--fw-semi); letter-spacing: -0.01em; }
+.bl-na { color: var(--metric-na); font-family: var(--font-mono); }
+
+a { color: var(--bl-blue); text-decoration: none; }
+a:hover { color: var(--bl-blue-600); text-decoration: underline; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+}

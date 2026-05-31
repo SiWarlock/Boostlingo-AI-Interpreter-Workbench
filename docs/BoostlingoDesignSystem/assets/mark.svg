@@ -1,0 +1,13 @@
+
+<svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Boostlingo mark (placeholder)">
+  <defs>
+    <linearGradient id="blGrad" x1="14" y1="18" x2="104" y2="104" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2F6BFF"></stop>
+      <stop offset="1" stop-color="#6E56F0"></stop>
+    </linearGradient>
+  </defs>
+  
+  <path d="M60 18&#xA;           a42 42 0 1 1 -29.7 12.3" stroke="url(#blGrad)" stroke-width="15" stroke-linecap="round" fill="none"></path>
+  
+  <circle cx="60" cy="60" r="13" fill="url(#blGrad)"></circle>
+</svg>

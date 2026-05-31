@@ -1,0 +1,28 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body{margin:0;background:var(--surface);}
+  .wrap{padding:22px 24px;font-family:var(--font-sans);}
+  .spec{font-family:var(--font-mono);font-size:10.5px;color:var(--fg-3);display:block;margin-bottom:8px;}
+  .row{display:flex;gap:28px;align-items:baseline;flex-wrap:wrap;}
+  .big{font-family:var(--font-mono);font-size:38px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums;color:var(--fg-1);}
+  .unit{font-size:16px;color:var(--fg-3);font-weight:500;}
+  .mid{font-family:var(--font-mono);font-size:20px;font-weight:500;font-variant-numeric:tabular-nums;color:var(--fg-1);}
+  .na{font-family:var(--font-mono);font-size:20px;color:var(--metric-na);}
+  .lbl{font-family:var(--font-mono);font-size:12px;color:var(--fg-2);}
+</style></head>
+<body class="bl"><div class="wrap">
+  <span class="spec">IBM Plex Mono · tabular-nums · all measured values</span>
+  <div class="row">
+    <div class="big">0.84<span class="unit"> s</span></div>
+    <div class="big">$0.18<span class="unit"> /min</span></div>
+    <div class="mid">WER 12%</div>
+    <div class="na">n/a</div>
+  </div>
+  <div class="row" style="margin-top:16px">
+    <span class="lbl">turn_8f2c1</span>
+    <span class="lbl">840 ms</span>
+    <span class="lbl">gpt-realtime-mini</span>
+    <span class="lbl">EN → ES</span>
+  </div>
+</div></body></html>

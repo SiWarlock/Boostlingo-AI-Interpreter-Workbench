@@ -1,0 +1,33 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body{margin:0;background:var(--surface);}
+  .wrap{padding:22px 24px;font-family:var(--font-sans);display:flex;gap:30px;align-items:center;}
+  .seg{display:inline-flex;background:var(--surface-sunken);border-radius:14px;padding:4px;gap:4px;border:1px solid var(--border);}
+  .opt{display:flex;align-items:center;gap:8px;padding:9px 16px;border-radius:11px;font-size:14px;font-weight:600;color:var(--fg-2);cursor:pointer;border:1px solid transparent;}
+  .opt .ic{width:14px;height:14px;border-radius:4px;}
+  .opt.active-blue{background:#fff;color:var(--bl-blue);border-color:rgba(47,107,255,.35);box-shadow:0 1px 2px rgba(20,22,27,.06);}
+  .opt.active-blue .ic{background:var(--bl-blue);}
+  .opt.active-violet{background:#fff;color:var(--bl-violet);border-color:rgba(110,86,240,.35);box-shadow:0 1px 2px rgba(20,22,27,.06);}
+  .opt.active-violet .ic{background:var(--bl-violet);}
+  .opt.dim{opacity:.45;}
+  .opt .ic.g{background:var(--fg-3);}
+  .col{display:flex;flex-direction:column;gap:10px;}
+  .cap{font-family:var(--font-mono);font-size:10px;color:var(--fg-3);}
+</style></head>
+<body class="bl"><div class="wrap">
+  <div class="col">
+    <div class="seg">
+      <div class="opt active-blue"><span class="ic"></span>Realtime</div>
+      <div class="opt"><span class="ic g"></span>Cascade</div>
+    </div>
+    <span class="cap">Realtime active</span>
+  </div>
+  <div class="col">
+    <div class="seg">
+      <div class="opt dim"><span class="ic g"></span>Realtime</div>
+      <div class="opt active-violet"><span class="ic"></span>Cascade</div>
+    </div>
+    <span class="cap">Cascade active · toggle locked (mid-turn)</span>
+  </div>
+</div></body></html>

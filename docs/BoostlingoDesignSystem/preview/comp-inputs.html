@@ -1,0 +1,20 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body{margin:0;background:var(--surface);}
+  .wrap{padding:22px 24px;font-family:var(--font-sans);display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;}
+  .field{display:flex;flex-direction:column;gap:6px;}
+  .lab{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--fg-3);}
+  .input,.select{font-family:var(--font-sans);font-size:14px;color:var(--fg-1);background:var(--surface);
+    border:1px solid var(--border-strong);border-radius:var(--r-control);padding:10px 13px;width:190px;}
+  .input.focus{border-color:var(--bl-blue);box-shadow:var(--focus-ring);}
+  .select{display:flex;align-items:center;justify-content:space-between;width:200px;}
+  .car{color:var(--fg-3);}
+  .swap{display:flex;align-items:center;gap:9px;background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-control);padding:10px 13px;font-size:14px;font-weight:600;}
+  .ar{color:var(--bl-blue);}
+</style></head>
+<body class="bl"><div class="wrap">
+  <div class="field"><span class="lab">Session label</span><div class="input focus">demo · clinic intake</div></div>
+  <div class="field"><span class="lab">Direction</span><div class="swap">EN <span class="ar">⇄</span> ES</div></div>
+  <div class="field"><span class="lab">Realtime model</span><div class="select">gpt-realtime-mini <span class="car">▾</span></div></div>
+</div></body></html>

@@ -1,0 +1,29 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body{margin:0;background:var(--surface);}
+  .wrap{padding:22px 24px;font-family:var(--font-sans);}
+  .row{display:flex;gap:14px;}
+  .sw{flex:1;border-radius:14px;overflow:hidden;border:1px solid var(--border);}
+  .chip{height:64px;}
+  .meta{padding:9px 11px;background:var(--surface);}
+  .nm{font-size:12px;font-weight:700;color:var(--fg-1);}
+  .hex{font-family:var(--font-mono);font-size:11px;color:var(--fg-3);margin-top:2px;}
+  .tints{display:flex;gap:10px;margin-top:14px;}
+  .t{flex:1;height:34px;border-radius:9px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:10px;color:var(--fg-2);}
+</style></head>
+<body class="bl"><div class="wrap">
+  <div class="row">
+    <div class="sw"><div class="chip" style="background:var(--bl-blue)"></div><div class="meta"><div class="nm">Boostlingo Blue</div><div class="hex">#2F6BFF · primary · Realtime</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--bl-violet)"></div><div class="meta"><div class="nm">Violet</div><div class="hex">#6E56F0 · Cascade</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--bl-coral)"></div><div class="meta"><div class="nm">Coral · "Trinidad"</div><div class="hex">#FF5C35 · accent</div></div></div>
+  </div>
+  <div class="tints">
+    <div class="t" style="background:var(--bl-blue-tint)">blue-tint</div>
+    <div class="t" style="background:var(--bl-blue-600);color:#fff">blue-600</div>
+    <div class="t" style="background:var(--bl-violet-tint)">violet-tint</div>
+    <div class="t" style="background:var(--bl-violet-600);color:#fff">violet-600</div>
+    <div class="t" style="background:var(--bl-coral-tint)">coral-tint</div>
+    <div class="t" style="background:var(--bl-coral-600);color:#fff">coral-600</div>
+  </div>
+</div></body></html>

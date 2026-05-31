@@ -1,0 +1,29 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body{margin:0;background:var(--surface);}
+  .wrap{padding:20px 24px;font-family:var(--font-sans);display:flex;flex-direction:column;gap:12px;}
+  .ban{display:flex;align-items:flex-start;gap:12px;padding:13px 15px;border-radius:14px;border:1px solid;}
+  .err{background:var(--danger-tint);border-color:rgba(229,72,77,.3);}
+  .warn{background:var(--warn-tint);border-color:rgba(232,163,23,.3);}
+  .ic{width:18px;height:18px;border-radius:50%;flex:none;margin-top:1px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:700;}
+  .err .ic{background:var(--danger);}
+  .warn .ic{background:var(--warn);}
+  .body{flex:1;}
+  .ttl{font-size:13.5px;font-weight:600;color:var(--fg-1);}
+  .msg{font-size:13px;color:var(--fg-2);margin-top:2px;}
+  .act{font-size:13px;font-weight:600;color:var(--bl-blue);margin-left:8px;cursor:pointer;}
+  .x{color:var(--fg-3);font-size:15px;cursor:pointer;}
+</style></head>
+<body class="bl"><div class="wrap">
+  <div class="ban err">
+    <span class="ic">!</span>
+    <div class="body"><div class="ttl">Microphone blocked</div><div class="msg">Allow mic access in your browser, then retry.<span class="act">Retry</span></div></div>
+    <span class="x">✕</span>
+  </div>
+  <div class="ban warn">
+    <span class="ic">!</span>
+    <div class="body"><div class="ttl">Translation provider failed</div><div class="msg">Retry, or switch to Realtime to continue.<span class="act">Switch to Realtime</span></div></div>
+    <span class="x">✕</span>
+  </div>
+</div></body></html>

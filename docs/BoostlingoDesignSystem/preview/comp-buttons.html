@@ -1,0 +1,31 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body{margin:0;background:var(--surface);}
+  .wrap{padding:22px 24px;font-family:var(--font-sans);display:flex;flex-direction:column;gap:14px;}
+  .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;}
+  .btn{display:inline-flex;align-items:center;gap:8px;font-family:var(--font-sans);font-size:14px;font-weight:600;
+       padding:10px 18px;border-radius:var(--r-control);border:1px solid transparent;cursor:pointer;line-height:1;}
+  .primary{background:var(--bl-blue);color:#fff;box-shadow:var(--sh-xs);}
+  .secondary{background:var(--ink);color:#fff;}
+  .ghost{background:var(--surface-sunken);color:var(--fg-1);}
+  .outline{background:var(--surface);color:var(--fg-1);border-color:var(--border-strong);}
+  .danger{background:var(--surface);color:var(--danger-600);border-color:var(--danger);}
+  .disabled{background:var(--surface-sunken);color:var(--fg-3);opacity:.55;cursor:not-allowed;box-shadow:none;}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--bl-coral);}
+  .sq{width:9px;height:9px;border-radius:2px;background:currentColor;}
+  .cap{font-family:var(--font-mono);font-size:10px;color:var(--fg-3);}
+</style></head>
+<body class="bl"><div class="wrap">
+  <div class="row">
+    <button class="btn primary"><span class="dot"></span>Start recording</button>
+    <button class="btn secondary">Start session</button>
+    <button class="btn ghost">Refresh summary</button>
+    <button class="btn outline"><span class="sq"></span>Stop</button>
+  </div>
+  <div class="row">
+    <button class="btn danger">End session</button>
+    <button class="btn primary disabled"><span class="dot" style="background:#fff;opacity:.5"></span>Start recording</button>
+    <span class="cap">disabled = .55 opacity · no shadow · not-allowed</span>
+  </div>
+</div></body></html>

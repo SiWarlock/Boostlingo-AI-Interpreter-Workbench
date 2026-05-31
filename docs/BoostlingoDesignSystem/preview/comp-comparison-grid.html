@@ -1,0 +1,28 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body{margin:0;background:var(--surface);}
+  .wrap{padding:18px 22px;font-family:var(--font-sans);}
+  table{width:100%;border-collapse:collapse;}
+  th,td{text-align:right;padding:8px 10px;font-size:13px;}
+  th:first-child,td:first-child{text-align:left;}
+  thead th{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--fg-3);border-bottom:1px solid var(--border);}
+  td{font-family:var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg-1);border-bottom:1px solid var(--border-soft);}
+  td:first-child{font-family:var(--font-sans);font-weight:600;}
+  .mode{display:inline-flex;align-items:center;gap:7px;}
+  .k{width:9px;height:9px;border-radius:3px;}
+  .blue{background:var(--bl-blue);}.violet{background:var(--bl-violet);}
+  .good{color:var(--success);}.over{color:var(--danger);}
+  .na{color:var(--metric-na);}
+</style></head>
+<body class="bl"><div class="wrap">
+  <table>
+    <thead><tr><th>Mode / variant</th><th>Avg latency</th><th>Cost / min</th><th>WER</th><th>Errors</th><th>Turns</th></tr></thead>
+    <tbody>
+      <tr><td><span class="mode"><span class="k blue"></span>Realtime</span></td><td class="good">0.91 s</td><td>$0.18</td><td>11%</td><td>0</td><td>7</td></tr>
+      <tr><td><span class="mode"><span class="k violet"></span>Cascade</span></td><td class="good">2.34 s</td><td>$0.06</td><td>9%</td><td>1</td><td>6</td></tr>
+      <tr><td style="padding-left:26px;color:var(--fg-2);font-weight:500">gpt-realtime-mini</td><td class="good">0.84 s</td><td>$0.12</td><td class="na">n/a</td><td>0</td><td>4</td></tr>
+      <tr><td style="padding-left:26px;color:var(--fg-2);font-weight:500">gpt-5.4-nano</td><td class="over">3.10 s</td><td>$0.04</td><td>9%</td><td>1</td><td>3</td></tr>
+    </tbody>
+  </table>
+</div></body></html>

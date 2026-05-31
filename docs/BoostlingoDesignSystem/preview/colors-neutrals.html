@@ -1,0 +1,24 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body{margin:0;background:var(--surface);}
+  .wrap{padding:22px 24px;font-family:var(--font-sans);}
+  .row{display:flex;gap:0;border-radius:14px;overflow:hidden;border:1px solid var(--border);}
+  .sw{flex:1;height:74px;display:flex;flex-direction:column;justify-content:flex-end;padding:8px 9px;}
+  .nm{font-size:11px;font-weight:700;}
+  .hex{font-family:var(--font-mono);font-size:9.5px;opacity:.7;margin-top:1px;}
+  .light .nm,.light .hex{color:var(--fg-1);}
+  .dark .nm,.dark .hex{color:#fff;}
+  .lbl{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-3);margin-bottom:11px;}
+</style></head>
+<body class="bl"><div class="wrap">
+  <div class="lbl">Ink &amp; neutrals</div>
+  <div class="row">
+    <div class="sw dark" style="background:var(--ink)"><div class="nm">ink</div><div class="hex">#14161B</div></div>
+    <div class="sw dark" style="background:var(--fg-2)"><div class="nm">fg-2</div><div class="hex">#5B6170</div></div>
+    <div class="sw dark" style="background:var(--fg-3)"><div class="nm">fg-3</div><div class="hex">#8A909E</div></div>
+    <div class="sw light" style="background:var(--surface-sunken)"><div class="nm">sunken</div><div class="hex">#F1F2F5</div></div>
+    <div class="sw light" style="background:var(--canvas)"><div class="nm">canvas</div><div class="hex">#F5F6F8</div></div>
+    <div class="sw light" style="background:var(--surface);box-shadow:inset 0 0 0 1px var(--border)"><div class="nm">surface</div><div class="hex">#FFFFFF</div></div>
+  </div>
+</div></body></html>

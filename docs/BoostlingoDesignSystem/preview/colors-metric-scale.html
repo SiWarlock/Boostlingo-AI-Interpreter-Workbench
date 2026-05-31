@@ -1,0 +1,28 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body{margin:0;background:var(--surface);}
+  .wrap{padding:22px 24px;font-family:var(--font-sans);}
+  .bar{display:flex;height:30px;border-radius:8px;overflow:hidden;border:1px solid var(--border);}
+  .seg{flex:1;display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700;}
+  .legend{display:flex;gap:20px;margin-top:15px;}
+  .lg{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fg-2);}
+  .lg .d{width:12px;height:12px;border-radius:4px;}
+  .lg .num{font-family:var(--font-mono);font-weight:600;color:var(--fg-1);}
+  .lbl{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-3);margin:0 0 12px;}
+</style></head>
+<body class="bl"><div class="wrap">
+  <p class="lbl">Latency vs target</p>
+  <div class="bar">
+    <div class="seg" style="background:var(--metric-good)">good</div>
+    <div class="seg" style="background:var(--metric-warn)">warn</div>
+    <div class="seg" style="background:var(--metric-over)">over</div>
+    <div class="seg" style="background:var(--metric-na);color:#fff">n/a</div>
+  </div>
+  <div class="legend">
+    <div class="lg"><span class="d" style="background:var(--metric-good)"></span>under target <span class="num">&lt;1.5s</span></div>
+    <div class="lg"><span class="d" style="background:var(--metric-warn)"></span>near target</div>
+    <div class="lg"><span class="d" style="background:var(--metric-over)"></span>over target <span class="num">&gt;3s</span></div>
+    <div class="lg"><span class="d" style="background:var(--metric-na)"></span>unavailable</div>
+  </div>
+</div></body></html>

@@ -1,0 +1,24 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body{margin:0;background:var(--surface);}
+  .wrap{padding:22px 24px;font-family:var(--font-sans);display:flex;flex-direction:column;gap:12px;}
+  .row{display:flex;gap:10px;flex-wrap:wrap;}
+  .chip{display:inline-flex;align-items:center;gap:8px;padding:7px 13px 7px 11px;border-radius:999px;background:var(--surface);border:1px solid var(--border);font-size:13px;font-weight:600;color:var(--fg-1);box-shadow:var(--sh-xs);}
+  .d{width:8px;height:8px;border-radius:50%;}
+  .ok{background:var(--success);}
+  .off{background:var(--metric-na);}
+  .err{background:var(--danger);}
+  .chip.muted{color:var(--fg-3);}
+  .cap{font-family:var(--font-mono);font-size:10px;color:var(--fg-3);}
+</style></head>
+<body class="bl"><div class="wrap">
+  <div class="row">
+    <span class="chip"><span class="d ok"></span>Realtime</span>
+    <span class="chip"><span class="d ok"></span>STT</span>
+    <span class="chip"><span class="d ok"></span>Translation</span>
+    <span class="chip muted"><span class="d off"></span>TTS</span>
+    <span class="chip muted"><span class="d err"></span>Vision</span>
+  </div>
+  <span class="cap">provider-health chips · ready (green) / unavailable (gray) / error (red)</span>
+</div></body></html>

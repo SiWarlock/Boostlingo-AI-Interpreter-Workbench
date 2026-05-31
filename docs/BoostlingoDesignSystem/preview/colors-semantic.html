@@ -1,0 +1,21 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body{margin:0;background:var(--surface);}
+  .wrap{padding:22px 24px;font-family:var(--font-sans);}
+  .row{display:flex;gap:14px;}
+  .sw{flex:1;}
+  .chip{height:54px;border-radius:12px;border:1px solid var(--border);}
+  .pair{display:flex;gap:8px;margin-top:9px;align-items:center;}
+  .dot{width:14px;height:14px;border-radius:5px;}
+  .nm{font-size:12px;font-weight:700;color:var(--fg-1);}
+  .hex{font-family:var(--font-mono);font-size:10px;color:var(--fg-3);margin-top:1px;}
+</style></head>
+<body class="bl"><div class="wrap">
+  <div class="row">
+    <div class="sw"><div class="chip" style="background:var(--success)"></div><div class="pair"><span class="dot" style="background:var(--success-tint)"></span><div><div class="nm">Success</div><div class="hex">#18A957 / tint</div></div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--warn)"></div><div class="pair"><span class="dot" style="background:var(--warn-tint)"></span><div><div class="nm">Warn</div><div class="hex">#E8A317 / tint</div></div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--danger)"></div><div class="pair"><span class="dot" style="background:var(--danger-tint)"></span><div><div class="nm">Danger</div><div class="hex">#E5484D / tint</div></div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--info)"></div><div class="pair"><span class="dot" style="background:var(--info-tint)"></span><div><div class="nm">Info</div><div class="hex">= blue / tint</div></div></div></div>
+  </div>
+</div></body></html>
