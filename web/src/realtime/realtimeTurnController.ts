@@ -18,6 +18,11 @@ import type { RealtimeWebRtcClient } from './realtimeWebRtcClient'
 
 type Clock = () => string
 
+// Re-asserted in the client session.update so a partial audio.input doesn't clobber the broker mint's
+// input.transcription (Finding 2c/053 — else the SOURCE transcript never arrives). Mirrors the backend
+// default RealtimeOptions.TranscriptionModel ("gpt-4o-transcribe", ARCH-010); keep the two in sync.
+const REALTIME_INPUT_TRANSCRIPTION_MODEL = 'gpt-4o-transcribe'
+
 export type RealtimeTurnDeps = {
   store: Pick<
     SessionStore,
@@ -155,9 +160,18 @@ export function createRealtimeTurnController(deps: RealtimeTurnDeps): RealtimeTu
 
       // Manual VAD-off (ARCH-010 §7): disable server turn detection, then clear the input buffer to delimit
       // the turn start. The mic track is already streaming (E.3 addTrack) — no per-turn mic toggle.
+      // Re-assert input transcription in the SAME frame (Finding 053): this partial audio.input would
+      // otherwise clobber the broker mint's input.transcription → no SOURCE transcript.
       client.sendClientEvent({
         type: 'session.update',
-        session: { audio: { input: { turn_detection: null } } },
+        session: {
+          audio: {
+            input: {
+              turn_detection: null,
+              transcription: { model: REALTIME_INPUT_TRANSCRIPTION_MODEL },
+            },
+          },
+        },
       })
       client.sendClientEvent({ type: 'input_audio_buffer.clear' })
       store.appendLatencyEvent(marker('turn.recording.started'))

@@ -74,16 +74,19 @@ describe('createRealtimeTurnController', () => {
     })
   })
 
-  it('startTurn sends session.update(turn_detection:null) then input_audio_buffer.clear and stamps recording.started', async () => {
+  it('startTurn sends session.update(turn_detection:null + input transcription re-asserted) then input_audio_buffer.clear and stamps recording.started', async () => {
     const { store, client, controller } = setup()
 
     await controller.startTurn()
 
     expect(eventTypes(client)).toEqual(['session.update', 'input_audio_buffer.clear'])
     const sessionUpdate = client.sendClientEvent.mock.calls[0][0] as {
-      session: { audio: { input: { turn_detection: unknown } } }
+      session: { audio: { input: { turn_detection: unknown; transcription: unknown } } }
     }
     expect(sessionUpdate.session.audio.input.turn_detection).toBeNull()
+    // Fix B (brief 053): re-assert input transcription in the SAME session.update so this partial
+    // audio.input doesn't clobber the mint's input.transcription — else the SOURCE transcript never arrives.
+    expect(sessionUpdate.session.audio.input.transcription).toEqual({ model: 'gpt-4o-transcribe' })
 
     const started = (store.getState().currentTurn?.latencyEvents ?? []).filter(
       (e) => e.name === 'turn.recording.started',

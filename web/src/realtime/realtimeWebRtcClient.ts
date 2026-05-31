@@ -133,6 +133,13 @@ export function createRealtimeWebRtcClient(deps: RealtimeWebRtcDeps): RealtimeWe
     dataChannel = pc.createDataChannel('oai-events')
     dataChannel.onmessage = (event: MessageEvent) => {
       if (typeof event.data === 'string') {
+        // Diagnostic (brief 053, DEV-only): log every raw oai-events DC frame so the next live realtime
+        // smoke reveals the ACTUAL GA event stream over WebRTC — the unrecognized types normalize silently
+        // drops + the ARCH-010 §7 smoke-confirm (exact transcript/lifecycle `type` strings; whether the DC
+        // delivers the transcript/lifecycle events at all over WebRTC, vs audio coming via the media track).
+        if (import.meta.env.DEV) {
+          console.debug('[realtime oai-events]', event.data)
+        }
         client.onServerEvent?.(event.data)
       }
     }
