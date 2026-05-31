@@ -90,8 +90,25 @@ public class CascadeOrchestratorTests
         }
     }
 
-    private static CascadeStartParams Params(TimeSpan? sttTimeout = null) =>
-        new("s1", "t1", EnToEs, "linear16", 16000, "gpt-5-nano", "alloy", SttTimeout: sttTimeout);
+    // I.1 — a fake that yields SttStarted then a scripted event list verbatim (so a test can interleave an
+    // SttUtteranceEnd endpointing marker among partials/finals).
+    private sealed class ScriptedSttProvider(params SttEvent[] events) : ISttProvider
+    {
+        public async IAsyncEnumerable<SttEvent> TranscribeAsync(
+            SttRequest request, [EnumeratorCancellation] CancellationToken ct)
+        {
+            await Task.CompletedTask;
+            yield return new SttStarted(DateTimeOffset.UtcNow);
+            foreach (var e in events)
+            {
+                ct.ThrowIfCancellationRequested();
+                yield return e;
+            }
+        }
+    }
+
+    private static CascadeStartParams Params(TimeSpan? sttTimeout = null, bool autoVad = false) =>
+        new("s1", "t1", EnToEs, "linear16", 16000, "gpt-5-nano", "alloy", SttTimeout: sttTimeout, AutoVad: autoVad);
 
     private static async Task<List<CascadeOutputEvent>> Run(
         ISttProvider stt, ITranslationProvider translation, ITtsProvider tts, CascadeStartParams p)
@@ -478,6 +495,90 @@ public class CascadeOrchestratorTests
         Assert.True(
             firstAudio.Timestamp > started.Timestamp,
             $"tts.first_audio ({firstAudio.Timestamp:o}) must be strictly after tts.started ({started.Timestamp:o})");
+    }
+
+    // ===== I.1 — cascade auto-finalize on Deepgram utterance-end (Phase I; auto-VAD) =====
+
+    private static readonly SttEvent UttEnd = new SttUtteranceEnd(Base);
+
+    [Fact]
+    public async Task auto_vad_finalizes_turn_on_first_utterance_end()
+    {
+        // auto-VAD ON: the FIRST utterance-end finalizes the whole turn (one turn per recording, ending on
+        // detected silence) — the SttFinal AFTER the utterance-end is never processed. The REAL stt.final is
+        // stamped (no synthesized terminal); the turn Completes via the SAME post-loop terminal as a stop.
+        var events = await Run(
+            new ScriptedSttProvider(new SttFinal("hello", Base), UttEnd, new SttFinal("world", Base)),
+            new FakeTranslationProvider(FakeTranslationBehavior.TokenStreamThenFinal),
+            new FakeTtsProvider(FakeTtsBehavior.ChunkedThenComplete),
+            Params(autoVad: true));
+
+        Assert.Equal(TurnStatus.Completed, Assert.IsType<Done>(events[^1]).Status);
+        var sourceFinals = events.OfType<Transcript>().Where(t => t.Segment.Role == "source" && t.Segment.IsFinal).ToList();
+        Assert.Single(sourceFinals);                       // only "hello" — "world" past the utterance-end is dropped
+        Assert.Equal("hello", sourceFinals[0].Segment.Text);
+        Assert.Single(events.OfType<Latency>().Where(l => l.Event.Name == LatencyEventNames.SttFinal)); // ONE real final stamp
+    }
+
+    [Fact]
+    public async Task manual_mode_ignores_utterance_end()
+    {
+        // auto-VAD OFF (regression): the utterance-end marker is IGNORED — the turn finalizes on stream-end
+        // (stop) as today, so BOTH finals are processed (the multi-segment-per-turn behavior is preserved).
+        var events = await Run(
+            new ScriptedSttProvider(new SttFinal("hello", Base), UttEnd, new SttFinal("world", Base)),
+            new FakeTranslationProvider(FakeTranslationBehavior.TokenStreamThenFinal),
+            new FakeTtsProvider(FakeTtsBehavior.ChunkedThenComplete),
+            Params(autoVad: false));
+
+        Assert.Equal(TurnStatus.Completed, Assert.IsType<Done>(events[^1]).Status);
+        var sourceFinals = events.OfType<Transcript>().Where(t => t.Segment.Role == "source" && t.Segment.IsFinal).ToList();
+        Assert.Equal(2, sourceFinals.Count);               // both "hello" and "world" — utterance-end did not finalize
+    }
+
+    [Fact]
+    public async Task auto_vad_utterance_end_after_only_empty_finals_fails_empty_transcript()
+    {
+        // §31 composes: an utterance-end after ONLY empty/whitespace finals → cascade.empty_transcript (the
+        // two-flag), NOT a fabricated Completed turn.
+        var events = await Run(
+            new ScriptedSttProvider(new SttFinal("   ", Base), UttEnd),
+            new FakeTranslationProvider(),
+            new FakeTtsProvider(),
+            Params(autoVad: true));
+
+        Assert.Equal(TurnStatus.Failed, Assert.IsType<Done>(events[^1]).Status);
+        Assert.Equal("cascade.empty_transcript", events.OfType<Error>().Single().ProviderError.Code);
+    }
+
+    [Fact]
+    public async Task auto_vad_utterance_end_pure_silence_completes()
+    {
+        // §31 silence: an utterance-end with NO final at all (pure silence) → valid Completed (not a failure).
+        var events = await Run(
+            new ScriptedSttProvider(UttEnd),
+            new FakeTranslationProvider(),
+            new FakeTtsProvider(),
+            Params(autoVad: true));
+
+        Assert.Equal(TurnStatus.Completed, Assert.IsType<Done>(events[^1]).Status);
+        Assert.DoesNotContain(events, e => e is Error);
+    }
+
+    [Fact]
+    public async Task auto_vad_utterance_end_after_dangling_partial_fails_unknown()
+    {
+        // §22 fail-closed under auto-VAD: a partial arrived but NO final before the utterance-end (Deepgram VAD
+        // can fire mid-utterance) → a lost final → stt.unknown (the pendingPartial branch of the shared
+        // TerminalFailure), NOT a false Completed. Pins the §22 invariant for the new auto-VAD terminal.
+        var events = await Run(
+            new ScriptedSttProvider(new SttPartial("hel", Base), UttEnd),
+            new FakeTranslationProvider(),
+            new FakeTtsProvider(),
+            Params(autoVad: true));
+
+        Assert.Equal(TurnStatus.Failed, Assert.IsType<Done>(events[^1]).Status);
+        Assert.Equal("stt.unknown", events.OfType<Error>().Single().ProviderError.Code); // lost final = real failure
     }
 
     // === 052 — empty-final tolerance (skip spurious empty/whitespace finals; fail empty_transcript only

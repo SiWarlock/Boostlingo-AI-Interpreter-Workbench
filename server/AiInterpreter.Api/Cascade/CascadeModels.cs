@@ -43,4 +43,8 @@ public sealed record CascadeStartParams(
     string TtsModel = "gpt-4o-mini-tts",
     TimeSpan? SttTimeout = null,
     TimeSpan? TranslationTimeout = null,
-    TimeSpan? TtsTimeout = null);
+    TimeSpan? TtsTimeout = null,
+    // I.1 (Phase I) — auto-VAD: true ⇒ the orchestrator auto-finalizes the turn on Deepgram's utterance-end
+    // (detected silence); false (default) ⇒ finalize on the client `stop` (today's manual behavior). A
+    // per-turn WS `start` flag (REVISES ARCH-003's no-VAD decision, auto-VAD additive + manual preserved).
+    bool AutoVad = false);

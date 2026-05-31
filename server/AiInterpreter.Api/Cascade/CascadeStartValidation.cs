@@ -86,7 +86,8 @@ internal static class CascadeStartValidation
             dto.Encoding,
             dto.SampleRate,
             dto.TranslationModel ?? string.Empty,
-            dto.TtsVoice ?? string.Empty);
+            dto.TtsVoice ?? string.Empty,
+            AutoVad: dto.AutoVad);
 
         return new StartParse(p, null);
     }
@@ -105,7 +106,9 @@ internal static class CascadeStartValidation
         string? Encoding,
         int SampleRate,
         string? TranslationModel,
-        string? TtsVoice);
+        string? TtsVoice,
+        // I.1 — auto-VAD per-turn flag (bool; missing ⇒ false). No validation needed (closed value domain).
+        bool AutoVad = false);
 
     private sealed record DirectionDto(LanguageCode Source, LanguageCode Target);
 }

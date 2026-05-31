@@ -91,6 +91,15 @@ public sealed class CascadeStreamingOrchestrator(
         // silence (no final at all) leaves sawEmptyFinal false → still Completes (Q4), unchanged.
         var sawNonEmptyFinal = false;
         var sawEmptyFinal = false;
+        var autoEnd = false; // I.1 — set when auto-VAD (p.AutoVad) sees a Deepgram utterance-end terminal.
+
+        // The terminal fail-closed decision (§22/§31), shared by the stream-end (`ended`) path AND the I.1
+        // auto-VAD utterance-end path: a dangling partial (lost final) → cascade.unknown; ONLY empty finals
+        // (≥1 empty, none with content) → cascade.empty_transcript; otherwise null (clean → Completed).
+        ProviderError? TerminalFailure() =>
+            pendingPartial ? ProviderErrorMapper.Unknown(SttProviderLabel, "stt")
+            : sawEmptyFinal && !sawNonEmptyFinal ? ProviderErrorMapper.EmptyTranscript(SttProviderLabel)
+            : null;
 
         while (true)
         {
@@ -135,21 +144,11 @@ public sealed class CascadeStreamingOrchestrator(
 
             if (ended)
             {
-                // Stream ended WITH a dangling partial (no final) → a lost final is a real failure (Q4,
-                // ARCH-011/018). A clean end with no pending partial (silence) falls through to Completed.
-                if (pendingPartial)
+                // Stream ended: fail closed on a dangling partial (lost final) or ONLY-empty-finals (§22/§31,
+                // 052); a clean end (no pending partial; ≥1 non-empty, or pure silence) → Completed below.
+                if (TerminalFailure() is { } failure)
                 {
-                    yield return new Error(ProviderErrorMapper.Unknown(SttProviderLabel, "stt"));
-                    yield return new Done(TurnStatus.Failed);
-                    yield break;
-                }
-
-                // 052: saw ONLY empty/whitespace finals (≥1 empty, none with content) → genuinely empty →
-                // fail closed here at stream end (not on the first empty final). Pure silence (no final at
-                // all) leaves sawEmptyFinal false → falls through to Completed (Q4), unchanged.
-                if (sawEmptyFinal && !sawNonEmptyFinal)
-                {
-                    yield return new Error(ProviderErrorMapper.EmptyTranscript(SttProviderLabel));
+                    yield return new Error(failure);
                     yield return new Done(TurnStatus.Failed);
                     yield break;
                 }
@@ -226,6 +225,29 @@ public sealed class CascadeStreamingOrchestrator(
                     yield return new Error(failed.Error);
                     yield return new Done(TurnStatus.Failed);
                     yield break;
+
+                case SttUtteranceEnd when p.AutoVad:
+                    // I.1 (Phase I) — auto-VAD: Deepgram's utterance-end (detected silence) is the turn-terminal.
+                    autoEnd = true;
+                    break;
+
+                case SttUtteranceEnd:
+                    // auto-VAD OFF (manual) — ignore the endpointing marker; finalize on the client `stop` only.
+                    break;
+            }
+
+            if (autoEnd)
+            {
+                // I.1 — the auto-VAD terminal: the SAME §22/§31 fail-closed decision as a stream-end, then
+                // complete via the post-loop terminal (the WS endpoint routes the Done through FinalizeTurn).
+                if (TerminalFailure() is { } failure)
+                {
+                    yield return new Error(failure);
+                    yield return new Done(TurnStatus.Failed);
+                    yield break;
+                }
+
+                break;
             }
         }
 

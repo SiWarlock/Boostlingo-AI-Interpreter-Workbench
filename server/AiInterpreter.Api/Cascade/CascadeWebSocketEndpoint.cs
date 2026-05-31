@@ -137,7 +137,12 @@ public sealed class CascadeWebSocketEndpoint(
             SingleWriter = true,
         });
         LatencyEvent? recordingStopped = null;
-        var pump = PumpAudioAsync(socket, audio.Writer, () => recordingStopped = CascadeWsMapping.RecordingEvent(factory, LatencyEventNames.TurnRecordingStopped, origin), ct);
+        // I.1 — the pump reads the socket on its OWN linked token so the finally can cancel it independently:
+        // an auto-VAD finalize emits Done BEFORE any client `stop`, leaving the pump parked on ReceiveAsync —
+        // cancelling unblocks it so `await pump` can't hang (extends §22 "pump can't park on any exit path").
+        // Stop-path: the pump already completed on the stop frame, so the cancel is a harmless no-op.
+        using var pumpCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var pump = PumpAudioAsync(socket, audio.Writer, () => recordingStopped = CascadeWsMapping.RecordingEvent(factory, LatencyEventNames.TurnRecordingStopped, origin), pumpCts.Token);
 
         // The pump (the ONLY socket reader + channel writer) must always be unblocked + awaited however the
         // turn exits — a normal Done, a defensive Done-less stream end, OR an unexpected exception (caught by
@@ -166,8 +171,10 @@ public sealed class CascadeWebSocketEndpoint(
         }
         finally
         {
-            // Done, Done-less end, or exception — all converge here. TryComplete is idempotent; PumpAudioAsync
-            // never throws (provider failures surface as SttFailed; the ChannelClosedException is swallowed).
+            // Done, Done-less end, or exception — all converge here. Cancel the pump FIRST (an auto-VAD Done
+            // leaves it parked on ReceiveAsync with no stop frame), then complete the channel (unblocks a
+            // backpressured WriteAsync); both TryComplete + the cancel are idempotent; PumpAudioAsync never throws.
+            pumpCts.Cancel();
             audio.Writer.TryComplete();
             await pump;
         }

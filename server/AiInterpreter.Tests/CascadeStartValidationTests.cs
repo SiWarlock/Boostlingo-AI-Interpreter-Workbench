@@ -22,6 +22,19 @@ public class CascadeStartValidationTests
         Assert.Equal(48000, p.SampleRate);
         Assert.Equal("gpt-5-nano", p.TranslationModel);
         Assert.Equal("alloy", p.TtsVoice);
+        Assert.False(p.AutoVad); // I.1 — absent ⇒ false (manual mode, today's default)
+    }
+
+    [Fact]
+    public void start_frame_parses_auto_vad_flag()
+    {
+        // I.1 — the per-turn auto-VAD flag is parsed off the start frame; absent ⇒ false (manual default).
+        var on = CascadeStartValidation.ParseStart(
+            """{"type":"start","sessionId":"s1","turnId":"turn_1","direction":{"source":"en","target":"es"},"encoding":"linear16","sampleRate":48000,"translationModel":"gpt-5-nano","ttsVoice":"alloy","autoVad":true}""");
+
+        Assert.Null(on.Error);
+        Assert.True(on.Params!.AutoVad);
+        Assert.False(CascadeStartValidation.ParseStart(StartJson("linear16")).Params!.AutoVad);
     }
 
     [Theory] // ARCH-019: the orchestrator interpolates Encoding into audio/{encoding} -> an unvalidated value
