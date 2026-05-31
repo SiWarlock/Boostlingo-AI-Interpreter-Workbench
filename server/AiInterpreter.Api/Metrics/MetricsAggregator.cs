@@ -35,10 +35,17 @@ public sealed class MetricsAggregator
             ?? realtimeFirstAudioDelta
             ?? playbackStarted;
 
+        // 057(a) — the speech-end anchor for the first-audio responsiveness metric is stt.final (the
+        // STT-finalized utterance = the real cascade speech-end signal), NOT the manual recording.stop
+        // button. Realtime emits no stt.final, so it falls back to recording.stopped — self-selecting by
+        // mode with no branch, and mirroring the 056-c1 per-turn re-anchor so the session-avg agrees.
+        // Only this metric moves; SpeechEndToPlaybackMs keeps recording.stopped.
+        var firstAudioSpeechEnd = Get(LatencyEventNames.SttFinal) ?? recordingStopped;
+
         return new TurnMetrics
         {
             // Universal.
-            SpeechEndToFirstAudioMs = Between(recordingStopped, firstOutputAudio),
+            SpeechEndToFirstAudioMs = Between(firstAudioSpeechEnd, firstOutputAudio),
             SpeechEndToPlaybackMs = Between(recordingStopped, playbackStarted),
             TotalTurnMs = Between(recordingStarted, Get(LatencyEventNames.TurnCompleted)),
             AudioDurationMs = Between(recordingStarted, recordingStopped),

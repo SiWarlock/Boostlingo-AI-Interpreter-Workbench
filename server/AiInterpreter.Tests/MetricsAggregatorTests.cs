@@ -105,8 +105,8 @@ public class MetricsAggregatorTests
         // Universal (ARCH-013)
         Assert.Equal(1000d, m.AudioDurationMs);          // recording.stopped - recording.started
         Assert.Equal(2100d, m.TotalTurnMs);              // turn.completed - recording.started
-        Assert.Equal(700d, m.SpeechEndToFirstAudioMs);   // tts.first_audio - recording.stopped
-        Assert.Equal(800d, m.SpeechEndToPlaybackMs);     // playback.started - recording.stopped
+        Assert.Equal(600d, m.SpeechEndToFirstAudioMs);   // tts.first_audio - stt.final (056-c1 cascade re-anchor)
+        Assert.Equal(800d, m.SpeechEndToPlaybackMs);     // playback.started - recording.stopped (unchanged anchor)
 
         // Cascade stage (each measured from its stage-start origin)
         Assert.Equal(200d, m.SttFirstPartialMs);         // stt.first_partial - cascade.audio.received
@@ -115,6 +115,33 @@ public class MetricsAggregatorTests
         Assert.Equal(380d, m.TranslationFinalMs);        // translation.final - translation.started
         Assert.Equal(180d, m.TtsFirstAudioMs);           // tts.first_audio - tts.started
         Assert.Equal(480d, m.TtsCompleteMs);             // tts.complete - tts.started
+    }
+
+    // 057(a) — the universal first-audio anchor self-selects by mode: realtime emits NO stt.final, so it
+    // falls back to recording.stopped (UNCHANGED by the 056-c1 cascade re-anchor — no mode-branch needed).
+    [Fact]
+    public void speech_end_to_first_audio_anchors_on_recording_stopped_for_realtime()
+    {
+        var realtime = new[]
+        {
+            Ev("turn.recording.stopped", LatencyStage.Capture, 1000, ClockSource.Browser),
+            Ev("realtime.first_audio_delta", LatencyStage.Realtime, 1400),
+        };
+
+        Assert.Equal(400d, new MetricsAggregator().Compute(realtime).SpeechEndToFirstAudioMs); // 1400 - 1000
+    }
+
+    // 057(a) — a cascade-shaped turn MISSING stt.final falls back to recording.stopped (graceful, no crash).
+    [Fact]
+    public void speech_end_to_first_audio_falls_back_to_recording_stopped_when_stt_final_absent()
+    {
+        var noSttFinal = new[]
+        {
+            Ev("turn.recording.stopped", LatencyStage.Capture, 1000, ClockSource.Browser),
+            Ev("tts.first_audio", LatencyStage.Tts, 1700),
+        };
+
+        Assert.Equal(700d, new MetricsAggregator().Compute(noSttFinal).SpeechEndToFirstAudioMs); // 1700 - 1000
     }
 
     [Fact]
@@ -162,7 +189,7 @@ public class MetricsAggregatorTests
         Assert.Equal(380d, m.TranslationFinalMs);
         Assert.Equal(180d, m.TtsFirstAudioMs);
         Assert.Equal(2100d, m.TotalTurnMs);
-        Assert.Equal(700d, m.SpeechEndToFirstAudioMs);
+        Assert.Equal(600d, m.SpeechEndToFirstAudioMs); // tts.first_audio - stt.final (057a re-anchor)
     }
 
     [Fact]

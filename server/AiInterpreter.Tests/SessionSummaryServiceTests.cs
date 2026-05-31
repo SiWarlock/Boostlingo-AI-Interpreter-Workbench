@@ -147,7 +147,7 @@ public class SessionSummaryServiceTests
         var c = summary.Cascade;
         Assert.NotNull(c);
         Assert.Equal(1, c!.TurnCount);
-        Assert.Equal(500, c.AvgSpeechEndToFirstAudioMs);
+        Assert.Equal(1250, c.AvgSpeechEndToFirstAudioMs); // stt.final-anchored (057a): first_audio(1500) - stt.final(250)
         Assert.Equal(800, c.AvgSpeechEndToPlaybackMs);
         Assert.Equal(200, c.AvgSttFinalMs);
         Assert.Equal(300, c.AvgTranslationFinalMs);
@@ -190,8 +190,29 @@ public class SessionSummaryServiceTests
         Assert.Equal(300, c.AvgSttFinalMs);            // (200+400)/2
         Assert.Equal(400, c.AvgTranslationFinalMs);    // (300+500)/2
         Assert.Equal(200, c.AvgTtsFirstAudioMs);       // (150+250)/2
-        Assert.Equal(600, c.AvgSpeechEndToFirstAudioMs); // (500+700)/2
-        Assert.Equal(900, c.AvgSpeechEndToPlaybackMs);   // (800+1000)/2
+        Assert.Equal(1250, c.AvgSpeechEndToFirstAudioMs); // stt.final-anchored (057a): both turns -> 1250
+        Assert.Equal(900, c.AvgSpeechEndToPlaybackMs);   // (800+1000)/2 (recording.stopped anchor, unchanged)
+    }
+
+    // 057(a) — the held-recording.stopped scenario the cascade re-anchor fixes (the session-avg must agree
+    // with 056-c1's per-turn re-anchor): a user who keeps the button down PAST first-audio. The old
+    // recording.stopped anchor yields a NEGATIVE responsiveness; the stt.final anchor (the real cascade
+    // speech-end signal) yields the correct positive value.
+    [Fact]
+    public void cascade_avg_first_audio_anchors_on_stt_final_not_held_recording_stopped()
+    {
+        var events = new List<LatencyEvent>
+        {
+            Ev(LatencyEventNames.TurnRecordingStarted, Base),
+            Ev(LatencyEventNames.SttFinal, Base.AddMilliseconds(800)),              // speech finalized
+            Ev(LatencyEventNames.TtsFirstAudio, Base.AddMilliseconds(1200)),        // first audio out
+            Ev(LatencyEventNames.TurnRecordingStopped, Base.AddMilliseconds(1500)), // button held late
+        };
+
+        var summary = Service().Compute(Session(Turn("t1", InterpretationMode.Cascade, events, null, 0, null)));
+
+        // 1200 - 800 (stt.final) = +400, NOT 1200 - 1500 (recording.stopped) = -300.
+        Assert.Equal(400, summary.Cascade!.AvgSpeechEndToFirstAudioMs);
     }
 
     // 5 — mixed-mode session: both ModeSummaries populated, each counting only its mode; top TurnCount = total.
