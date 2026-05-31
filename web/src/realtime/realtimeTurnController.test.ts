@@ -493,6 +493,79 @@ describe('createRealtimeTurnController', () => {
     expect(store.getState().turns).toHaveLength(1)
   })
 
+  // --- Bug C (070): realtime auto-VAD never auto-finalized live. The 064 lifecycle GATED the whole turn on
+  // `speech_started` (an UNCONFIRMED GA string — the 053-C capture is manual, no VAD events). If it doesn't
+  // fire, the turn is never begun → response.done can't finalize → the turn never closes. Fix: also begin the
+  // segment on the 053-C-CONFIRMED `committed` / `response.created` (guarded → one turn), so the turn exists
+  // by response.done regardless of the speech_started shape. (Live auto-finalize = the lead's re-capture.)
+  it('auto mode: a segment with NO speech_started STILL finalizes — begins on the confirmed `committed` (Bug C)', async () => {
+    const { store, client, api, controller } = setup()
+    store.setTurnControlMode('auto')
+
+    await controller.startTurn()
+    // server-VAD fired but speech_started did NOT reach the controller (wrong/absent GA string) — `committed`
+    // (053-C-confirmed) is the fallback begin-trigger so the turn exists before response.done.
+    client.onServerEvent?.(JSON.stringify({ type: 'input_audio_buffer.committed' }))
+    await flush() // createTurn resolves → the segment turn exists
+    client.onServerEvent?.(
+      JSON.stringify({ type: 'response.output_audio_transcript.delta', delta: 'hola' }),
+    )
+    client.onServerEvent?.(JSON.stringify({ type: 'response.done', response: {} }))
+
+    expect(api.createTurn).toHaveBeenCalledTimes(1)
+    expect(api.completeTurn).toHaveBeenCalledTimes(1) // the turn FINALIZED (it no longer hangs open)
+    expect(store.getState().turns).toHaveLength(1)
+    expect(store.getState().turns[0].targetTranscript).toEqual([{ text: 'hola', isFinal: true }])
+  })
+
+  it('auto mode: a segment with ONLY response.created (no speech_started, no committed) still finalizes (last-resort begin)', async () => {
+    const { store, client, api, controller } = setup()
+    store.setTurnControlMode('auto')
+
+    await controller.startTurn()
+    client.onServerEvent?.(JSON.stringify({ type: 'response.created' })) // belt-and-suspenders begin-trigger
+    await flush()
+    client.onServerEvent?.(JSON.stringify({ type: 'response.done', response: {} }))
+
+    expect(api.createTurn).toHaveBeenCalledTimes(1)
+    expect(api.completeTurn).toHaveBeenCalledTimes(1)
+    expect(store.getState().turns).toHaveLength(1)
+  })
+
+  it('auto mode: speech_started + committed + response.created all fire → EXACTLY ONE turn (idempotent begin)', async () => {
+    const { store, client, api, controller } = setup()
+    store.setTurnControlMode('auto')
+
+    await controller.startTurn()
+    client.onServerEvent?.(JSON.stringify({ type: 'input_audio_buffer.speech_started' })) // begins
+    await flush()
+    // the real GA sequence ALSO emits these after speech_started — they must NOT begin a 2nd turn
+    client.onServerEvent?.(JSON.stringify({ type: 'input_audio_buffer.committed' }))
+    client.onServerEvent?.(JSON.stringify({ type: 'response.created' }))
+    await flush()
+    client.onServerEvent?.(JSON.stringify({ type: 'response.done', response: {} }))
+
+    expect(api.createTurn).toHaveBeenCalledTimes(1) // the guard collapses all three triggers to one begin
+    expect(store.getState().turns).toHaveLength(1)
+  })
+
+  it('auto mode: the speech-end anchor survives the committed-begin path (speech_stopped before the turn → deferred + applied)', async () => {
+    const { store, client, controller } = setup(incrementingClock())
+    store.setTurnControlMode('auto')
+
+    await controller.startTurn()
+    // speech_stopped arrives BEFORE any begin-trigger (speech_started absent) — capture the speech-end time
+    client.onServerEvent?.(JSON.stringify({ type: 'input_audio_buffer.speech_stopped' }))
+    client.onServerEvent?.(JSON.stringify({ type: 'input_audio_buffer.committed' })) // begins the segment
+    await flush() // turn created → the deferred speech-end anchor is applied
+    client.onServerEvent?.(JSON.stringify({ type: 'output_audio_buffer.started' })) // first audio (later)
+    client.onServerEvent?.(JSON.stringify({ type: 'response.done', response: {} }))
+
+    const turn = store.getState().turns[0]
+    expect(turn.latencyEvents?.some((e) => e.name === 'turn.recording.stopped')).toBe(true)
+    expect(deriveTurnMetrics(turn).speechEndToFirstAudioMs).toBeGreaterThan(0) // anchor preserved, not n/a
+  })
+
   it('guards a concurrent double startTurn — only one turn is created', async () => {
     const { api, controller } = setup()
 

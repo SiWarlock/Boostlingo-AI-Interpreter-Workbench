@@ -357,17 +357,28 @@ export function createRealtimeTurnController(deps: RealtimeTurnDeps): RealtimeTu
         // backend session-avg (both read recording.stopped; mirrors cascade §25/§13).
         if (currentSegmentTurnId !== null) {
           store.appendLatencyEvent(marker('turn.recording.stopped'))
-        } else if (segmentStarting) {
-          // The segment's turn is still being created — hold the TRUE speech-end time + stamp it when
-          // beginTurn settles (the createTurn-window race; rare but anchor-preserving).
+        } else {
+          // No segment turn yet (speech_started absent OR createTurn in flight) — hold the TRUE speech-end
+          // time + apply it when the turn begins (on committed/response.created), so the anchor survives the
+          // fallback begin path (Bug C, 070; previously gated on segmentStarting → lost without speech_started).
           pendingRecordingStoppedTs = clock()
         }
         break
       case 'committed':
-        // Buffer auto-committed (lifecycle); the auto response.created/.done follow. No store action.
+        // Buffer auto-committed (053-C-CONFIRMED GA string). FALLBACK begin-trigger (Bug C, 070): if the
+        // UNCONFIRMED `speech_started` never reached the controller, begin the segment here so the turn exists
+        // by response.done → finalizes. Guarded (beginAutoSegment's segmentStarting/currentSegmentTurnId
+        // check) → collapses to one begin when speech_started already fired.
+        beginAutoSegment(sessionId, direction)
+        break
+      case 'responseCreated':
+        // Last-resort FALLBACK begin-trigger (053-C-CONFIRMED) — belt-and-suspenders if neither
+        // speech_started nor committed reached the controller. Guarded → one begin. (A lifecycle marker the
+        // sink ignores anyway, so routing it here instead of to the sink loses nothing.)
+        beginAutoSegment(sessionId, direction)
         break
       default: {
-        // transcript deltas / audio / response.created / response.done / error → the current segment's sink.
+        // transcript deltas / audio / response.done / error → the current segment's sink.
         if (currentSink !== null) {
           currentSink.handle(event)
         }
