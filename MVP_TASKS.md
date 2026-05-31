@@ -559,6 +559,28 @@ The project is "done" (ARCH-025 + PRD success criteria) when:
 
 ---
 
+## Phase H — UI/UX Styling & Polish (USER-REQUESTED, 2026-05-31)
+
+> **Origin:** USER-REQUESTED scope addition (relayed by lead, 2026-05-31), surfaced by the real-key smoke. The frontend is **functionally correct but has NO CSS** — visually raw + gives near-zero feedback (e.g. no visible active-mode state → the user thinks the mode toggle is broken). The user wants it to "look good with good UX" and explicitly to "expand on it later." **TDD posture:** visual styling is **MANUAL-SMOKE-EXEMPT** (like mic/WebRTC — root CLAUDE.md TDD posture) — H slices are verified **visually**, NOT unit-TDD'd (a styling brief, not a `/tdd` brief). **Clean-separation invariant holds (ARCH-007):** components still render only from the store; H is **CSS/layout/markup-for-styling only — no logic changes**.
+
+**Spec anchors:** `ARCH-007` (frontend clean-separation — H must not violate it), `ARCH-013`/`ARCH-014`/`ARCH-015` (the metric/cost/WER panels H makes legible). _(H is a UX layer over the shipped behavior; it implements no new architecture.)_
+
+### H.1 — First usability/visual pass (MUST — drives the demo)
+- [ ] A global **design-system/CSS baseline**: CSS custom properties (color/spacing/typography scale), an app-shell **layout** (header + mode toggle + the panels grid), and visual hierarchy — enough to demo confidently.
+- [ ] **Visible state feedback (the headline gap):** the **active mode** is unmistakably shown (the `ModeToggle` already sets `aria-pressed` — style it so the selected mode is visually obvious); **session status** (configured / active / ending / ended) + **turn status** (idle / recording / processing) render as clear visual cues; the **ErrorBanner** is styled as an error.
+- [ ] **Styled controls + panels:** buttons (Start/Stop/End/Record), the model/direction `<select>`s, and the Transcript / Metrics / Cost panels are legible + visually grouped.
+- [ ] **EvaluationPanel + ComparisonSummary made legible:** the WER result (% / S·I·D·N) + the by-mode/by-variant comparison grid read as proper tables/cards, not raw text.
+- [ ] Files: NEW — a CSS baseline (`web/src/styles/` or `App.css` + component CSS — H.1 Step-2.5-equivalent design Q); MODIFIED — components gain `className`s / minimal semantic wrappers (NO logic change; the clean-separation invariant + the existing component tests stay green).
+- [ ] **Verification: MANUAL SMOKE** (not unit tests) — a visual checklist (active-mode obvious, status cues visible, panels legible, the demo flow looks presentable) + confirm `npm run test`/`typecheck`/`lint` stay green (no logic/contract regression). Anchors: `ARCH-007`, `ARCH-020` (manual-smoke tier).
+
+### H.2+ — Deeper polish (LATER — user "expand on it later")
+- [ ] Responsive layout, fuller a11y pass (focus states, contrast, keyboard nav), motion/transitions, empty/loading states, and any design-system refinement. _(Scoped later per the user; H.1 is the demo-ready baseline.)_
+
+### Acceptance criteria (H)
+- [ ] H.1: the app **looks presentable + gives clear UX feedback** (active mode, session/turn status, legible panels) — verified by manual smoke; the demo can be driven confidently. No logic/contract change (clean-separation held; suites green).
+
+---
+
 ## Trims / Nice-to-Haves Catalog
 
 Deferred items with come-back guidance (from `ARCH-025`):
