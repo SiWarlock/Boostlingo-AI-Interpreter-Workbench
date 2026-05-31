@@ -5,6 +5,7 @@ using System.Text.Json;
 using AiInterpreter.Api.Providers.Abstractions;
 using AiInterpreter.Api.Providers.OpenAI;
 using AiInterpreter.Api.Sessions;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace AiInterpreter.Tests;
@@ -78,6 +79,70 @@ public class OpenAiTranslationProviderTests
         var final = events.OfType<TranslationFinal>().Single();
         Assert.Null(final.InputTokens);
         Assert.Null(final.OutputTokens);
+    }
+
+    // === Group 2b — usage-shape tolerance (057b): tolerate usage nested under `response` (the current
+    // OpenAI Responses shape) AND at the event top level (shape variance / the §24 dual-shape precedent).
+    // A genuinely-absent usage still degrades to null — honest, never fabricated. ParseEvent is public. ===
+
+    [Fact]
+    public void parse_event_reads_usage_nested_under_response()
+    {
+        var ev = OpenAiTranslationMapping.ParseEvent(
+            "{\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":12,\"output_tokens\":6}}}");
+
+        Assert.Equal(OpenAiTranslationMapping.SseKind.Completed, ev.Kind);
+        Assert.Equal((int?)12, ev.InputTokens);
+        Assert.Equal((int?)6, ev.OutputTokens);
+    }
+
+    [Fact]
+    public void parse_event_reads_top_level_usage()
+    {
+        // Tolerant fallback: usage at the event TOP LEVEL (not nested under `response`).
+        var ev = OpenAiTranslationMapping.ParseEvent(
+            "{\"type\":\"response.completed\",\"usage\":{\"input_tokens\":7,\"output_tokens\":3}}");
+
+        Assert.Equal((int?)7, ev.InputTokens);
+        Assert.Equal((int?)3, ev.OutputTokens);
+    }
+
+    [Fact]
+    public void parse_event_absent_usage_yields_null_tokens()
+    {
+        var ev = OpenAiTranslationMapping.ParseEvent("{\"type\":\"response.completed\",\"response\":{}}");
+
+        Assert.Equal(OpenAiTranslationMapping.SseKind.Completed, ev.Kind);
+        Assert.Null(ev.InputTokens);
+        Assert.Null(ev.OutputTokens);
+    }
+
+    [Fact]
+    public async Task usage_tokens_extracted_from_top_level_usage_shape()
+    {
+        var events = await Collect(Provider(new StubHandler(SseTopLevelUsage)).TranslateAsync(Req(), default));
+
+        var final = events.OfType<TranslationFinal>().Single();
+        Assert.Equal((int?)7, final.InputTokens);
+        Assert.Equal((int?)3, final.OutputTokens);
+    }
+
+    [Fact]
+    public void describe_usage_shape_is_sanitized_and_single_lined()
+    {
+        // Usage present -> the usage sub-object (token COUNTS) + matched location, nothing else.
+        Assert.Equal(
+            "response.usage={\"input_tokens\":5,\"output_tokens\":2}",
+            OpenAiTranslationMapping.DescribeUsageShape(
+                "{\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":5,\"output_tokens\":2}}}"));
+
+        // Usage absent -> TOP-LEVEL key NAMES only: the nested translation text is NOT a top-level key so it
+        // never appears, and a newline in a crafted key name is single-lined (lesson §13 log-forge guard).
+        var absent = OpenAiTranslationMapping.DescribeUsageShape(
+            "{\"type\":\"response.completed\",\"response\":{\"output\":\"secret translation\"},\"in\\njected\":1}");
+        Assert.StartsWith("usage absent; top-level keys=[", absent);
+        Assert.DoesNotContain("secret translation", absent); // nested value never logged (invariant #1)
+        Assert.DoesNotContain("\n", absent);                  // single-lined (no log forging)
     }
 
     // === Group 3 — failures: HTTP error (status-bearing) + mid-stream in-band SSE error ===
@@ -180,6 +245,11 @@ public class OpenAiTranslationProviderTests
         SseEvent("response.output_text.delta", "{\"type\":\"response.output_text.delta\",\"delta\":\" mundo\"}") +
         SseEvent("response.completed", "{\"type\":\"response.completed\",\"response\":{}}");
 
+    private static readonly string SseTopLevelUsage =
+        SseEvent("response.created", "{\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}") +
+        SseEvent("response.output_text.delta", "{\"type\":\"response.output_text.delta\",\"delta\":\"Hola\"}") +
+        SseEvent("response.completed", "{\"type\":\"response.completed\",\"usage\":{\"input_tokens\":7,\"output_tokens\":3}}");
+
     private static readonly string SseMidStreamError =
         SseEvent("response.created", "{\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}") +
         SseEvent("response.output_text.delta", "{\"type\":\"response.output_text.delta\",\"delta\":\"Hola\"}") +
@@ -188,7 +258,9 @@ public class OpenAiTranslationProviderTests
     private static OpenAiTranslationProvider Provider(HttpMessageHandler handler, OpenAiTranslationOptions? options = null)
     {
         var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.openai.com/") };
-        return new OpenAiTranslationProvider(http, Options.Create(options ?? new OpenAiTranslationOptions()));
+        return new OpenAiTranslationProvider(
+            http, Options.Create(options ?? new OpenAiTranslationOptions()),
+            NullLogger<OpenAiTranslationProvider>.Instance);
     }
 
     private static TranslationRequest Req(string text = "hello world", string model = "gpt-5-nano") =>

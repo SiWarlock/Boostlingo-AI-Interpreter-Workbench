@@ -96,20 +96,78 @@ internal static class OpenAiTranslationMapping
     public static TranslationFailed ToFailed(Exception exception, DateTimeOffset timestamp) =>
         new(ProviderErrorMapper.Map(exception, Provider, Stage), timestamp);
 
-    // Usage lives at response.completed -> data.response.usage.{input_tokens,output_tokens} (snake_case;
-    // NOT prompt/completion_tokens). Absent -> null (B.5 cost estimator degrades; never fabricate).
+    // Usage on the response.completed terminal: the documented OpenAI Responses shape nests it under
+    // response.usage.{input_tokens,output_tokens} (snake_case; NOT prompt/completion_tokens). 057b also
+    // tolerates usage at the event TOP LEVEL (shape variance; the §24/E.1 dual-shape precedent). Absent ->
+    // (null,null): the B.5 cost estimator degrades honestly; never fabricate. (Verified via Context7 that
+    // the Responses streaming terminal is `response.completed` with response.usage — `response.done` is the
+    // separate Realtime API, so it is deliberately NOT parsed here.)
     private static (int? Input, int? Output) ReadUsage(JsonElement root)
     {
-        if (root.TryGetProperty("response", out var response) &&
-            response.TryGetProperty("usage", out var usage) &&
-            usage.ValueKind == JsonValueKind.Object)
+        if (FindUsageObject(root) is not { } usage)
         {
-            int? input = usage.TryGetProperty("input_tokens", out var it) && it.TryGetInt32(out var i) ? i : null;
-            int? output = usage.TryGetProperty("output_tokens", out var ot) && ot.TryGetInt32(out var o) ? o : null;
-            return (input, output);
+            return (null, null);
         }
 
-        return (null, null);
+        int? input = usage.TryGetProperty("input_tokens", out var it) && it.TryGetInt32(out var i) ? i : null;
+        int? output = usage.TryGetProperty("output_tokens", out var ot) && ot.TryGetInt32(out var o) ? o : null;
+        return (input, output);
+    }
+
+    // Locate the usage object: primary = response.usage (documented), fallback = top-level usage (057b
+    // shape-variance tolerance). Null if neither is present as an object.
+    private static JsonElement? FindUsageObject(JsonElement root)
+    {
+        if (root.TryGetProperty("response", out var response) &&
+            response.ValueKind == JsonValueKind.Object &&
+            response.TryGetProperty("usage", out var nested) &&
+            nested.ValueKind == JsonValueKind.Object)
+        {
+            return nested;
+        }
+
+        if (root.TryGetProperty("usage", out var topLevel) && topLevel.ValueKind == JsonValueKind.Object)
+        {
+            return topLevel;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// A sanitized one-line description of the terminal frame's usage shape, for the 057b diagnostic
+    /// LogDebug so a live smoke reveals the real shape (the live cost <c>n/a</c> root cause). Emits ONLY
+    /// the usage sub-object (token COUNTS) + where it was found, or — when absent — the event's TOP-LEVEL
+    /// key NAMES. NEVER the translated text or any key/secret (invariant #1).
+    /// </summary>
+    internal static string DescribeUsageShape(string dataJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(dataJson);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("response", out var response) &&
+                response.ValueKind == JsonValueKind.Object &&
+                response.TryGetProperty("usage", out var nested) &&
+                nested.ValueKind == JsonValueKind.Object)
+            {
+                return $"response.usage={nested.GetRawText()}";
+            }
+
+            if (root.TryGetProperty("usage", out var topLevel) && topLevel.ValueKind == JsonValueKind.Object)
+            {
+                return $"top-level usage={topLevel.GetRawText()}";
+            }
+
+            // No usage object — report the available TOP-LEVEL key NAMES only (never nested values/text).
+            // Single-line each name (lesson §13): a newline in a crafted key name must not forge a log line.
+            var keys = string.Join(",", root.EnumerateObject().Select(p => p.Name.ReplaceLineEndings(" ")));
+            return $"usage absent; top-level keys=[{keys}]";
+        }
+        catch (JsonException)
+        {
+            return "usage shape unparseable";
+        }
     }
 
     private static string BuildInstruction(LanguageCode source, LanguageCode target) =>

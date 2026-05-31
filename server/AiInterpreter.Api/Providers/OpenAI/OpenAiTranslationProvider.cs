@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using AiInterpreter.Api.Common;
 using AiInterpreter.Api.Providers.Abstractions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace AiInterpreter.Api.Providers.OpenAI;
@@ -27,11 +28,14 @@ public sealed class OpenAiTranslationProvider : ITranslationProvider
 
     private readonly HttpClient _http;
     private readonly OpenAiTranslationOptions _options;
+    private readonly ILogger<OpenAiTranslationProvider> _logger;
 
-    public OpenAiTranslationProvider(HttpClient http, IOptions<OpenAiTranslationOptions> options)
+    public OpenAiTranslationProvider(
+        HttpClient http, IOptions<OpenAiTranslationOptions> options, ILogger<OpenAiTranslationProvider> logger)
     {
         _http = http;
         _options = options.Value;
+        _logger = logger;
     }
 
     public async IAsyncEnumerable<TranslationEvent> TranslateAsync(
@@ -134,6 +138,17 @@ public sealed class OpenAiTranslationProvider : ITranslationProvider
                         break;
 
                     case OpenAiTranslationMapping.SseKind.Completed:
+                        // 057b — sanitized raw-usage diagnostic at the terminal read so a live smoke reveals
+                        // the real usage shape (the cost n/a root cause). Counts + matched-location only —
+                        // never the translation text or the key (invariant #1). IsEnabled-guarded so the
+                        // shape parse never runs when Debug is off (i.e. in prod) — not an eager arg.
+                        if (_logger.IsEnabled(LogLevel.Debug))
+                        {
+                            _logger.LogDebug(
+                                "Translation terminal usage shape: {Shape}",
+                                OpenAiTranslationMapping.DescribeUsageShape(payload));
+                        }
+
                         yield return new TranslationFinal(
                             aggregate.ToString(), parsed.InputTokens, parsed.OutputTokens, DateTimeOffset.UtcNow);
                         yield break;
