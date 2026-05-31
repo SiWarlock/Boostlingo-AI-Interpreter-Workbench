@@ -367,13 +367,23 @@ public sealed class CascadeStreamingOrchestrator(
         var request = new TtsRequest(
             targetText, p.Direction.Target, p.TtsVoice, p.TtsModel, TtsResponseFormat, null, p.SessionId, p.TurnId);
 
+        // 075 (supersedes 057c): stamp tts.started at TTS request-INITIATION — a REAL pipeline moment (when we
+        // begin synthesis, after translation produced the target text), NOT the provider's first-event arrival.
+        // The provider yields TtsStarted + TtsFirstAudio synchronously after the request round-trip, so stamping
+        // on the provider event made tts.started ≈ tts.first_audio (TtsFirstAudioMs ≈ 0). Anchoring at initiation
+        // makes TtsFirstAudioMs a real to-first-audio latency (round-trip-inclusive) and the TTS stage begin at
+        // initiation (consistent TtsCompleteMs). Honest instrumentation — a real moment we control, never
+        // synthesized or back-dated (ARCH-013 / streaming-honesty).
+        var ttsStarted = Stamp(LatencyEventNames.TtsStarted, LatencyStage.Tts, origin, OpenAiProviderLabel);
+        var ttsStartedAt = ttsStarted.Event.Timestamp;
+        yield return ttsStarted;
+
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(p.TtsTimeout ?? DefaultTtsTimeout);
         await using var stream = tts.SynthesizeAsync(request, cts.Token).GetAsyncEnumerator(cts.Token);
 
         var contentType = TtsDefaultContentType;
         var completed = false; // set on TtsComplete; if the stream ends without it → fail closed (C.4b)
-        DateTimeOffset? ttsStartedAt = null; // 057c — captured to log the tts.first_audio - tts.started delta
 
         while (true)
         {
@@ -420,24 +430,19 @@ public sealed class CascadeStreamingOrchestrator(
             switch (current)
             {
                 case TtsStarted:
-                    var ttsStarted = Stamp(LatencyEventNames.TtsStarted, LatencyStage.Tts, origin, OpenAiProviderLabel);
-                    ttsStartedAt = ttsStarted.Event.Timestamp;
-                    yield return ttsStarted;
+                    // 075: tts.started is anchored at initiation (above); the provider's start event is consumed
+                    // WITHOUT a (re-)stamp — kept as an explicit case to document the intentional no-op.
                     break;
 
                 case TtsFirstAudio first:
                     contentType = first.ContentType;
                     var ttsFirstAudio = Stamp(LatencyEventNames.TtsFirstAudio, LatencyStage.Tts, origin, OpenAiProviderLabel);
-                    // 057c — diagnostic only: the live 0 ms (tts.started == tts.first_audio) is a provider-
-                    // synchronous-yield / clock-resolution artifact, NOT a stamping bug (the stamps are on
-                    // distinct provider events). Log the real delta so the live smoke quantifies it. No fix.
-                    if (ttsStartedAt is { } startedAt)
-                    {
-                        logger.LogDebug(
-                            "TTS first-audio delta: {DeltaMs} ms (tts.first_audio - tts.started)",
-                            (ttsFirstAudio.Event.Timestamp - startedAt).TotalMilliseconds);
-                    }
-
+                    // 075: the real to-first-audio latency (now that tts.started is anchored at initiation, this is
+                    // the genuine round-trip-inclusive span, not the 057c ≈0 artifact) — logged for live-smoke
+                    // visibility; the persisted tts.first_audio / tts.started latency events are the source of truth.
+                    logger.LogDebug(
+                        "TTS to-first-audio latency: {DeltaMs} ms (tts.first_audio - tts.started @ initiation)",
+                        (ttsFirstAudio.Event.Timestamp - ttsStartedAt).TotalMilliseconds);
                     yield return ttsFirstAudio;
                     break;
 

@@ -26,23 +26,6 @@ public class CascadeOrchestratorTests
         public DateTimeOffset UtcNow => fixedNow;
     }
 
-    // 057c — a clock that advances by a fixed step on each read, so consecutive stamps get strictly
-    // increasing timestamps (the fixed FakeClock reproduces the 0 ms coincident-stamp artifact instead).
-    private sealed class AdvancingClock(DateTimeOffset start, TimeSpan step) : IClock
-    {
-        private DateTimeOffset _now = start;
-
-        public DateTimeOffset UtcNow
-        {
-            get
-            {
-                var value = _now;
-                _now = _now.Add(step);
-                return value;
-            }
-        }
-    }
-
     // Call-count spy decorators (Step-2.5 Q3). Calls increments when the stage is invoked at all;
     // the decorator delegates streaming to the wrapped fake.
     private sealed class CountingTranslationProvider(ITranslationProvider inner) : ITranslationProvider
@@ -467,21 +450,39 @@ public class CascadeOrchestratorTests
         });
     }
 
-    // 057c — diagnostic guard (instrumentation, not a fix): the live 0 ms tts.first_audio
-    // (tts.started == tts.first_audio) is a provider-synchronous-yield / clock-resolution artifact, NOT a
-    // stamping bug — the two stamps are on DISTINCT provider events. Against a clock that advances between
-    // reads, the pair is delta-correct (tts.first_audio strictly after tts.started). Guards a future
-    // relabel-from-completion regression even though the live 0 ms itself is benign.
-    [Fact]
-    public async Task tts_first_audio_stamp_is_after_tts_started_against_a_non_degenerate_clock()
+    // === 075 (supersedes 057c) — tts.started anchored at TTS request-INITIATION, not the provider event ===
+
+    // A settable clock the round-trip TTS fake advances, so the to-first-audio latency is a controlled delta.
+    private sealed class SettableClock(DateTimeOffset start) : IClock
     {
-        var clock = new AdvancingClock(Base, TimeSpan.FromMilliseconds(10));
+        public DateTimeOffset UtcNow { get; set; } = start;
+    }
+
+    // Models the live cascade-TTS timing: advances the shared clock by `roundTrip` (the request→provider trip)
+    // BEFORE the first event, then yields TtsStarted+TtsFirstAudio SYNCHRONOUSLY (the live ≈0 symptom — both at
+    // the same clock value), then advances `synthesis` before TtsComplete. The orchestrator stamps tts.started at
+    // initiation (pre-enumeration), so these advances land BETWEEN the start anchor and the provider stamps.
+    private sealed class RoundTripTtsProvider(SettableClock clock, TimeSpan roundTrip, TimeSpan synthesis) : ITtsProvider
+    {
+        public async IAsyncEnumerable<TtsEvent> SynthesizeAsync(
+            TtsRequest request, [EnumeratorCancellation] CancellationToken ct)
+        {
+            await Task.CompletedTask;
+            clock.UtcNow += roundTrip;
+            yield return new TtsStarted(clock.UtcNow);
+            yield return new TtsFirstAudio("audio/mpeg", clock.UtcNow); // synchronous with TtsStarted (the ≈0 case)
+            yield return new TtsAudioChunk(new byte[] { 1, 2 }, 0, clock.UtcNow);
+            clock.UtcNow += synthesis;
+            yield return new TtsComplete("audio/mpeg", clock.UtcNow);
+        }
+    }
+
+    private static async Task<List<CascadeOutputEvent>> RunWithClock(SettableClock clock, ITtsProvider tts)
+    {
         var orch = new CascadeStreamingOrchestrator(
             new FakeSttProvider(FakeSttBehavior.SuccessWithPartials),
             new FakeTranslationProvider(FakeTranslationBehavior.TokenStreamThenFinal),
-            new FakeTtsProvider(FakeTtsBehavior.ChunkedThenComplete),
-            new LatencyEventFactory(clock),
-            clock,
+            tts, new LatencyEventFactory(clock), clock,
             NullLogger<CascadeStreamingOrchestrator>.Instance);
 
         var events = new List<CascadeOutputEvent>();
@@ -490,11 +491,58 @@ public class CascadeOrchestratorTests
             events.Add(e);
         }
 
+        return events;
+    }
+
+    private static readonly TimeSpan TtsRoundTrip = TimeSpan.FromMilliseconds(300);
+    private static readonly TimeSpan TtsSynthesis = TimeSpan.FromMilliseconds(200);
+
+    [Fact]
+    public async Task tts_started_stamped_at_request_initiation()
+    {
+        // ⭐ tts.started is anchored at TTS request-INITIATION (clock = Base, before the provider round-trip),
+        // NOT on the provider's first event arrival. The provider then advances +300 ms and yields
+        // TtsStarted+TtsFirstAudio synchronously (the live ≈0 case). So TtsFirstAudioMs reflects the REAL
+        // to-first-audio latency (300 ms), not ≈0. (ARCH-013 — honest instrumentation.)
+        var clock = new SettableClock(Base);
+        var events = await RunWithClock(clock, new RoundTripTtsProvider(clock, TtsRoundTrip, TtsSynthesis));
+
         var started = events.OfType<Latency>().Single(l => l.Event.Name == LatencyEventNames.TtsStarted).Event;
         var firstAudio = events.OfType<Latency>().Single(l => l.Event.Name == LatencyEventNames.TtsFirstAudio).Event;
-        Assert.True(
-            firstAudio.Timestamp > started.Timestamp,
-            $"tts.first_audio ({firstAudio.Timestamp:o}) must be strictly after tts.started ({started.Timestamp:o})");
+        Assert.Equal(Base, started.Timestamp);                                  // stamped at initiation, not the provider event
+        Assert.Equal(300d, (firstAudio.Timestamp - started.Timestamp).TotalMilliseconds); // real round-trip, not ≈0
+        // No negative stage gap: tts.started (initiation) lands at/after translation.final (TTS initiates only
+        // after translation produced the target text).
+        var translationFinal = events.OfType<Latency>().Single(l => l.Event.Name == LatencyEventNames.TranslationFinal).Event;
+        Assert.True(started.Timestamp >= translationFinal.Timestamp,
+            $"tts.started ({started.Timestamp:o}) must be at/after translation.final ({translationFinal.Timestamp:o})");
+    }
+
+    [Fact]
+    public async Task tts_first_audio_still_on_provider_event()
+    {
+        // Honesty: only the START anchor moved — tts.first_audio is STILL stamped on the real provider
+        // first-audio event (clock = Base + round-trip), never synthesized or back-dated. A one-directional
+        // regression guard (not a RED-phase pin — it's green under the old code too): it FAILS if a future
+        // change wrongly moves tts.first_audio to initiation as well.
+        var clock = new SettableClock(Base);
+        var events = await RunWithClock(clock, new RoundTripTtsProvider(clock, TtsRoundTrip, TtsSynthesis));
+
+        var firstAudio = events.OfType<Latency>().Single(l => l.Event.Name == LatencyEventNames.TtsFirstAudio).Event;
+        Assert.Equal(Base.Add(TtsRoundTrip), firstAudio.Timestamp); // the real provider first-audio moment, unchanged
+    }
+
+    [Fact]
+    public async Task tts_complete_measures_from_initiation()
+    {
+        // The TTS stage now BEGINS at initiation, so TtsCompleteMs spans initiation→complete (round-trip +
+        // synthesis = 500 ms), closing the previously-uncounted translation.final→provider-ack gap.
+        var clock = new SettableClock(Base);
+        var events = await RunWithClock(clock, new RoundTripTtsProvider(clock, TtsRoundTrip, TtsSynthesis));
+
+        var started = events.OfType<Latency>().Single(l => l.Event.Name == LatencyEventNames.TtsStarted).Event;
+        var complete = events.OfType<Latency>().Single(l => l.Event.Name == LatencyEventNames.TtsComplete).Event;
+        Assert.Equal(500d, (complete.Timestamp - started.Timestamp).TotalMilliseconds); // from initiation, not the provider event
     }
 
     // ===== I.1 — cascade auto-finalize on Deepgram utterance-end (Phase I; auto-VAD) =====
