@@ -725,4 +725,107 @@ public class SessionsControllerTests : IDisposable
         Assert.DoesNotContain("ek_", body, StringComparison.Ordinal);
         Assert.DoesNotContain("\"audio\":", body, StringComparison.OrdinalIgnoreCase);
     }
+
+    // ===== 068 — GET /{id} disk-fallback (a past/evicted session reads from disk) =====
+
+    // G1 — a persisted-but-EVICTED session (on disk, NOT in the in-memory store of a fresh host) returns 200
+    // + its FULL detail (turns/transcripts) via the by-id disk fallback, instead of 404. The drill-in surface.
+    [Fact]
+    public async Task get_session_falls_back_to_disk_for_an_evicted_session()
+    {
+        var dir = TempDir();
+        await SeedSession(dir, "session_evicted", T, "Past run", rich: true,
+            turnModes: InterpretationMode.Cascade);
+        using var factory = Factory(dir); // fresh host → empty in-memory store
+
+        var resp = await factory.CreateClient().GetAsync("/api/sessions/session_evicted");
+        var body = await resp.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        using var doc = JsonDocument.Parse(body);
+        var root = doc.RootElement;
+        Assert.Equal("session_evicted", root.GetProperty("sessionId").GetString());
+        Assert.Equal("Past run", root.GetProperty("label").GetString());
+        // Full detail (not a summary) — the drill-in needs the turns/transcripts.
+        Assert.Equal(1, root.GetProperty("turns").GetArrayLength());
+        Assert.Equal("hola mundo",
+            root.GetProperty("turns")[0].GetProperty("transcripts")[0].GetProperty("text").GetString());
+        // Sentinel: the disk-read response leaks no secret.
+        Assert.DoesNotContain("sk-", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("ek_", body, StringComparison.Ordinal);
+    }
+
+    // G2 — precedence: when a session is BOTH in-memory (live) AND on disk (a stale snapshot), the in-memory
+    // copy WINS (it is fresher than the last-persisted state). Guards against a disk-first precedence bug.
+    [Fact]
+    public async Task get_session_in_memory_wins_over_a_stale_disk_copy()
+    {
+        var dir = TempDir();
+        using var factory = Factory(dir);
+        var client = factory.CreateClient();
+        // A LIVE session (in-memory; POST does not persist) — label "Demo run 1" from SampleRequest.
+        var created = await client.PostAsJsonAsync("/api/sessions", SampleRequest(), JsonDefaults.Options);
+        var id = JsonDocument.Parse(await created.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("sessionId").GetString()!;
+        // Seed a STALE disk copy with the SAME id but a different label.
+        await SeedSession(dir, id, T, "STALE DISK COPY");
+
+        var resp = await client.GetAsync($"/api/sessions/{id}");
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        Assert.Equal("Demo run 1", doc.RootElement.GetProperty("label").GetString()); // in-memory, not the disk copy
+    }
+
+    // G3 — ⭐ fail-closed invariant: transparent-Get widens the controller's session-existence pre-check, but a
+    // MUTATION on an evicted (disk-only) session must NOT resurrect it. Appending events / completing a turn on
+    // the evicted id → fail-closed 404 (turn.not_found — it passes the session pre-check then misses the
+    // in-memory store), the in-memory store stays empty (no resurrection), and the on-disk file is byte-unchanged
+    // (no re-persist / partial write). Guards a future disk-fallback of UpdateTurn from silently enabling it.
+    [Fact]
+    public async Task completing_or_appending_to_an_evicted_disk_only_session_fail_closes()
+    {
+        var dir = TempDir();
+        await SeedSession(dir, "session_evicted2", T, "Past run", rich: true,
+            turnModes: InterpretationMode.Cascade);
+        var file = Assert.Single(Directory.GetFiles(dir, "*.json"));
+        var before = await File.ReadAllBytesAsync(file);
+        using var factory = Factory(dir); // fresh host → empty in-memory store
+        var client = factory.CreateClient();
+
+        // Append events to the evicted session's (disk) turn0 → fail-closed 404 (no in-memory turn to mutate).
+        var append = await client.PostAsJsonAsync(
+            "/api/sessions/session_evicted2/turns/turn0/events",
+            new AppendEventsRequest(new List<LatencyEvent> { Ev("stt.final") }), JsonDefaults.Options);
+        Assert.Equal(HttpStatusCode.NotFound, append.StatusCode);
+
+        // Complete that turn on the evicted session → fail-closed 404.
+        var complete = await client.PostAsJsonAsync(
+            "/api/sessions/session_evicted2/turns/turn0/complete",
+            new CompleteTurnRequest(null, null, null), JsonDefaults.Options);
+        Assert.Equal(HttpStatusCode.NotFound, complete.StatusCode);
+
+        // No resurrection / no re-persist: still exactly one file, byte-identical (the writer was never called).
+        Assert.Single(Directory.GetFiles(dir, "*.json"));
+        Assert.Equal(before, await File.ReadAllBytesAsync(file));
+    }
+
+    // G4 — symmetry: GET /{id}/summary also falls back to disk for an evicted session (Summary routes through
+    // the disk-falling-back Get), recomputing from the persisted turns instead of 404ing — so the H.3 drill-in
+    // can show a past session's metrics across a restart, consistent with GET /{id}.
+    [Fact]
+    public async Task get_summary_falls_back_to_disk_for_an_evicted_session()
+    {
+        var dir = TempDir();
+        await SeedSession(dir, "session_evicted3", T, "Past run", rich: true,
+            turnModes: InterpretationMode.Cascade);
+        using var factory = Factory(dir); // fresh host → empty in-memory store
+
+        var resp = await factory.CreateClient().GetAsync("/api/sessions/session_evicted3/summary");
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        Assert.Equal(1, doc.RootElement.GetProperty("turnCount").GetInt32()); // recomputed from the persisted turn
+        Assert.True(doc.RootElement.TryGetProperty("computedAt", out _));
+    }
 }

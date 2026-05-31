@@ -83,7 +83,9 @@ public sealed class SessionPersistenceWriter
         return $"session_{timestamp}_{shortId}.json";
     }
 
-    // Matches ^[A-Za-z0-9_-]+$ (non-empty): the server-generated id allowlist (ARCH-016 / ARCH-019).
-    private static bool IsValidSessionId(string id) =>
+    // Matches ^[A-Za-z0-9_-]+$ (non-empty): the server-generated id allowlist (ARCH-016 / ARCH-019). Internal
+    // so the read side (SessionPersistenceReader.ReadById, 068) reuses the SAME §11 allowlist as a pre-FS id
+    // gate — one source of the id-format invariant, no duplication.
+    internal static bool IsValidSessionId(string id) =>
         !string.IsNullOrEmpty(id) && id.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-');
 }

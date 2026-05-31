@@ -93,6 +93,64 @@ public sealed class SessionPersistenceReader
         }
     }
 
+    /// <summary>
+    /// Reads the persisted session whose <c>SessionId</c> matches <paramref name="id"/> (068 — the GET /{id}
+    /// disk fallback). The writer filename embeds <c>StartedAt</c>, not the bare id, so this ENUMERATES
+    /// <c>session_*.json</c> and matches on the DESERIALIZED <c>SessionId</c>, short-circuiting on the first
+    /// match. Degrades to null (not-found) — never throws — on an invalid id (rejected PRE-FS, safety rule
+    /// #5), a missing dir, a corrupt/oversize would-be candidate (skipped per-file), or a dir-misconfig
+    /// (logged; the LIST path is the loud 500 surface for that). The service tries the in-memory store FIRST,
+    /// this disk read SECOND (in-memory wins).
+    /// </summary>
+    public InterpretationSession? ReadById(string id)
+    {
+        // Pre-FS id gate — reuse the §11 write-side allowlist (^[A-Za-z0-9_-]+$): an invalid id (../, a
+        // non-allowlist char, empty) is "not found" WITHOUT touching the FS — defense-in-depth (safety rule
+        // #5), load-bearing if a future optimization ever narrows the scan by a filename fragment built from id.
+        if (!SessionPersistenceWriter.IsValidSessionId(id))
+        {
+            return null;
+        }
+
+        if (!Directory.Exists(_dataDir))
+        {
+            if (File.Exists(_dataDir))
+            {
+                // A misconfigured SESSION_DATA_DIR (a file, not a dir): logged here (the LIST endpoint is the
+                // loud 500 surface); a by-id lookup degrades to not-found — no new failure channel on GET /{id}.
+                _logger.LogWarning("Session data dir is a file, not a directory: {Dir}", _dataDir);
+            }
+
+            return null;
+        }
+
+        try
+        {
+            // TopDirectoryOnly + the session_*.json pattern: dir-scoped, no recursion (lesson §11 — read side).
+            foreach (var path in Directory.EnumerateFiles(_dataDir, "session_*.json", SearchOption.TopDirectoryOnly))
+            {
+                // Match on the deserialized SessionId (not the filename). A corrupt/oversize candidate is
+                // skipped by TryReadFile (null) and simply doesn't match → a corrupt-only would-be match is
+                // not-found (Q5), never a throw.
+                var session = TryReadFile(path);
+                if (session is not null && session.SessionId == id)
+                {
+                    return session;
+                }
+            }
+
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                       or ArgumentException or NotSupportedException or SecurityException)
+        {
+            // A dir-level enumeration failure degrades to not-found (lesson §3); detail stays server-side.
+            _logger.LogWarning("Session by-id read failed ({Dir}): {Error}",
+                _dataDir, ex.Message.ReplaceLineEndings(" "));
+            return null;
+        }
+    }
+
     // Reads + deserializes one session file, degrading to null (SKIP) on a size-cap breach, a corrupt
     // payload, or an IO error — so one bad file never blanks the list (Q3 / lesson §3).
     private InterpretationSession? TryReadFile(string path)

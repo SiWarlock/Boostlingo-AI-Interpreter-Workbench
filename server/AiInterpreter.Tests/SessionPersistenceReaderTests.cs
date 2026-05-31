@@ -221,4 +221,56 @@ public class SessionPersistenceReaderTests : IDisposable
         Assert.Equal(0, turnless.TurnCount);
         Assert.Empty(turnless.Modes);
     }
+
+    // ===== 068 — ReadById (the GET /{id} disk-fallback by-id read) =====
+
+    // RB1 — ReadById returns the persisted session whose DESERIALIZED SessionId matches (the filename embeds
+    // StartedAt, not the bare id → match by content, not filename). No matching file / a missing dir → null.
+    [Fact]
+    public async Task read_by_id_returns_the_matching_persisted_session()
+    {
+        var dir = NewTempDir();
+        await WriteSession(dir, BuildSession("session_aaa", T, "a", rich: true));
+        await WriteSession(dir, BuildSession("session_bbb", T.AddMinutes(1), "b"));
+        await WriteSession(dir, BuildSession("session_ccc", T.AddMinutes(2), "c"));
+        var reader = new SessionPersistenceReader(dir);
+
+        Assert.Equal("session_bbb", reader.ReadById("session_bbb")!.SessionId);
+        // Matched by SessionId, not filename — the rich match round-trips its content.
+        Assert.Equal("hola mundo", reader.ReadById("session_aaa")!.Turns[0].Transcripts[0].Text);
+        // No matching file → null; a missing dir → null (not a throw).
+        Assert.Null(reader.ReadById("session_zzz"));
+        Assert.Null(new SessionPersistenceReader(Path.Combine(dir, "nope")).ReadById("session_aaa"));
+    }
+
+    // RB2 — degrade: a corrupt file is SKIPPED (reuses TryReadFile); the valid match still returns, and a
+    // target with only a corrupt would-be candidate → not-found (null), never a throw (Q5 / §3/§35).
+    [Fact]
+    public async Task read_by_id_skips_corrupt_files_and_finds_the_valid_match()
+    {
+        var dir = NewTempDir();
+        await WriteSession(dir, BuildSession("session_good", T, "good"));
+        await File.WriteAllTextAsync(Path.Combine(dir, "session_corrupt.json"), "{ not valid json");
+        var reader = new SessionPersistenceReader(dir);
+
+        Assert.Equal("session_good", reader.ReadById("session_good")!.SessionId);
+        Assert.Null(reader.ReadById("session_corrupt")); // the corrupt candidate is skipped, no match
+    }
+
+    // RB3 — ⭐ the pre-FS id gate (safety rule #5 / §11): an invalid (non-allowlist) id → null WITHOUT
+    // enumerating. PROVEN deterministically: a file whose deserialized SessionId IS the invalid string is
+    // present + WOULD match if enumeration ran — only the pre-FS gate short-circuiting first yields null.
+    [Fact]
+    public async Task read_by_id_rejects_invalid_id_before_touching_the_fs()
+    {
+        var dir = NewTempDir();
+        var evil = BuildSession("../evil", T, "evil"); // written directly — the writer would reject this id
+        await File.WriteAllTextAsync(
+            Path.Combine(dir, "session_evil.json"), JsonSerializer.Serialize(evil, JsonDefaults.Options));
+        var reader = new SessionPersistenceReader(dir);
+
+        Assert.Null(reader.ReadById("../evil")); // gate rejects → null despite the matching-by-id file present
+        Assert.Null(reader.ReadById("a/b"));
+        Assert.Null(reader.ReadById(""));
+    }
 }

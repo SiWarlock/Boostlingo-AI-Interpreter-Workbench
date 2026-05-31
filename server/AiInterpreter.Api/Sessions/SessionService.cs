@@ -146,7 +146,12 @@ public sealed class SessionService : ISessionService
         }
     }
 
-    public InterpretationSession? Get(string sessionId) => _store.Get(sessionId);
+    // In-memory FIRST (the freshest copy of a LIVE session), then the persisted disk snapshot (068) — so
+    // GET /{id} (+ /summary) returns a past/evicted session across a restart instead of 404; in-memory WINS
+    // when both exist. Precedence note: Get also backs the AppendEvents/CompleteTurn existence pre-checks, so
+    // a MUTATION on an evicted (disk-only) session passes that check but fail-closes at the in-memory store
+    // (turn.not_found, no resurrection) — pinned by the fail-close E2E.
+    public InterpretationSession? Get(string sessionId) => _store.Get(sessionId) ?? _reader.ReadById(sessionId);
 
     public async Task<EndSessionOutcome?> EndAsync(string sessionId, CancellationToken cancellationToken = default)
     {
@@ -170,7 +175,9 @@ public sealed class SessionService : ISessionService
 
     public SessionSummary? Summary(string sessionId)
     {
-        var session = _store.Get(sessionId);
+        // Route through Get (in-memory → disk, 068) so GET /{id}/summary on a past/evicted session recomputes
+        // from the persisted turns too — symmetric with GET /{id}; "see past evidence across a restart" (H.3).
+        var session = Get(sessionId);
         return session is null ? null : _summaryService.Compute(session);
     }
 
