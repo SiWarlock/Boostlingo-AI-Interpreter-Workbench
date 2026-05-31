@@ -232,7 +232,7 @@ describe('switchMode (Finding 2c — propagate a mid-session mode switch to the 
     expect(store.getState().mode).toBe('realtime') // resynced from response.config.currentMode (Q4)
   })
 
-  it('on ApiError: surfaces the error, KEEPS the prior mode, does NOT tear down (no divergence — Q1)', async () => {
+  it('on ApiError: normalizes to session.mode_switch_failed (Q4), KEEPS the prior mode, no teardown', async () => {
     const store = createSessionStore()
     store.sessionStarted(wireSession()) // cascade
     const uiError: UiError = {
@@ -246,8 +246,13 @@ describe('switchMode (Finding 2c — propagate a mid-session mode switch to the 
     await switchMode({ store, api, connectionManager }, 'realtime')
 
     const s = store.getState()
-    expect(s.errors).toContainEqual(uiError)
-    expect(s.mode).toBe('cascade') // prior mode kept — no backend/frontend divergence
+    // Q4 (054 — intentional behavior change): the catch normalizes ANY failure (ApiError or not) to a
+    // single sanitized frontend code, so errorCopy maps ONE actionable message and no raw backend/http
+    // code (e.g. http.404 pre-050-backend) reaches the banner via the generic fallback.
+    expect(s.errors).toHaveLength(1)
+    expect(s.errors[0].code).toBe('session.mode_switch_failed')
+    expect(s.errors[0].safeMessage).not.toContain('That mode is not available.') // backend msg not echoed
+    expect(s.mode).toBe('cascade') // prior mode kept — no backend/frontend divergence (Q1)
     expect(connectionManager.onModeSwitch).not.toHaveBeenCalled() // no teardown on a failed switch
   })
 
@@ -262,6 +267,23 @@ describe('switchMode (Finding 2c — propagate a mid-session mode switch to the 
     expect(s.errors).toHaveLength(1)
     expect(s.errors[0].code).toBe('session.mode_switch_failed')
     expect(s.errors[0].safeMessage).not.toContain('boom-internal-detail')
+    expect(s.mode).toBe('cascade')
+  })
+
+  it('clears prior errors before attempting a switch — a failed switch leaves ONLY the normalized error', async () => {
+    const store = createSessionStore()
+    store.sessionStarted(wireSession()) // active, cascade
+    store.addError({ code: 'prior.error', safeMessage: 'old', retryable: true }) // a lingering banner
+    const api = { setMode: vi.fn().mockRejectedValue(new Error('boom')) }
+    const connectionManager = cm()
+
+    await switchMode({ store, api, connectionManager }, 'realtime')
+
+    // switchMode self-clears at the start of a real switch attempt (like startSession, §7) so it's robust
+    // to any callsite — not only ModeToggle. The prior error is gone; only the new normalized error remains.
+    const s = store.getState()
+    expect(s.errors).toHaveLength(1) // RED today: switchMode doesn't clear → prior + new = length 2
+    expect(s.errors[0].code).toBe('session.mode_switch_failed')
     expect(s.mode).toBe('cascade')
   })
 
@@ -289,5 +311,52 @@ describe('switchMode (Finding 2c — propagate a mid-session mode switch to the 
     expect(api.setMode).not.toHaveBeenCalled()
     expect(connectionManager.onModeSwitch).toHaveBeenCalledWith('cascade', 'realtime')
     expect(store.getState().mode).toBe('realtime')
+  })
+
+  it('ended session: store-only switch, NO POST — do not POST to a dead session (054 Fix A)', async () => {
+    const store = createSessionStore()
+    store.sessionStarted(wireSession()) // active, sessionId 'session_abc', cascade
+    store.sessionEnded() // sessionStatus 'ended' — but sessionId is NOT cleared (the root-cause gap)
+    const api = { setMode: vi.fn() }
+    const connectionManager = cm()
+
+    await switchMode({ store, api, connectionManager }, 'realtime')
+
+    expect(api.setMode).not.toHaveBeenCalled() // no POST to the ended session (RED today: sessionId non-null → POSTs)
+    expect(connectionManager.onModeSwitch).toHaveBeenCalledWith('cascade', 'realtime') // same shape as pre-session
+    expect(store.getState().mode).toBe('realtime') // store-only write — configures the NEXT session's mode
+    expect(store.getState().errors).toEqual([]) // no error — the toggle self-recovers (no dead-endpoint 404)
+  })
+
+  it('ending session: store-only switch, NO POST (gate is future-proof for the in-flight-end status)', async () => {
+    const store = createSessionStore()
+    store.sessionStarted(wireSession()) // active, cascade
+    store.setSessionStatus('ending')
+    const api = { setMode: vi.fn() }
+    const connectionManager = cm()
+
+    await switchMode({ store, api, connectionManager }, 'realtime')
+
+    expect(api.setMode).not.toHaveBeenCalled()
+    expect(connectionManager.onModeSwitch).toHaveBeenCalledWith('cascade', 'realtime') // store-only branch shape
+    expect(store.getState().mode).toBe('realtime')
+    expect(store.getState().errors).toEqual([])
+  })
+
+  it('readyForTurn session: POSTs setMode — a LIVE session, the inverse gate must NOT skip it (regression guard vs `=== active`)', async () => {
+    const store = createSessionStore()
+    store.sessionStarted(wireSession()) // active, cascade
+    store.setSessionStatus('readyForTurn') // a live between-turns status — still a backend session
+    const api = { setMode: vi.fn().mockResolvedValue(sessionWithMode('realtime')) }
+    const connectionManager = cm()
+
+    await switchMode({ store, api, connectionManager }, 'realtime')
+
+    // Guards the Q2 inverse gate: a naive refactor to `sessionStatus === 'active'` would skip this POST
+    // and silently re-introduce the 2c divergence. (Green against both the old sessionId-only guard and
+    // the new inverse gate — a deliberate regression lock, not a RED-first behavior test.)
+    expect(api.setMode).toHaveBeenCalledWith('session_abc', 'realtime')
+    expect(connectionManager.onModeSwitch).toHaveBeenCalledWith('cascade', 'realtime')
+    expect(store.getState().mode).toBe('realtime') // resynced from the response
   })
 })

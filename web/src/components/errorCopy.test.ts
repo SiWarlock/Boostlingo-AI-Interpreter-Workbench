@@ -30,6 +30,13 @@ describe('errorCopy', () => {
     expect(errorCopy(err('summary.load_failed'))).toMatch(/summary/i)
     expect(errorCopy(err('turn.create_failed'))).toMatch(/start the turn/i)
     expect(errorCopy(err('rate_limited'))).toMatch(/rate-limiting/i)
+
+    // mode-switch failure (G.4/054 Fix C) — actionable + NOT the generic fallback. switchMode normalizes
+    // every failure to this single code (Q4), so this is the only mode-switch copy the banner ever shows.
+    const modeSwitch = errorCopy(err('session.mode_switch_failed'))
+    expect(modeSwitch).not.toBe('Something went wrong. Please retry.') // not the generic fallback
+    expect(modeSwitch).toMatch(/mode/i)
+    expect(modeSwitch).toMatch(/retry/i) // actionable
   })
 
   it('falls back to a safe generic for an unknown code (never an error, never raw)', () => {

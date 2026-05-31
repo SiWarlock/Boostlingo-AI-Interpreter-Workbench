@@ -78,12 +78,21 @@ export async function switchMode(
   { store, api, connectionManager }: SwitchModeDeps,
   target: InterpretationMode,
 ): Promise<void> {
-  const { sessionId, mode: prevMode } = store.getState()
+  const { sessionId, sessionStatus, mode: prevMode } = store.getState()
   if (target === prevMode) {
-    return // no-op (idempotent; matches the backend no-op)
+    return // no-op (idempotent; matches the backend no-op) — a same-mode click has no side effects
   }
-  if (sessionId === null) {
-    // Pre-session mode pick: no backend session yet — a pure store write (Create sends the initial mode).
+  // Clear any prior transient error FIRST (like startSession, §7) so a real switch attempt self-recovers
+  // from a lingering failed-switch banner — robust to ANY callsite, not just ModeToggle's clear-before-dispatch
+  // (G.4/054 Fix B). After the no-op guard so a same-mode click stays a pure no-op.
+  store.clearErrors()
+  // Store-only write (no POST) whenever there is NO live backend session: pre-session (sessionId null —
+  // Create sends the initial mode) OR after the session ended/ending (don't POST to a dead session — the
+  // toggle just configures the NEXT session's mode; G.4/054 Fix A). The compound `||` early-return also
+  // narrows sessionId → string for the POST path below. A LIVE session (active OR readyForTurn) POSTs so a
+  // turn created after the switch is stamped with the new mode (the 2c fix) — never gate on `=== 'active'`
+  // alone, which would skip a live readyForTurn session and silently re-introduce the divergence.
+  if (sessionId === null || sessionStatus === 'ended' || sessionStatus === 'ending') {
     connectionManager.onModeSwitch(prevMode, target)
     store.updateSessionConfig({ mode: target })
     return
@@ -94,18 +103,16 @@ export async function switchMode(
     // mode from the authoritative returned session (Q4). Backend + frontend now agree (the 2c fix).
     connectionManager.onModeSwitch(prevMode, target)
     store.updateSessionConfig({ mode: session.config.currentMode })
-  } catch (error) {
+  } catch {
     // Failure: KEEP the prior mode (no backend/frontend divergence — Q1) + NO teardown (the realtime pc, if
-    // any, stays up); surface a sanitized error.
-    store.addError(
-      error instanceof ApiError
-        ? error.uiError
-        : {
-            code: 'session.mode_switch_failed',
-            safeMessage: 'Could not switch the interpretation mode.',
-            retryable: true,
-          },
-    )
+    // any, stays up). Normalize ANY failure (ApiError or not) to a single sanitized frontend code (Q4/054)
+    // so errorCopy maps ONE actionable message and no raw backend/http code (e.g. http.404 pre-050) reaches
+    // the banner via the generic fallback.
+    store.addError({
+      code: 'session.mode_switch_failed',
+      safeMessage: 'Could not switch the interpretation mode.',
+      retryable: true,
+    })
   }
 }
 

@@ -25,6 +25,8 @@ export function errorCopy(error: UiError): string {
       return 'The provider is rate-limiting requests. Wait a moment and retry.'
     case 'realtime.session.disconnected':
       return 'Realtime connection lost — switch to Cascade mode and retry.'
+    case 'session.mode_switch_failed':
+      return "Couldn't switch mode — staying on the current mode. Retry."
   }
 
   const { code } = error

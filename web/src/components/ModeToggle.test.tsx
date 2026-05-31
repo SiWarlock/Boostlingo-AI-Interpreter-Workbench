@@ -121,3 +121,25 @@ describe('ModeToggle — backend mode-switch on an active session (Finding 2c, b
     await waitFor(() => expect(sessionStore.getState().mode).toBe('realtime'))
   })
 })
+
+describe('ModeToggle — clear-before-retry self-recovery (G.4/054 Fix B)', () => {
+  it('clears prior errors before dispatching the switch so a failed switch never strands the UI', async () => {
+    sessionStore.reset()
+    sessionStore.loadConfig(fullConfig)
+    sessionStore.sessionStarted(session('cascade')) // active, cascade
+    // a lingering error from a previous failed switch (the "must refresh to recover" symptom)
+    sessionStore.addError({ code: 'session.mode_switch_failed', safeMessage: 'x', retryable: true })
+    expect(sessionStore.getState().errors).toHaveLength(1)
+    vi.mocked(sessionsApi.setMode).mockResolvedValue(session('realtime'))
+
+    render(<ModeToggle />)
+    fireEvent.click(screen.getByRole('button', { name: 'Realtime' }))
+
+    // cleared SYNCHRONOUSLY at dispatch — switchMode self-clears at the start of a real switch (before its
+    // first await), so the toggle-click path self-recovers and the lingering banner can't strand the UI.
+    expect(sessionStore.getState().errors).toEqual([])
+    // and the switch still proceeds to the backend afterwards
+    await waitFor(() => expect(sessionsApi.setMode).toHaveBeenCalledWith('session_abc', 'realtime'))
+    await waitFor(() => expect(sessionStore.getState().mode).toBe('realtime'))
+  })
+})

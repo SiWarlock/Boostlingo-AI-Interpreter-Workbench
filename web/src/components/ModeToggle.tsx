@@ -57,6 +57,8 @@ export default function ModeToggle() {
               aria-pressed={active}
               disabled={!available || !toggleAllowed}
               onClick={() =>
+                // switchMode self-clears prior errors at the start of a real switch (G.4/054 Fix B —
+                // clear-before-retry self-recovery), so the toggle is a thin dispatch (clean separation).
                 void switchMode(
                   {
                     store: sessionStore,
