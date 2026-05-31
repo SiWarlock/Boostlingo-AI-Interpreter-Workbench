@@ -76,6 +76,15 @@ builder.Services.AddSingleton<SessionStore>();
 var sessionDataDir = builder.Configuration["SESSION_DATA_DIR"] ?? "../../data/sessions";
 builder.Services.AddSingleton(new SessionPersistenceWriter(sessionDataDir));
 
+// Session history READ tier (H.3-backend) — enumerate + deserialize persisted session_*.json for
+// GET /api/sessions, so past sessions list across a server restart. Degrades per-file (skip a corrupt/
+// oversize file, never blank the list — ARCH-016/019, lessons §11/§3). Per-file size cap is env-tunable
+// (sessions can exceed pricing.json's 1MB); the logger surfaces skipped files server-side (single-lined).
+var sessionMaxReadBytes = builder.Configuration.GetValue<long?>("SESSION_MAX_READ_BYTES")
+    ?? SessionPersistenceReader.DefaultMaxReadBytes;
+builder.Services.AddSingleton(sp => new SessionPersistenceReader(
+    sessionDataDir, sessionMaxReadBytes, sp.GetRequiredService<ILogger<SessionPersistenceReader>>()));
+
 // Session summary (B.7b) — pure read-only aggregation of a session into SessionSummary (reuses the
 // B.3 MetricsAggregator per turn). Stateless singleton; entry-point consumers are B.9 (GET …/summary
 // + the /end snapshot) + F.3 (ComparisonSummary) — available-in-DI now, not a silent gap.

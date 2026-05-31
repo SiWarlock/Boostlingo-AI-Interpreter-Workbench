@@ -28,6 +28,23 @@ public sealed class SessionsController : ControllerBase
     public async Task<ActionResult<InterpretationSession>> Create([FromBody] CreateSessionRequest request)
         => Ok(await _sessions.CreateAsync(request));
 
+    // H.3-backend — the persisted-session history list (ARCH-016 read tier). Reads SESSION_DATA_DIR from
+    // disk so past sessions list even across a server restart; returns lightweight SessionListItem
+    // summaries (Option B), most-recent-first. Maps the reader Result → DTO at the boundary (§16): a
+    // wholesale read failure (a misconfigured data dir) → a sanitized sessions.read_failed UiError (500),
+    // never a serialized Result / path / stack leak.
+    [HttpGet]
+    public ActionResult<IReadOnlyList<SessionListItem>> List()
+    {
+        var result = _sessions.ListPersistedSessions();
+        return result.IsSuccess
+            ? Ok(result.Value)
+            : StatusCode(
+                StatusCodes.Status500InternalServerError,
+                _sanitizer.SanitizeResult(
+                    "sessions.read_failed", result, httpStatusCode: StatusCodes.Status500InternalServerError));
+    }
+
     [HttpGet("{id}")]
     public ActionResult<InterpretationSession> Get(string id)
     {

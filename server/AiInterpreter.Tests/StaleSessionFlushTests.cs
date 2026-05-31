@@ -122,9 +122,10 @@ public class StaleSessionFlushTests
         var summary = new SessionSummaryService(new MetricsAggregator(), clock);
         var dir = writerDir ?? Path.Combine(Path.GetTempPath(), "aiw-flush-tests", Guid.NewGuid().ToString("N"));
         var writer = new SessionPersistenceWriter(dir);
+        var reader = new SessionPersistenceReader(dir);
         var pricing = PricingLoader.Load(Path.Combine(AppContext.BaseDirectory, "pricing.json"));
         var service = new SessionService(
-            store, summary, writer, clock,
+            store, summary, writer, reader, clock,
             Options.Create(new DeepgramOptions()), Options.Create(new OpenAiTtsOptions()),
             pricing, new CostEstimator(pricing), logger ?? NullLogger<SessionService>.Instance);
         return (service, store, dir);

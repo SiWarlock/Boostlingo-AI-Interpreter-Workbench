@@ -35,6 +35,13 @@ public interface ISessionService
     // the 2c fix needs (CreateTurn stamps from CurrentMode); the transition persists at the next /complete
     // or /end write, like the rest of the in-memory store.
     SwitchModeOutcome SwitchMode(string sessionId, string? requestedMode);
+
+    // H.3-backend — the persisted-session history list (ARCH-016 read tier). Reads SESSION_DATA_DIR from
+    // DISK (not the in-memory store) so past sessions list even across a server restart; degrades per-file
+    // (a bad file is skipped, never blanks the list), orders most-recent-first (StartedAt desc), and
+    // projects each to a lightweight SessionListItem. Returns a Result the controller maps → DTO/UiError
+    // (§16): a wholesale read failure (a misconfigured data dir) → a sanitized sessions.read_failed.
+    Result<IReadOnlyList<SessionListItem>> ListPersistedSessions();
 }
 
 /// <summary>The in-memory result of ending a session: the ended session + the MUST-write outcome
@@ -59,6 +66,7 @@ public sealed class SessionService : ISessionService
     private readonly SessionStore _store;
     private readonly SessionSummaryService _summaryService;
     private readonly SessionPersistenceWriter _writer;
+    private readonly SessionPersistenceReader _reader;
     private readonly IClock _clock;
     private readonly DeepgramOptions _deepgram;
     private readonly OpenAiTtsOptions _tts;
@@ -70,6 +78,7 @@ public sealed class SessionService : ISessionService
         SessionStore store,
         SessionSummaryService summaryService,
         SessionPersistenceWriter writer,
+        SessionPersistenceReader reader,
         IClock clock,
         IOptions<DeepgramOptions> deepgram,
         IOptions<OpenAiTtsOptions> tts,
@@ -80,6 +89,7 @@ public sealed class SessionService : ISessionService
         _store = store;
         _summaryService = summaryService;
         _writer = writer;
+        _reader = reader;
         _clock = clock;
         _deepgram = deepgram.Value;
         _tts = tts.Value;
@@ -198,6 +208,26 @@ public sealed class SessionService : ISessionService
         // Non-null: Get just resolved the id and the store has no eviction (the EndAsync/SetSummary precedent).
         var updated = _store.SwitchMode(sessionId, target, transition)!;
         return new SwitchModeOutcome(SwitchModeStatus.Ok, updated);
+    }
+
+    public Result<IReadOnlyList<SessionListItem>> ListPersistedSessions()
+    {
+        // Read the persisted (on-disk) sessions, degrade-per-file inside the reader. A wholesale failure
+        // (a misconfigured data dir) propagates so the controller can map it → a sanitized UiError (§16).
+        var read = _reader.ReadAll();
+        if (!read.IsSuccess)
+        {
+            return Result<IReadOnlyList<SessionListItem>>.Failure(read.Error!);
+        }
+
+        // Presentation: most-recent-first + project to the lightweight summary (Q1=B payload hygiene). The
+        // SessionId tiebreak keeps the order deterministic when two sessions share a StartedAt second.
+        var items = read.Value
+            .OrderByDescending(s => s.StartedAt)
+            .ThenByDescending(s => s.SessionId, StringComparer.Ordinal)
+            .Select(SessionListItem.FromSession)
+            .ToList();
+        return Result<IReadOnlyList<SessionListItem>>.Success(items);
     }
 
     // Parse + allowlist the requested mode (lesson §27 chokepoint): reject null/blank, non-enum strings, and

@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using AiInterpreter.Api.Common;
+using AiInterpreter.Api.Providers.Abstractions;
 using AiInterpreter.Api.Security;
 using AiInterpreter.Api.Sessions;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -595,5 +596,133 @@ public class SessionsControllerTests : IDisposable
         Assert.DoesNotContain("sk-", json, StringComparison.Ordinal);
         Assert.DoesNotContain("ek_", json, StringComparison.Ordinal);
         Assert.DoesNotContain("\"audio\"", json, StringComparison.Ordinal);
+    }
+
+    // ===== H.3-backend — GET /api/sessions (persisted-session history list, Option B summaries) =====
+
+    // Pre-seed a persisted session_*.json into the data dir BEFORE the host boots (deterministic StartedAt,
+    // independent of the host's SystemClock) so the ordering + summary assertions are reproducible.
+    private static async Task SeedSession(
+        string dir, string sessionId, DateTimeOffset startedAt, string? label, bool rich = false,
+        params InterpretationMode[] turnModes)
+    {
+        var direction = new LanguageDirection(LanguageCode.En, LanguageCode.Es);
+        var profile = new ProviderProfile(
+            "openai", "gpt-realtime", "deepgram", "nova-3", "multi",
+            "openai", "gpt-5-nano", "openai", "gpt-4o-mini-tts", "alloy");
+        var config = new SessionConfig(InterpretationMode.Cascade, direction, profile);
+
+        var turns = new List<InterpretationTurn>();
+        var i = 0;
+        foreach (var mode in turnModes)
+        {
+            var transcripts = rich
+                ? new List<TranscriptSegment>
+                {
+                    new($"seg{i}", "source", "hola mundo", true, "deepgram", startedAt, ClockSource.Server),
+                }
+                : new List<TranscriptSegment>();
+            turns.Add(new InterpretationTurn(
+                $"turn{i}", mode, direction, startedAt, startedAt.AddSeconds(2), 2000,
+                transcripts, new List<LatencyEvent>(), null, null, new List<ProviderError>(),
+                TurnStatus.Completed, "gpt-5-nano", "alloy"));
+            i++;
+        }
+
+        var session = new InterpretationSession(
+            sessionId, label, startedAt, startedAt.AddMinutes(1), config,
+            turns, new List<ModeTransitionEvent>(), null, "2026-05-28-payg-estimates");
+        var write = await new SessionPersistenceWriter(dir).WriteAsync(session);
+        Assert.True(write.IsSuccess, write.Error);
+    }
+
+    // L1 — GET /api/sessions returns the persisted sessions as a summary array ordered most-recent-first
+    // (StartedAt desc). Pre-seeded out of order to prove the endpoint sorts, not the disk enumeration.
+    [Fact]
+    public async Task list_sessions_returns_persisted_summaries_ordered_desc()
+    {
+        var dir = TempDir();
+        await SeedSession(dir, "session_a", T, "oldest", turnModes: InterpretationMode.Cascade);
+        await SeedSession(dir, "session_b", T.AddMinutes(5), "newest", turnModes: InterpretationMode.Realtime);
+        await SeedSession(dir, "session_c", T.AddMinutes(2), "middle", turnModes: InterpretationMode.Cascade);
+        using var factory = Factory(dir);
+
+        var resp = await factory.CreateClient().GetAsync("/api/sessions");
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        var ids = doc.RootElement.EnumerateArray().Select(e => e.GetProperty("sessionId").GetString()).ToArray();
+        Assert.Equal(new[] { "session_b", "session_c", "session_a" }, ids);
+    }
+
+    // L2 — an empty data dir (no persisted sessions) → 200 with an empty array (NOT 404/500). A fresh
+    // clone with no history yet must list nothing cleanly.
+    [Fact]
+    public async Task list_sessions_empty_dir_returns_empty_array()
+    {
+        using var factory = Factory(TempDir());
+
+        var resp = await factory.CreateClient().GetAsync("/api/sessions");
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        Assert.Equal(JsonValueKind.Array, doc.RootElement.ValueKind);
+        Assert.Equal(0, doc.RootElement.GetArrayLength());
+    }
+
+    // L3 — a reader failure (SESSION_DATA_DIR resolves to a regular FILE, not a dir) → a sanitized
+    // UiError (sessions.read_failed), never a 500 stack/path leak. Pins the Result→DTO mapping (§16).
+    [Fact]
+    public async Task list_sessions_reader_failure_returns_sanitized_uierror()
+    {
+        var blocker = Path.Combine(Path.GetTempPath(), "aiw-blocker-" + Guid.NewGuid().ToString("N"));
+        await File.WriteAllTextAsync(blocker, "x");
+        _tempPaths.Add(blocker);
+        using var factory = Factory(blocker); // SESSION_DATA_DIR points at a file
+
+        var resp = await factory.CreateClient().GetAsync("/api/sessions");
+        var body = await resp.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.InternalServerError, resp.StatusCode);
+        var ui = JsonSerializer.Deserialize<UiError>(body, JsonDefaults.Options);
+        Assert.Equal("sessions.read_failed", ui!.Code);
+        Assert.DoesNotContain(blocker, body, StringComparison.Ordinal);
+        Assert.DoesNotContain("Exception", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("stack", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // L4 — the list item is a LIGHTWEIGHT summary (Q1=B payload hygiene): it carries sessionId/label/
+    // startedAt/endedAt/turnCount/modes and does NOT embed the full turns/latencyEvents/transcripts; the
+    // read-side sentinel holds (no sk-/ek_/raw-audio in the response).
+    [Fact]
+    public async Task list_sessions_item_is_lightweight_summary_and_sentinel_clean()
+    {
+        var dir = TempDir();
+        await SeedSession(dir, "session_full", T, "Demo run", rich: true,
+            turnModes: new[] { InterpretationMode.Cascade, InterpretationMode.Realtime });
+        using var factory = Factory(dir);
+
+        var resp = await factory.CreateClient().GetAsync("/api/sessions");
+        var body = await resp.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        using var doc = JsonDocument.Parse(body);
+        var item = doc.RootElement.EnumerateArray().Single();
+        Assert.Equal("session_full", item.GetProperty("sessionId").GetString());
+        Assert.Equal("Demo run", item.GetProperty("label").GetString());
+        Assert.Equal(JsonValueKind.String, item.GetProperty("startedAt").ValueKind);
+        Assert.Equal(JsonValueKind.String, item.GetProperty("endedAt").ValueKind);
+        Assert.Equal(2, item.GetProperty("turnCount").GetInt32());
+        var modes = item.GetProperty("modes").EnumerateArray().Select(m => m.GetString()).ToArray();
+        Assert.Equal(new[] { "cascade", "realtime" }, modes);
+
+        // Payload hygiene: the summary must NOT carry the heavy per-turn detail.
+        Assert.False(item.TryGetProperty("turns", out _));
+        Assert.DoesNotContain("latencyEvents", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("hola mundo", body, StringComparison.Ordinal); // transcript text not embedded
+        // Read-side sentinel.
+        Assert.DoesNotContain("sk-", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("ek_", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"audio\":", body, StringComparison.OrdinalIgnoreCase);
     }
 }

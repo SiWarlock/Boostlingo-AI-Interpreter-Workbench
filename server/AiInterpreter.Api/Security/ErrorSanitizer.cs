@@ -123,6 +123,7 @@ public sealed class ErrorSanitizer
     private static string SafeMessageForCode(string code) => code switch
     {
         "persistence.failed" => "Saving the session failed; the session continues.",
+        "sessions.read_failed" => "Loading saved sessions failed.",
         "session.not_found" => "Session not found.",
         "turn.not_found" => "Turn not found.",
         "evaluation.invalid_phrase" => "The submitted text is too long or invalid.",

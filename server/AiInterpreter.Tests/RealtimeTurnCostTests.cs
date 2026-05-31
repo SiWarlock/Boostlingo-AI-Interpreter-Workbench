@@ -191,8 +191,9 @@ public class RealtimeTurnCostTests
         var store = new SessionStore(clock);
         var summary = new SessionSummaryService(new MetricsAggregator(), clock);
         var writer = new SessionPersistenceWriter(Path.Combine(Path.GetTempPath(), "aiw-rt-cost-tests"));
+        var reader = new SessionPersistenceReader(Path.Combine(Path.GetTempPath(), "aiw-rt-cost-tests"));
         return new SessionService(
-            store, summary, writer, clock,
+            store, summary, writer, reader, clock,
             Options.Create(new DeepgramOptions()), Options.Create(new OpenAiTtsOptions()),
             resolved, new CostEstimator(resolved), NullLogger<SessionService>.Instance);
     }
