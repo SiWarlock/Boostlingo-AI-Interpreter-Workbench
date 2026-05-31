@@ -144,10 +144,16 @@ function deriveStageDurations(byName: Map<string, LatencyEvent>): Record<string,
 // qualified per-minute string — reused for both per-turn (via formatCostPerMinute) and per-mode
 // session figures (ModeSummary.estimatedCostPerMinuteUsd).
 export function formatUsdPerMinute(value: number | null | undefined): string {
-  if (value === null || value === undefined) {
+  // null/undefined/non-finite → the shared 'n/a' token (never a bare 0, never '$NaN/min'). The
+  // !Number.isFinite guard closes a latent NaN/Infinity leak (§21 precedent). (074)
+  if (value === null || value === undefined || !Number.isFinite(value)) {
     return 'n/a'
   }
-  return `Estimated $${value.toFixed(2)}/min`
+  // Sub-dime (0 < v < 0.10) renders 4 decimals so a sub-cent estimate keeps its signal (0.0116 → $0.0116,
+  // not the toFixed(2) collapse to $0.01 — user "more defined", 074). An exact 0 is a REAL zero (≠ n/a,
+  // §13) → $0.00 (2-decimal, NOT $0.0000). ≥$0.10 stays 2-decimal cents (regression-pin: $0.42/$1.00). (074)
+  const decimals = value > 0 && value < 0.1 ? 4 : 2
+  return `Estimated $${value.toFixed(decimals)}/min`
 }
 
 // Per-turn convenience over a CostEstimate. The model + assumptions for the tooltip the CostPanel reads

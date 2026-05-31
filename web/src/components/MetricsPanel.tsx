@@ -47,6 +47,11 @@ function ModeAverages({ label, mode }: { label: string; mode?: ModeSummary | nul
       </p>
     )
   }
+  // Realtime is a SINGLE model — it has no discrete STT/Translation/TTS stages, so those three averages are
+  // always n/a for it. Render ONE explanatory note in their place instead of three n/a rows (which mis-read
+  // as "missing data" rather than "doesn't apply" — ARCH-013, 074). Cascade keeps its per-stage averages.
+  // The responsiveness (speech-end → first audio / → playback) + Errors rows apply to BOTH modes.
+  const isRealtime = key === 'realtime'
   return (
     <div aria-label={`${key}-averages`} style={{ marginTop: 6 }}>
       <div className="eyebrow" style={{ marginBottom: 2 }}>
@@ -54,9 +59,17 @@ function ModeAverages({ label, mode }: { label: string; mode?: ModeSummary | nul
       </div>
       <Kv k="Avg speech-end → first audio" v={ms(mode.avgSpeechEndToFirstAudioMs)} />
       <Kv k="Avg speech-end → playback" v={ms(mode.avgSpeechEndToPlaybackMs)} />
-      <Kv k="Avg STT final" v={ms(mode.avgSttFinalMs)} />
-      <Kv k="Avg translation final" v={ms(mode.avgTranslationFinalMs)} />
-      <Kv k="Avg TTS first audio" v={ms(mode.avgTtsFirstAudioMs)} />
+      {isRealtime ? (
+        <p className="na" style={{ margin: '2px 0' }}>
+          Single model — no discrete stages
+        </p>
+      ) : (
+        <>
+          <Kv k="Avg STT final" v={ms(mode.avgSttFinalMs)} />
+          <Kv k="Avg translation final" v={ms(mode.avgTranslationFinalMs)} />
+          <Kv k="Avg TTS first audio" v={ms(mode.avgTtsFirstAudioMs)} />
+        </>
+      )}
       <Kv k="Errors" v={String(mode.errorCount)} />
     </div>
   )

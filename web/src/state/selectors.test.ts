@@ -6,6 +6,7 @@ import {
   canToggleMode,
   deriveTurnMetrics,
   formatCostPerMinute,
+  formatUsdPerMinute,
   modeAvailability,
 } from './selectors'
 import type {
@@ -409,5 +410,23 @@ describe('formatCostPerMinute', () => {
     expect(formatCostPerMinute(cost({ estimatedUsdPerMinute: null }))).toBe('n/a')
     expect(formatCostPerMinute(undefined)).toBe('n/a')
     expect(formatCostPerMinute(null)).toBe('n/a')
+  })
+
+  // 074: a sub-cent estimate (e.g. 0.0116) collapsed to "$0.01/min" under toFixed(2), erasing the signal
+  // (user: "more defined"). Sub-dime (0 < v < 0.10) gains precision; >= $0.10 stays 2-decimal (the
+  // $0.42/$1.00 pins above are byte-identical). [Q1 — orch owns the formula; expecteds use the toFixed(4)
+  // lean. On a TWEAK to toPrecision(2): 0.0116->$0.012, 0.005->$0.0050, 0.042->$0.042.]
+  it('renders sub-dime values with extra precision so a sub-cent estimate does not collapse to $0.01', () => {
+    expect(formatUsdPerMinute(0.0116)).toBe('Estimated $0.0116/min')
+    expect(formatUsdPerMinute(0.005)).toBe('Estimated $0.0050/min')
+    expect(formatUsdPerMinute(0.042)).toBe('Estimated $0.0420/min')
+  })
+
+  // 074: an exact 0 rate is a REAL zero (distinct from n/a — §13), rendered $0.00 (not $0.0000); non-finite
+  // (NaN/Infinity) degrades to n/a (the §21 Number.isFinite guard — ABSENT today → NaN renders "$NaN/min").
+  it('renders an exact zero rate as $0.00 (distinct from n/a) and degrades non-finite to n/a', () => {
+    expect(formatUsdPerMinute(0)).toBe('Estimated $0.00/min')
+    expect(formatUsdPerMinute(Number.NaN)).toBe('n/a')
+    expect(formatUsdPerMinute(Number.POSITIVE_INFINITY)).toBe('n/a')
   })
 })

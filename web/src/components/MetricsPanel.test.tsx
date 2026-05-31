@@ -3,7 +3,7 @@ import { cleanup, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import MetricsPanel from './MetricsPanel'
 import { sessionStore } from '../state/sessionStore'
-import type { LatencyEvent, LatencyStage } from '../types/domain'
+import type { LatencyEvent, LatencyStage, SessionSummary } from '../types/domain'
 
 // Fix B (brief 049): the per-stage "Cascade stages" section is cascade-only — realtime has no
 // STT/Translation/TTS stages, so a hardcoded "Cascade stages" header under realtime.* events is wrong.
@@ -76,5 +76,65 @@ describe('MetricsPanel — cascade headline = responsiveness with the target bad
     expect(screen.getByText(/This turn · speech/i)).toBeInTheDocument()
     // total-turn still shown, as secondary context (in the per-turn rows), no badge
     expect(screen.getByText(/4100 ms/)).toBeInTheDocument()
+  })
+})
+
+// 074 feature 2: the session-averages ModeAverages renders the 3 stage rows (Avg STT/Translation/TTS final)
+// for BOTH modes today — for realtime those are always n/a (realtime is one model, no discrete stages), and
+// n/a mis-reads as "missing data." Relabel the realtime block to a "single model — no discrete stages" note
+// in place of the 3 stage rows; cascade keeps its stage averages. Query by aria-label/text (web §22/§14).
+describe('MetricsPanel — realtime session-averages stage relabel (074)', () => {
+  const summary = {
+    turnCount: 2,
+    cascade: {
+      turnCount: 1,
+      avgSpeechEndToFirstAudioMs: 500,
+      avgSpeechEndToPlaybackMs: null,
+      estimatedCostPerMinuteUsd: 0.42,
+      errorCount: 0,
+      avgSttFinalMs: 120,
+      avgTranslationFinalMs: 240,
+      avgTtsFirstAudioMs: 360,
+    },
+    realtime: {
+      turnCount: 1,
+      avgSpeechEndToFirstAudioMs: 300,
+      avgSpeechEndToPlaybackMs: null,
+      estimatedCostPerMinuteUsd: null,
+      errorCount: 1,
+    },
+    wer: null,
+    computedAt: '2026-05-31T10:00:00+00:00',
+    pricingConfigVersion: 'v',
+  } as unknown as SessionSummary
+
+  it('relabels the realtime block "single model — no discrete stages" instead of three n/a stage rows', () => {
+    sessionStore.setSummary(summary)
+
+    render(<MetricsPanel />)
+
+    const block = screen.getByLabelText('realtime-averages')
+    // the explanatory note replaces the 3 stage rows (RED: the note is absent today)
+    expect(within(block).getByText(/single model.*no discrete stages/i)).toBeInTheDocument()
+    // the 3 stage rows are GONE from the realtime block (RED: they currently render as n/a)
+    expect(within(block).queryByText('Avg STT final')).toBeNull()
+    expect(within(block).queryByText('Avg translation final')).toBeNull()
+    expect(within(block).queryByText('Avg TTS first audio')).toBeNull()
+    // the rows that DO apply to realtime still render (responsiveness + errors)
+    expect(within(block).getByText('Avg speech-end → first audio')).toBeInTheDocument()
+    expect(within(block).getByText('Errors')).toBeInTheDocument()
+  })
+
+  it('leaves the cascade block UNCHANGED — still shows the three per-stage averages', () => {
+    sessionStore.setSummary(summary)
+
+    render(<MetricsPanel />)
+
+    const block = screen.getByLabelText('cascade-averages')
+    expect(within(block).getByText('Avg STT final')).toBeInTheDocument()
+    expect(within(block).getByText('Avg translation final')).toBeInTheDocument()
+    expect(within(block).getByText('Avg TTS first audio')).toBeInTheDocument()
+    // and NOT the single-model note (that's realtime-only)
+    expect(within(block).queryByText(/single model/i)).toBeNull()
   })
 })
