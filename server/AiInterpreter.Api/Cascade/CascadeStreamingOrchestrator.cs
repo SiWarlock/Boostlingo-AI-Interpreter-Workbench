@@ -82,6 +82,13 @@ public sealed class CascadeStreamingOrchestrator(
         // A partial was seen but not yet finalized. If the STT stream ENDS while this is set, a final was
         // lost — fail closed (Q4). A clean end with no pending partial (silence) stays Completed.
         var pendingPartial = false;
+        // 052: empty-final tolerance. Deepgram emits spurious empty/whitespace finals around real speech
+        // (leading silence / VAD boundary / a trailing empty AFTER the content). SKIP them and fail
+        // cascade.empty_transcript only when ≥1 empty final arrived but NO non-empty final ever did — so a
+        // spurious empty can't kill a correct turn, yet a genuinely-empty turn still fails closed. Pure
+        // silence (no final at all) leaves sawEmptyFinal false → still Completes (Q4), unchanged.
+        var sawNonEmptyFinal = false;
+        var sawEmptyFinal = false;
 
         while (true)
         {
@@ -135,6 +142,16 @@ public sealed class CascadeStreamingOrchestrator(
                     yield break;
                 }
 
+                // 052: saw ONLY empty/whitespace finals (≥1 empty, none with content) → genuinely empty →
+                // fail closed here at stream end (not on the first empty final). Pure silence (no final at
+                // all) leaves sawEmptyFinal false → falls through to Completed (Q4), unchanged.
+                if (sawEmptyFinal && !sawNonEmptyFinal)
+                {
+                    yield return new Error(ProviderErrorMapper.EmptyTranscript(SttProviderLabel));
+                    yield return new Done(TurnStatus.Failed);
+                    yield break;
+                }
+
                 break;
             }
 
@@ -156,17 +173,20 @@ public sealed class CascadeStreamingOrchestrator(
                     break;
 
                 case SttFinal final:
-                    pendingPartial = false; // this segment's partials are now finalized
-                    yield return Stamp(LatencyEventNames.SttFinal, LatencyStage.Stt, origin, SttProviderLabel);
-                    yield return Seg($"src-{segmentIndex}", RoleSource, final.Text, true, SttProviderLabel, final.Timestamp);
+                    pendingPartial = false; // this segment's partials are now finalized (even if the final is empty)
 
-                    // Empty-transcript short-circuit: never call translation/TTS (ARCH-011).
+                    // 052: SKIP a spurious empty/whitespace final — do NOT stamp stt.final, emit a source
+                    // segment, translate, or fail. (Skipping the stamp also keeps a late TRAILING empty final
+                    // from inflating the stt.final latency.) Fail-closed-if-all-empty is at stream end above.
                     if (string.IsNullOrWhiteSpace(final.Text))
                     {
-                        yield return new Error(ProviderErrorMapper.EmptyTranscript(SttProviderLabel));
-                        yield return new Done(TurnStatus.Failed);
-                        yield break;
+                        sawEmptyFinal = true;
+                        break;
                     }
+
+                    sawNonEmptyFinal = true;
+                    yield return Stamp(LatencyEventNames.SttFinal, LatencyStage.Stt, origin, SttProviderLabel);
+                    yield return Seg($"src-{segmentIndex}", RoleSource, final.Text, true, SttProviderLabel, final.Timestamp);
 
                     var translationOutcome = new StageOutcome();
                     await foreach (var ev in TranslateSegmentAsync(p, origin, final.Text, segmentIndex, translationOutcome, ct))

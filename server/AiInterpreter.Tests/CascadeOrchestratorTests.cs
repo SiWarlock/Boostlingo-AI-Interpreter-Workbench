@@ -146,6 +146,9 @@ public class CascadeOrchestratorTests
         Assert.Equal([0, 1, 2], audio.Select(a => a.Seq).ToArray());
     }
 
+    // 052 note: a single empty final (no non-empty ever) now fails cascade.empty_transcript at STREAM END
+    // (skipped per-final, then failed-closed at end) rather than on the first empty final — the OUTCOME is
+    // unchanged (no translation/TTS; one empty_transcript Error; Done(Failed)), so the assertions still hold.
     [Fact]
     public async Task empty_transcript_short_circuits_no_translation_or_tts()
     {
@@ -424,5 +427,84 @@ public class CascadeOrchestratorTests
             {
             }
         });
+    }
+
+    // === 052 — empty-final tolerance (skip spurious empty/whitespace finals; fail empty_transcript only
+    // when NO non-empty final ever arrives). Deepgram emits empty finals around real speech (leading
+    // silence / VAD boundary / a trailing empty after the real content) — failing on one killed correct
+    // turns (the live trailing-empty case). ===
+
+    // Emits SttStarted then one SttFinal per supplied string (no partials needed for these cases).
+    private sealed class ScriptedFinalsSttProvider(params string[] finals) : ISttProvider
+    {
+        public async IAsyncEnumerable<SttEvent> TranscribeAsync(
+            SttRequest request, [EnumeratorCancellation] CancellationToken ct)
+        {
+            await Task.CompletedTask;
+            yield return new SttStarted(DateTimeOffset.UtcNow);
+            foreach (var text in finals)
+            {
+                yield return new SttFinal(text, DateTimeOffset.UtcNow);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task real_final_then_trailing_empty_succeeds()
+    {
+        // ⭐ The exact live case: a fully-correct turn translated + played, then a TRAILING empty final
+        // arrived — it must be skipped, NOT fail the turn.
+        var translationSpy = new CountingTranslationProvider(new FakeTranslationProvider(FakeTranslationBehavior.TokenStreamThenFinal));
+        var ttsSpy = new CountingTtsProvider(new FakeTtsProvider(FakeTtsBehavior.ChunkedThenComplete));
+
+        var events = await Run(new ScriptedFinalsSttProvider("hola", ""), translationSpy, ttsSpy, Params());
+
+        Assert.Equal(TurnStatus.Completed, Assert.IsType<Done>(events[^1]).Status);
+        Assert.DoesNotContain(events, e => e is Error);   // the trailing empty did NOT fail the correct turn
+        Assert.Equal(1, translationSpy.Calls);            // the real final drove translation; the empty one didn't
+        Assert.Equal(1, ttsSpy.Calls);
+    }
+
+    [Fact]
+    public async Task empty_leading_final_then_real_final_succeeds()
+    {
+        var translationSpy = new CountingTranslationProvider(new FakeTranslationProvider(FakeTranslationBehavior.TokenStreamThenFinal));
+        var ttsSpy = new CountingTtsProvider(new FakeTtsProvider(FakeTtsBehavior.ChunkedThenComplete));
+
+        var events = await Run(new ScriptedFinalsSttProvider("", "hola"), translationSpy, ttsSpy, Params());
+
+        Assert.Equal(TurnStatus.Completed, Assert.IsType<Done>(events[^1]).Status);
+        Assert.DoesNotContain(events, e => e is Error);
+        Assert.Equal(1, translationSpy.Calls);            // the leading empty was skipped, "hola" translated
+        Assert.Equal(1, ttsSpy.Calls);
+        Assert.Contains(events, e => e is Transcript t && t.Segment.Role == "source" && t.Segment.IsFinal && t.Segment.Text == "hola");
+    }
+
+    [Fact]
+    public async Task all_empty_finals_fail_empty_transcript_at_stream_end()
+    {
+        // No non-empty final EVER → genuinely empty → fail closed at stream end (translation/TTS never run).
+        var translationSpy = new CountingTranslationProvider(new FakeTranslationProvider());
+        var ttsSpy = new CountingTtsProvider(new FakeTtsProvider());
+
+        var events = await Run(new ScriptedFinalsSttProvider("", "  "), translationSpy, ttsSpy, Params());
+
+        Assert.Equal("cascade.empty_transcript", events.OfType<Error>().Single().ProviderError.Code);
+        Assert.Equal(TurnStatus.Failed, Assert.IsType<Done>(events[^1]).Status);
+        Assert.Equal(0, translationSpy.Calls);            // never translated an empty final — the teeth
+        Assert.Equal(0, ttsSpy.Calls);
+    }
+
+    [Fact]
+    public async Task single_nonempty_final_succeeds_regression()
+    {
+        var events = await Run(
+            new ScriptedFinalsSttProvider("hola"),
+            new FakeTranslationProvider(FakeTranslationBehavior.TokenStreamThenFinal),
+            new FakeTtsProvider(FakeTtsBehavior.ChunkedThenComplete),
+            Params());
+
+        Assert.Equal(TurnStatus.Completed, Assert.IsType<Done>(events[^1]).Status);
+        Assert.DoesNotContain(events, e => e is Error);
     }
 }
