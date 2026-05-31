@@ -4,7 +4,7 @@
 
 A browser workbench that builds and instruments **OpenAI Realtime** vs a **streaming STT→Translation→TTS cascade** to compare live-interpretation **latency, cost, and quality** under identical conditions. The product is *measured evidence* (latency events, estimated cost/min, WER) — used to make an architecture recommendation, not to ship a production interpreter.
 
-For the full design contract see **[`ARCHITECTURE.md`](ARCHITECTURE.md)**; the phase plan + build state live in **[`MVP_TASKS.md`](MVP_TASKS.md)**.
+For the full design contract see **[`ARCHITECTURE.md`](ARCHITECTURE.md)**; the phase plan + build state live in **[`MVP_TASKS.md`](MVP_TASKS.md)**. The two headline deliverables: the **[Realtime vs Cascade comparison write-up](docs/COMPARISON_WRITEUP.md)** (latency / cost / WER / recommendation) and **[how this was built with AI](docs/AI_COLLABORATION.md)** (the architecture-first, agent-team, TDD workflow).
 
 ---
 

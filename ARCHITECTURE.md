@@ -280,7 +280,8 @@ public sealed record InterpretationTurn(
     List<ProviderError> Errors,
     TurnStatus Status,
     string? TranslationModelUsed,   // records which model ran, for per-turn comparison
-    string? TtsVoiceUsed);
+    string? TtsVoiceUsed,
+    bool IsEvaluation = false);     // (F.4) true for a standalone WER-evaluation turn — set at POST /wer; excluded from per-mode ModeSummary, kept in WerSummary
 
 public sealed record TranscriptSegment(
     string SegmentId,
@@ -545,6 +546,8 @@ In-memory active session + JSON persistence; **no database**. Write strategy:
 `SessionSummary` is **computed on demand** (callable mid-session via `GET …/summary`); a cached snapshot is written on `/end` (and may be re-snapshotted per turn). `ComputedAt` disambiguates staleness.
 
 > **(B.7b realization)** `SessionSummaryService.Compute` is **pure** — it returns a `SessionSummary` and never writes `session.Summary`; the `/end` cached-snapshot write is the persistence step's job (B.9). It reuses the per-turn `MetricsAggregator` (no re-implemented metric math) and averages each metric over its **non-null** turns (absent-on-all → `null`, never `0`); a `ModeSummary` is `null` iff its mode has no turns; the cascade-stage averages are `null` for realtime turns; WER averaging is **unbounded** (no clamp `>1.0`). `EstimatedCostPerMinuteUsd` is the **average of the mode's non-null per-turn `EstimatedUsdPerMinute`** (a labeled estimate-of-estimates, not a blended `sum/sum`). The summary is **mode-level only** — the model-variant comparison (both translation models / both realtime models) is the `ComparisonSummary` (F.3) consumer's client-side grouping from the raw turn list (`TranslationModelUsed` + `ProviderProfile`), read via `GET /api/sessions/{id}`, not a `/summary` field.
+
+> **(F.4 realization — eval-turn exclusion from `ModeSummary`)** A standalone WER-evaluation turn is created with the session's current mode (so it would otherwise inflate that mode's count), but it is not an interpretation turn. `SummarizeMode` therefore **excludes `IsEvaluation` turns** from the per-mode `ModeSummary` — `TurnCount`, the per-stage/cost averages, AND `ErrorCount` (one `&& !t.IsEvaluation` filter) — so the Realtime-vs-Cascade comparison counts only real interpretation turns. **`SummarizeWer` is unchanged** (still all turns with a `WerResult`) — eval turns are *where WER comes from*. **Semantic to note:** top-level `SessionSummary.TurnCount` still counts **all** turns incl. eval (an honest "total turns in the session"), so **top-level total ≠ the sum of the per-mode `ModeSummary.TurnCount`s** (the delta is the eval-turn count); the comparison reads the per-mode counts, which are interpretation-only. The marker is set server-side at `POST /wer` (atomic with the `WerResult` attach), so the frontend stays unchanged. The rare orphan (a `computeWer` failure after the turn is created → unmarked, still counted) is a bounded documented residual.
 
 ---
 
@@ -1364,7 +1367,7 @@ Canonical home for every cross-doc-invariant model. A field change on any row re
 | `SessionConfig` | ARCH-005 | CurrentMode, Direction, ProviderProfile |
 | `InterpretationSession` | ARCH-005 | id, label, timestamps, config, turns, modeTransitions, summary, pricingConfigVersion |
 | `ModeTransitionEvent` | ARCH-005 | id, from/to mode, direction, occurredAt, clockSource, triggeredByTurnId |
-| `InterpretationTurn` | ARCH-005 | id, mode, direction, timestamps, audioDurationMs, transcripts, latencyEvents, cost, wer, errors, status, translationModelUsed, ttsVoiceUsed |
+| `InterpretationTurn` | ARCH-005 | id, mode, direction, timestamps, audioDurationMs, transcripts, latencyEvents, cost, wer, errors, status, translationModelUsed, ttsVoiceUsed, **isEvaluation** (F.4 — bool, default false; trailing so old JSON deserializes false) |
 | `TranscriptSegment` | ARCH-005 | id, role, text, isFinal, provider, timestamp, clockSource |
 | `LatencyEvent` | ARCH-005, ARCH-013 | name, stage, timestamp, relativeMs, clockSource, metadata |
 | `CostEstimate` | ARCH-005, ARCH-014 | provider, model, pricingBasis, estimatedUsd, perMinute, units, version, assumptions |
