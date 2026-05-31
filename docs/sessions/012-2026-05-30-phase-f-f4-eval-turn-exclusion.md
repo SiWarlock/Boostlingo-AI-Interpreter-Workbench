@@ -3,7 +3,7 @@
 - **Date:** 2026-05-30
 - **Phase:** F (F.4 — the user-requested backend close-out that finalizes Phase F)
 - **Predecessor:** [011-2026-05-30-phase-f-f2-f3-frontend.md](011-2026-05-30-phase-f-f2-f3-frontend.md)
-- **Successor:** _(none yet)_
+- **Successor:** [013-2026-05-31-smoke-bugfix-backend.md](013-2026-05-31-smoke-bugfix-backend.md)
 - **Slice commit:** `1e8a655` `feat(evaluation): exclude WER-eval turns from per-mode summary (F.4)`
 
 ## Why this session existed
