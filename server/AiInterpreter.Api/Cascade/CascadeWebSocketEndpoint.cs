@@ -9,6 +9,7 @@ using AiInterpreter.Api.Providers.Abstractions;
 using AiInterpreter.Api.Security;
 using AiInterpreter.Api.Sessions;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 
 namespace AiInterpreter.Api.Cascade;
 
@@ -30,6 +31,7 @@ public sealed class CascadeWebSocketEndpoint(
     CostEstimator costEstimator,
     LatencyEventFactory factory,
     IClock clock,
+    ILogger<CascadeWebSocketEndpoint> logger,
     string allowedOrigin)
 {
     private const int ReceiveBufferSize = 16 * 1024;
@@ -66,6 +68,18 @@ public sealed class CascadeWebSocketEndpoint(
         catch (OperationCanceledException)
         {
             // client/server abort — fall through to a best-effort close.
+        }
+        catch (Exception ex)
+        {
+            // ARCH-018 / invariant #4 — degrade-don't-crash. Any UNEXPECTED exception on the turn/finalize
+            // path (vs the OCE abort above) is logged server-side (the original, single-lined to prevent log
+            // forgery — lesson §13/§14) and surfaced to the client as ONE sanitized terminal `error` frame
+            // (a fixed-message ProviderErrorMapper.Unknown — never the raw exception/stack/secret). A server
+            // `error` frame is terminal for the client (it fails the turn + suppresses the abnormal-close
+            // handler), so no `done` need follow. Without this, the exception propagates unhandled out of the
+            // accepted socket (no sanitized reason; the client sees only a generic connection_lost on close).
+            logger.LogError("Cascade WS turn faulted: {Error}", ex.ToString().ReplaceLineEndings(" "));
+            await TrySendErrorFrameAsync(socket, ProviderErrorMapper.Unknown("cascade", "cascade"));
         }
 
         await CloseQuietlyAsync(socket);
@@ -125,31 +139,38 @@ public sealed class CascadeWebSocketEndpoint(
         LatencyEvent? recordingStopped = null;
         var pump = PumpAudioAsync(socket, audio.Writer, () => recordingStopped = CascadeWsMapping.RecordingEvent(factory, LatencyEventNames.TurnRecordingStopped, origin), ct);
 
-        await foreach (var ev in orchestrator.RunAsync(p, audio.Reader.ReadAllAsync(ct), ct).WithCancellation(ct))
+        // The pump (the ONLY socket reader + channel writer) must always be unblocked + awaited however the
+        // turn exits — a normal Done, a defensive Done-less stream end, OR an unexpected exception (caught by
+        // HandleAsync's degrade-don't-crash boundary). Completing the writer throws a pump parked on a
+        // backpressured WriteAsync (full bounded channel) out cleanly (it swallows the ChannelClosedException
+        // + completes in its own finally); ONE try/finally covers every exit so the pump can never park/leak (G.4).
+        try
         {
-            if (ev is Done done)
+            await foreach (var ev in orchestrator.RunAsync(p, audio.Reader.ReadAllAsync(ct), ct).WithCancellation(ct))
             {
-                await EmitTerminalAsync(socket, p, turn, collected, recordingStopped, origin, done, ct);
-                // Unblock the pump: after Done nothing reads the channel, so a pump parked on a backpressured
-                // WriteAsync (full channel) would never drain — completing the writer throws it out cleanly.
-                audio.Writer.TryComplete();
-                await pump; // PumpAudioAsync swallows the resulting ChannelClosedException + completes in finally
-                return;
-            }
+                if (ev is Done done)
+                {
+                    await EmitTerminalAsync(socket, p, turn, collected, recordingStopped, origin, done, ct);
+                    return; // the finally completes the writer + awaits the pump
+                }
 
-            // Audio is streamed to the client but NEVER accumulated/persisted (safety invariant #3); the
-            // rest (transcripts/latency/errors) is collected for the persisted turn.
-            if (ev is not Audio)
-            {
-                collected.Add(ev);
-            }
+                // Audio is streamed to the client but NEVER accumulated/persisted (safety invariant #3); the
+                // rest (transcripts/latency/errors) is collected for the persisted turn.
+                if (ev is not Audio)
+                {
+                    collected.Add(ev);
+                }
 
-            await SendAsync(socket, CascadeWsMapping.ToServerMessage(ev, p.TurnId), ct);
+                await SendAsync(socket, CascadeWsMapping.ToServerMessage(ev, p.TurnId), ct);
+            }
         }
-
-        // Orchestrator stream ended without a Done (defensive — it always yields one); unblock the pump.
-        audio.Writer.TryComplete();
-        await pump;
+        finally
+        {
+            // Done, Done-less end, or exception — all converge here. TryComplete is idempotent; PumpAudioAsync
+            // never throws (provider failures surface as SttFailed; the ChannelClosedException is swallowed).
+            audio.Writer.TryComplete();
+            await pump;
+        }
     }
 
     // turn.recording.stopped (stashed at stop time) -> cost (computed, before done) -> done -> persist.
@@ -287,6 +308,21 @@ public sealed class CascadeWebSocketEndpoint(
 
         var bytes = JsonSerializer.SerializeToUtf8Bytes(message, JsonDefaults.Options);
         await socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, ct);
+    }
+
+    // Best-effort sanitized terminal `error` frame for the degrade-don't-crash path (ARCH-018). Uses
+    // CancellationToken.None — the request token may already be cancelled, but the client still needs the
+    // terminal reason; SendAsync's not-open guard + this catch keep it from throwing further.
+    private static async Task TrySendErrorFrameAsync(WebSocket socket, ProviderError error)
+    {
+        try
+        {
+            await SendAsync(socket, new { type = "error", error }, CancellationToken.None);
+        }
+        catch (Exception)
+        {
+            // best-effort — the CloseQuietlyAsync below still runs.
+        }
     }
 
     // Pre-accept HTTP rejection (non-WS request / disallowed Origin) — a UiError-shaped body (ARCH-018/019),

@@ -153,6 +153,7 @@ builder.Services.AddScoped(sp => new CascadeWebSocketEndpoint(
     sp.GetRequiredService<CostEstimator>(),
     sp.GetRequiredService<LatencyEventFactory>(),
     sp.GetRequiredService<IClock>(),
+    sp.GetRequiredService<ILogger<CascadeWebSocketEndpoint>>(),
     frontendOrigin));
 
 // Error sanitizer (B.8, safety invariant #4) — turns any Exception/ProviderError/Result.Error into a

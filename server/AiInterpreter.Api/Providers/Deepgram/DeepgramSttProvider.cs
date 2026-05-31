@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Threading;
 using System.Threading.Channels;
 using AiInterpreter.Api.Providers.Abstractions;
 using Deepgram;
@@ -58,7 +59,29 @@ public sealed class DeepgramSttProvider : ISttProvider
 
         yield return new SttStarted(DateTimeOffset.UtcNow);
 
-        var pump = PumpAudioAsync(client, request, channel.Writer, ct);
+        // Stop() is called on BOTH the graceful close (after SendFinalize, to trigger the server CloseResponse
+        // that completes the channel) AND on iterator teardown/cancellation. The Deepgram SDK v6.6.1 Stop() is
+        // NOT safe to call twice — a double-Stop derefs an already-disposed field internally, logging a benign
+        // but alarming `[Error] Stop: NullReferenceException` (the real-key-smoke noise that derailed a
+        // diagnosis). Guard so the SDK Stop() runs at most once (Interlocked — the graceful-close caller and
+        // the teardown caller can race; whichever wins sets the latch synchronously before awaiting Stop()).
+        var stopped = 0;
+        async Task StopOnceAsync()
+        {
+            if (Interlocked.Exchange(ref stopped, 1) == 0)
+            {
+                try
+                {
+                    await client.Stop();
+                }
+                catch
+                {
+                    // best-effort socket close on teardown/cancellation — no leak (G.4).
+                }
+            }
+        }
+
+        var pump = PumpAudioAsync(client, request, channel.Writer, StopOnceAsync, ct);
         try
         {
             await foreach (var ev in channel.Reader.ReadAllAsync(ct))
@@ -68,15 +91,7 @@ public sealed class DeepgramSttProvider : ISttProvider
         }
         finally
         {
-            try
-            {
-                await client.Stop();
-            }
-            catch
-            {
-                // best-effort socket close on teardown/cancellation — no leak (G.4).
-            }
-
+            await StopOnceAsync(); // idempotent — a no-op if the graceful close already stopped the client.
             await pump; // PumpAudioAsync never throws (failures surface as SttFailed).
         }
     }
@@ -85,6 +100,7 @@ public sealed class DeepgramSttProvider : ISttProvider
         IListenWebSocketClient client,
         SttRequest request,
         ChannelWriter<SttEvent> writer,
+        Func<Task> stopOnceAsync,
         CancellationToken ct)
     {
         try
@@ -96,7 +112,7 @@ public sealed class DeepgramSttProvider : ISttProvider
             }
 
             await client.SendFinalize();
-            await client.Stop(); // graceful close -> server flushes finals then emits CloseResponse -> completes channel.
+            await stopOnceAsync(); // graceful close -> server flushes finals then emits CloseResponse -> completes channel.
         }
         catch (OperationCanceledException)
         {
