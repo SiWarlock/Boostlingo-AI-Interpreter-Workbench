@@ -22,7 +22,7 @@ public class SessionStoreTests
         InterpretationMode.Cascade,
         new LanguageDirection(LanguageCode.En, LanguageCode.Es),
         new ProviderProfile("openai", "gpt-realtime", "deepgram", "nova-3", "multi",
-            "openai", "gpt-5.4-nano", "openai", "gpt-4o-mini-tts", "alloy"));
+            "openai", "gpt-5-nano", "openai", "gpt-4o-mini-tts", "alloy"));
 
     [Fact]
     public void finalize_turn_is_idempotent_does_not_overwrite_terminal()

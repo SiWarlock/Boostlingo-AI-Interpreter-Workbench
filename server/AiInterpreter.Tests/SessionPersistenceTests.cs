@@ -59,7 +59,7 @@ public class SessionPersistenceTests : IDisposable
         var direction = new LanguageDirection(LanguageCode.En, LanguageCode.Es);
         var profile = new ProviderProfile(
             "openai", "gpt-realtime", "deepgram", "nova-3", "multi",
-            "openai", "gpt-5.4-nano", "openai", "gpt-4o-mini-tts", "alloy");
+            "openai", "gpt-5-nano", "openai", "gpt-4o-mini-tts", "alloy");
         var config = new SessionConfig(InterpretationMode.Cascade, direction, profile);
 
         var transcript = new TranscriptSegment(
@@ -68,7 +68,7 @@ public class SessionPersistenceTests : IDisposable
             "stt.final", LatencyStage.Stt, T, 912, ClockSource.Server,
             new Dictionary<string, string> { ["provider"] = "deepgram" });
         var cost = new CostEstimate(
-            "cascade", "gpt-5.4-nano", "composite", 0.0012m, 0.05m,
+            "cascade", "gpt-5-nano", "composite", 0.0012m, 0.05m,
             new Dictionary<string, decimal> { ["audioMinutes"] = 0.5m },
             "2026-05-28-payg-estimates", new[] { "estimate only, not provider invoice" });
         var error = new ProviderError("openai", "tts", "tts.failed", "TTS unavailable", false, 503);
@@ -78,7 +78,7 @@ public class SessionPersistenceTests : IDisposable
             new List<TranscriptSegment> { transcript },
             new List<LatencyEvent> { latency },
             cost, null, new List<ProviderError> { error },
-            TurnStatus.Completed, "gpt-5.4-nano", "alloy");
+            TurnStatus.Completed, "gpt-5-nano", "alloy");
 
         return new InterpretationSession(
             sessionId, "Demo run 1", T, T.AddMinutes(1), config,

@@ -138,7 +138,7 @@ public class OpenAiTranslationProviderTests
         // Responses API nests these (NOT top-level reasoning_effort, which is Chat-Completions only).
         Assert.Equal("minimal", root.GetProperty("reasoning").GetProperty("effort").GetString());
         Assert.Equal("low", root.GetProperty("text").GetProperty("verbosity").GetString());
-        Assert.Equal("gpt-5.4-nano", root.GetProperty("model").GetString());
+        Assert.Equal("gpt-5-nano", root.GetProperty("model").GetString());
         Assert.Equal("hello world", root.GetProperty("input").GetString());
         var instructions = root.GetProperty("instructions").GetString();
         Assert.NotNull(instructions);
@@ -191,7 +191,7 @@ public class OpenAiTranslationProviderTests
         return new OpenAiTranslationProvider(http, Options.Create(options ?? new OpenAiTranslationOptions()));
     }
 
-    private static TranslationRequest Req(string text = "hello world", string model = "gpt-5.4-nano") =>
+    private static TranslationRequest Req(string text = "hello world", string model = "gpt-5-nano") =>
         new(text, LanguageCode.En, LanguageCode.Es, model, "session_1", "turn_1");
 
     private static async Task<List<TranslationEvent>> Collect(IAsyncEnumerable<TranslationEvent> source)

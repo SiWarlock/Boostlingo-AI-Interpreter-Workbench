@@ -57,7 +57,7 @@ public class CascadeControllerTests : IDisposable
         if (turnId is not null) content.Add(new StringContent(turnId), "TurnId");
         content.Add(new StringContent("en"), "Source");
         content.Add(new StringContent("es"), "Target");
-        content.Add(new StringContent("gpt-5.4-nano"), "TranslationModel");
+        content.Add(new StringContent("gpt-5-nano"), "TranslationModel");
         content.Add(new StringContent("alloy"), "TtsVoice");
         var file = new ByteArrayContent(audio);
         file.Headers.ContentType = new MediaTypeHeaderValue(contentType);
@@ -70,7 +70,7 @@ public class CascadeControllerTests : IDisposable
     {
         var client = factory.CreateClient();
         var create = new CreateSessionRequest("Blob run", InterpretationMode.Cascade,
-            new LanguageDirection(LanguageCode.En, LanguageCode.Es), "gpt-realtime", "gpt-5.4-nano");
+            new LanguageDirection(LanguageCode.En, LanguageCode.Es), "gpt-realtime", "gpt-5-nano");
         var sessionResp = await client.PostAsJsonAsync("/api/sessions", create, JsonDefaults.Options);
         var sessionId = JsonDocument.Parse(await sessionResp.Content.ReadAsStringAsync())
             .RootElement.GetProperty("sessionId").GetString()!;

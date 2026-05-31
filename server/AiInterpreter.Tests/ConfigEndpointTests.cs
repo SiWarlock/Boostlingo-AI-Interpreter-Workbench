@@ -105,7 +105,7 @@ public class ConfigEndpointTests
 
         var cascade = root.GetProperty("cascade");
         Assert.Equal(
-            new[] { "gpt-5.4-nano", "gpt-5.4-mini" },
+            new[] { "gpt-5-nano", "gpt-5-mini" },
             cascade.GetProperty("translation").GetProperty("models").EnumerateArray().Select(e => e.GetString()).ToArray());
         Assert.Equal("deepgram", cascade.GetProperty("stt").GetProperty("provider").GetString());
         Assert.Equal("nova-3", cascade.GetProperty("stt").GetProperty("model").GetString());
@@ -124,7 +124,7 @@ public class ConfigEndpointTests
         var (_, body) = await GetConfig("sk-real-openai", "dg-real-key");
 
         using var doc = JsonDocument.Parse(body);
-        Assert.Equal("2026-05-28-payg-estimates", doc.RootElement.GetProperty("pricingConfigVersion").GetString());
+        Assert.Equal("2026-05-31-payg-estimates", doc.RootElement.GetProperty("pricingConfigVersion").GetString());
     }
 
     // 6 (relocated B.9a boundary proof) — a real endpoint whose service throws (with a secret) is caught

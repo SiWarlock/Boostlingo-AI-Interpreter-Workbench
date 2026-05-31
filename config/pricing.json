@@ -1,5 +1,5 @@
 {
-  "version": "2026-05-28-payg-estimates",
+  "version": "2026-05-31-payg-estimates",
   "currency": "USD",
   "disclaimer": "Estimates from configured public pricing; NOT billing-grade. Re-verify before relying on numbers.",
   "providers": {
@@ -20,8 +20,8 @@
         "estimatorNote": "Convert audio seconds → tokens before applying rates; conversion factors are estimates — CONFIRM at build."
       },
       "translation": {
-        "gpt-5.4-nano": { "inputUsdPerMillionTokens": 0.20, "outputUsdPerMillionTokens": 1.25 },
-        "gpt-5.4-mini": { "inputUsdPerMillionTokens": 0.0, "outputUsdPerMillionTokens": 0.0, "note": "CONFIRM at build — mini tier > nano." }
+        "gpt-5-nano": { "inputUsdPerMillionTokens": 0.05, "outputUsdPerMillionTokens": 0.40 },
+        "gpt-5-mini": { "inputUsdPerMillionTokens": 0.25, "outputUsdPerMillionTokens": 2.00 }
       },
       "tts": {
         "gpt-4o-mini-tts": { "pricingBasis": "audio_output_tokens", "textInputUsdPerMillionTokens": 0.60, "audioOutputUsdPerMillionTokens": 12.0, "approxUsdPerAudioMinute": 0.015 },

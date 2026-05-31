@@ -85,7 +85,7 @@ public class CascadeWebSocketTests
     [Fact]
     public void cost_message_emitted_on_success()
     {
-        var estimate = new CostEstimate("cascade", "gpt-5.4-nano", "composite", 0.01m, 0.5m,
+        var estimate = new CostEstimate("cascade", "gpt-5-nano", "composite", 0.01m, 0.5m,
             new Dictionary<string, decimal>(), "v1", new[] { "note" });
 
         var message = CascadeWsMapping.ToCostMessageOrNull(Result<CostEstimate>.Success(estimate));

@@ -1,5 +1,10 @@
 using AiInterpreter.Api.Common;
+using AiInterpreter.Api.Config;
 using AiInterpreter.Api.Cost;
+using AiInterpreter.Api.Providers.Deepgram;
+using AiInterpreter.Api.Providers.OpenAI;
+using AiInterpreter.Api.Realtime;
+using Microsoft.Extensions.Options;
 
 namespace AiInterpreter.Tests;
 
@@ -7,8 +12,9 @@ namespace AiInterpreter.Tests;
 // degrade-don't-crash (lesson §3). Computed in decimal with no rounding, so every expected value is
 // derived from the same rates the estimator reads (config/pricing.json, copied to test output).
 //
-// Pins the "0.0 configured rate != absent config" distinction (test 9): gpt-5.4-mini's 0.0 rates
-// estimate to 0.0 (a known build-confirm), whereas genuinely-missing pricing degrades to unavailable.
+// Pins the "0.0 configured rate != absent config" distinction (lesson §9): a PRESENT 0.0 rate estimates
+// to 0.0, whereas genuinely-missing pricing degrades to unavailable — pinned via a synthetic 0.0-rate
+// config (the real pricing.json no longer carries a 0.0 placeholder, removed in the 051 model fix).
 public class CostEstimatorTests
 {
     private const decimal Million = 1_000_000m;
@@ -18,6 +24,32 @@ public class CostEstimatorTests
         var pricing = PricingLoader.Load(Path.Combine(AppContext.BaseDirectory, "pricing.json"));
         Assert.True(pricing.IsSuccess, pricing.Error);
         return new CostEstimator(pricing);
+    }
+
+    // GUARD (051): every translation model the ConfigService OFFERS must resolve to a pricing entry with a
+    // non-zero rate — so a not-on-key / unpriced / 0.0-placeholder model can't ship silently again (the 051
+    // bug: a configured model name not available on the user's key + a mini-tier 0.0 placeholder reading as
+    // "free"). Couples the catalog <-> pricing <-> non-zero; robust to future catalog additions.
+    [Fact]
+    public void every_configured_translation_model_prices_to_a_nonzero_estimate()
+    {
+        var config = new ConfigService(
+            Options.Create(new RealtimeOptions()),
+            Options.Create(new OpenAiTranslationOptions()),
+            Options.Create(new OpenAiTtsOptions()),
+            Options.Create(new DeepgramOptions()),
+            PricingLoader.Load(Path.Combine(AppContext.BaseDirectory, "pricing.json")));
+        var models = config.GetConfig().Cascade.Translation.Models;
+        var estimator = Estimator();
+
+        Assert.NotEmpty(models);
+        Assert.Contains(new OpenAiTranslationOptions().Model, models); // the configured default is one the catalog offers
+        foreach (var model in models)
+        {
+            var r = estimator.EstimateTranslation(model, new CostUsage { InputTokens = 1000, OutputTokens = 1000 });
+            Assert.True(r.IsSuccess, $"configured translation model '{model}' has no pricing entry");
+            Assert.True(r.Value.EstimatedUsd > 0m, $"configured translation model '{model}' prices to 0 (placeholder?)");
+        }
     }
 
     [Fact]
@@ -30,19 +62,19 @@ public class CostEstimatorTests
         Assert.Equal("usd_per_audio_minute", r.Value.PricingBasis);
         Assert.Equal("nova-3", r.Value.Model);
         Assert.Equal("deepgram", r.Value.Provider);
-        Assert.Equal("2026-05-28-payg-estimates", r.Value.PricingConfigVersion);
+        Assert.Equal("2026-05-31-payg-estimates", r.Value.PricingConfigVersion);
         Assert.Contains(r.Value.Assumptions, a => a.Contains("not provider invoice", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
     public void openai_translation_tokens_basis_estimate()
     {
-        var r = Estimator().EstimateTranslation("gpt-5.4-nano", new CostUsage { InputTokens = 14, OutputTokens = 18 });
+        var r = Estimator().EstimateTranslation("gpt-5-nano", new CostUsage { InputTokens = 14, OutputTokens = 18 });
 
         Assert.True(r.IsSuccess, r.Error);
-        Assert.Equal(14m / Million * 0.20m + 18m / Million * 1.25m, r.Value.EstimatedUsd);
+        Assert.Equal(14m / Million * 0.05m + 18m / Million * 0.40m, r.Value.EstimatedUsd);
         Assert.Equal("tokens", r.Value.PricingBasis);
-        Assert.Equal("gpt-5.4-nano", r.Value.Model);
+        Assert.Equal("gpt-5-nano", r.Value.Model);
         Assert.Equal("openai", r.Value.Provider);
     }
 
@@ -104,11 +136,11 @@ public class CostEstimatorTests
     public void cascade_turn_aggregates_three_stages()
     {
         var sttUsd = 0.5m * 0.0058m;
-        var translationUsd = 14m / Million * 0.20m + 18m / Million * 1.25m;
+        var translationUsd = 14m / Million * 0.05m + 18m / Million * 0.40m;
         var ttsUsd = 200m / Million * 15.0m;
 
         var r = Estimator().EstimateCascadeTurn(
-            translationModel: "gpt-5.4-nano",
+            translationModel: "gpt-5-nano",
             ttsModel: "tts-1",
             sttUsage: new CostUsage { AudioMinutes = 0.5m },
             translationUsage: new CostUsage { InputTokens = 14, OutputTokens = 18 },
@@ -119,7 +151,7 @@ public class CostEstimatorTests
         Assert.Equal(sttUsd + translationUsd + ttsUsd, r.Value.EstimatedUsd);
         Assert.Equal("composite", r.Value.PricingBasis);
         Assert.Equal("cascade", r.Value.Provider);
-        Assert.Equal("gpt-5.4-nano", r.Value.Model); // translation model = the cascade comparison axis
+        Assert.Equal("gpt-5-nano", r.Value.Model); // translation model = the cascade comparison axis
         Assert.Equal(sttUsd, r.Value.Units["sttUsd"]);
         Assert.Equal(translationUsd, r.Value.Units["translationUsd"]);
         Assert.Equal(ttsUsd, r.Value.Units["ttsUsd"]);
@@ -129,14 +161,14 @@ public class CostEstimatorTests
     public void cost_per_minute_divides_by_audio_duration()
     {
         var usage = new CostUsage { InputTokens = 1000, OutputTokens = 1000 };
-        var usd = 1000m / Million * 0.20m + 1000m / Million * 1.25m;
+        var usd = 1000m / Million * 0.05m + 1000m / Million * 0.40m;
 
-        var r = Estimator().EstimateTranslation("gpt-5.4-nano", usage, audioDurationMs: 30000);
+        var r = Estimator().EstimateTranslation("gpt-5-nano", usage, audioDurationMs: 30000);
         Assert.Equal(usd, r.Value.EstimatedUsd);
         Assert.Equal(usd / (30000m / 60000m), r.Value.EstimatedUsdPerMinute); // 30s = 0.5 min
 
         // Zero duration → null (no divide-by-zero).
-        var zero = Estimator().EstimateTranslation("gpt-5.4-nano", usage, audioDurationMs: 0);
+        var zero = Estimator().EstimateTranslation("gpt-5-nano", usage, audioDurationMs: 0);
         Assert.Null(zero.Value.EstimatedUsdPerMinute);
     }
 
@@ -155,7 +187,7 @@ public class CostEstimatorTests
 
         // A composite degrades wholesale if ANY stage cannot be priced (no partial-garbage estimate).
         var oneStageMissing = Estimator().EstimateCascadeTurn(
-            translationModel: "gpt-5.4-nano",
+            translationModel: "gpt-5-nano",
             ttsModel: "nonexistent-tts",
             sttUsage: new CostUsage { AudioMinutes = 0.5m },
             translationUsage: new CostUsage { InputTokens = 14, OutputTokens = 18 },
@@ -193,12 +225,32 @@ public class CostEstimatorTests
     }
 
     [Fact]
-    public void gpt_5_4_mini_zero_rate_still_estimates()
+    public void present_zero_configured_rate_estimates_to_zero_not_unavailable()
     {
-        var r = Estimator().EstimateTranslation("gpt-5.4-mini", new CostUsage { InputTokens = 1000, OutputTokens = 1000 });
+        // Lesson §9: a PRESENT 0.0 rate is configured data → estimates to 0.0 (distinguished from an ABSENT
+        // rate, which degrades to unavailable). Pinned via a synthetic 0.0-rate config — the real pricing.json
+        // no longer carries a 0.0 placeholder (removed in the 051 model fix), so the behavior is pinned here
+        // decoupled from the live config rather than re-introducing a placeholder.
+        var pricing = Result<PricingOptions>.Success(new PricingOptions
+        {
+            Version = "test",
+            Providers = new PricingProviders
+            {
+                Openai = new OpenAiPricing
+                {
+                    Translation = new Dictionary<string, TranslationModelRates>
+                    {
+                        ["zero-rate-model"] = new() { InputUsdPerMillionTokens = 0.0m, OutputUsdPerMillionTokens = 0.0m },
+                    },
+                },
+            },
+        });
+
+        var r = new CostEstimator(pricing).EstimateTranslation(
+            "zero-rate-model", new CostUsage { InputTokens = 1000, OutputTokens = 1000 });
 
         Assert.True(r.IsSuccess, r.Error);
-        Assert.Equal(0.0m, r.Value.EstimatedUsd); // 0.0 rate present → estimates to 0, NOT unavailable
-        Assert.Equal("gpt-5.4-mini", r.Value.Model);
+        Assert.Equal(0.0m, r.Value.EstimatedUsd); // present 0.0 rate → estimates to 0, NOT unavailable
+        Assert.Equal("zero-rate-model", r.Value.Model);
     }
 }

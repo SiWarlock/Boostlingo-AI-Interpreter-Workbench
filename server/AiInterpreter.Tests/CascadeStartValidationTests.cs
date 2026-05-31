@@ -20,7 +20,7 @@ public class CascadeStartValidationTests
         Assert.Equal(LanguageCode.Es, p.Direction.Target);
         Assert.Equal("linear16", p.Encoding);
         Assert.Equal(48000, p.SampleRate);
-        Assert.Equal("gpt-5.4-nano", p.TranslationModel);
+        Assert.Equal("gpt-5-nano", p.TranslationModel);
         Assert.Equal("alloy", p.TtsVoice);
     }
 
@@ -116,6 +116,6 @@ public class CascadeStartValidationTests
 
     private static string StartJsonFull(string sessionId, string turnId, string encoding, int sampleRate) =>
         $$"""
-        {"type":"start","sessionId":"{{sessionId}}","turnId":"{{turnId}}","direction":{"source":"en","target":"es"},"encoding":"{{encoding}}","sampleRate":{{sampleRate}},"translationModel":"gpt-5.4-nano","ttsVoice":"alloy"}
+        {"type":"start","sessionId":"{{sessionId}}","turnId":"{{turnId}}","direction":{"source":"en","target":"es"},"encoding":"{{encoding}}","sampleRate":{{sampleRate}},"translationModel":"gpt-5-nano","ttsVoice":"alloy"}
         """;
 }

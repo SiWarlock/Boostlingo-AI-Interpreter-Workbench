@@ -26,7 +26,7 @@ public sealed class EvaluationServiceTests
         new LanguageDirection(LanguageCode.En, LanguageCode.Es),
         new ProviderProfile(
             "openai", "gpt-realtime", "deepgram", "nova-3", "multi",
-            "openai", "gpt-5.4-nano", "openai", "gpt-4o-mini-tts", "es"));
+            "openai", "gpt-5-nano", "openai", "gpt-4o-mini-tts", "es"));
 
     // Writes a temp phrases JSON file and returns a store loaded from it (mirrors B.6's content load).
     private static EvaluationPhraseStore PhraseStore(params EvaluationPhrase[] phrases)

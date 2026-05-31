@@ -157,7 +157,7 @@ public class RealtimeTurnCostTests
 
     private static CreateSessionRequest Req(InterpretationMode mode, string realtimeModel) =>
         new(Label: "rt-cost", Mode: mode, Direction: new LanguageDirection(LanguageCode.En, LanguageCode.Es),
-            RealtimeModel: realtimeModel, TranslationModel: "gpt-5.4-nano");
+            RealtimeModel: realtimeModel, TranslationModel: "gpt-5-nano");
 
     private static SessionService Build(Result<PricingOptions>? pricing = null)
     {

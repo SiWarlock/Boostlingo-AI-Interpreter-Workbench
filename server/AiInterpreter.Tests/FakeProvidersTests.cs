@@ -196,7 +196,7 @@ public class FakeProvidersTests
         new(NoFrames(), "audio/pcm", "linear16", 48000, LanguageCode.En, "multi", "session_1", "turn_1");
 
     private static TranslationRequest TransReq() =>
-        new("hello world", LanguageCode.En, LanguageCode.Es, "gpt-5.4-nano", "session_1", "turn_1");
+        new("hello world", LanguageCode.En, LanguageCode.Es, "gpt-5-nano", "session_1", "turn_1");
 
     private static TtsRequest TtsReq() =>
         new("hola mundo", LanguageCode.Es, "alloy", "gpt-4o-mini-tts", "mp3", null, "session_1", "turn_1");

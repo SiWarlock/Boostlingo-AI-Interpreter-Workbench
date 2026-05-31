@@ -85,7 +85,7 @@ public class OptionsBindingTests
         Assert.Equal("minimal", opts.ReasoningEffort);
         Assert.Equal("low", opts.Verbosity);
         Assert.True(opts.Stream);
-        Assert.Equal("gpt-5.4-nano", opts.Model);
+        Assert.Equal("gpt-5-nano", opts.Model);
         Assert.Null(opts.ApiKey);
     }
 

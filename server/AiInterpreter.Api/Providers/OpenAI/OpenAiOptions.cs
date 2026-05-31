@@ -10,7 +10,7 @@ public sealed class OpenAiTranslationOptions
     public const string SectionName = "OpenAiTranslation";
 
     public string? ApiKey { get; set; }
-    public string Model { get; set; } = "gpt-5.4-nano";
+    public string Model { get; set; } = "gpt-5-nano";
     public string ReasoningEffort { get; set; } = "minimal";
     public string Verbosity { get; set; } = "low";
     public bool Stream { get; set; } = true;

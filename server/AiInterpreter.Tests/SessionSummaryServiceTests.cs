@@ -106,7 +106,7 @@ public class SessionSummaryServiceTests
         return new InterpretationTurn(
             turnId, mode, dir, Base, Base.AddSeconds(2), 2000,
             new List<TranscriptSegment>(), events, cost, werResult, errors,
-            TurnStatus.Completed, "gpt-5.4-nano", "alloy");
+            TurnStatus.Completed, "gpt-5-nano", "alloy");
     }
 
     private static InterpretationSession Session(params InterpretationTurn[] turns)
@@ -114,7 +114,7 @@ public class SessionSummaryServiceTests
         var dir = new LanguageDirection(LanguageCode.En, LanguageCode.Es);
         var profile = new ProviderProfile(
             "openai", "gpt-realtime", "deepgram", "nova-3", "multi",
-            "openai", "gpt-5.4-nano", "openai", "gpt-4o-mini-tts", "alloy");
+            "openai", "gpt-5-nano", "openai", "gpt-4o-mini-tts", "alloy");
         var config = new SessionConfig(InterpretationMode.Cascade, dir, profile);
         return new InterpretationSession(
             "session_x", null, Base, null, config,

@@ -54,7 +54,7 @@ public class SessionsControllerTests : IDisposable
     private static CreateSessionRequest SampleRequest(InterpretationMode mode = InterpretationMode.Cascade) =>
         new(Label: "Demo run 1", Mode: mode,
             Direction: new LanguageDirection(LanguageCode.En, LanguageCode.Es),
-            RealtimeModel: "gpt-realtime", TranslationModel: "gpt-5.4-nano");
+            RealtimeModel: "gpt-realtime", TranslationModel: "gpt-5-nano");
 
     private static async Task<(HttpClient Client, string SessionId)> CreatedSession(
         WebApplicationFactory<Program> factory, InterpretationMode mode = InterpretationMode.Cascade)
@@ -89,7 +89,7 @@ public class SessionsControllerTests : IDisposable
         Assert.Equal("deepgram", profile.GetProperty("sttProvider").GetString());
         Assert.Equal("nova-3", profile.GetProperty("sttModel").GetString());
         Assert.Equal("multi", profile.GetProperty("sttLanguage").GetString());
-        Assert.Equal("gpt-5.4-nano", profile.GetProperty("translationModel").GetString());
+        Assert.Equal("gpt-5-nano", profile.GetProperty("translationModel").GetString());
         Assert.Equal("gpt-4o-mini-tts", profile.GetProperty("ttsModel").GetString());
         Assert.Equal("alloy", profile.GetProperty("ttsVoice").GetString());
     }

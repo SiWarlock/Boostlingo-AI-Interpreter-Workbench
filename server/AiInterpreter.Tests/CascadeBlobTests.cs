@@ -49,7 +49,7 @@ public class CascadeBlobTests
     private static SessionConfig Config() => new(
         InterpretationMode.Cascade, EnToEs,
         new ProviderProfile("openai", "gpt-realtime", "deepgram", "nova-3", "multi",
-            "openai", "gpt-5.4-nano", "openai", "gpt-4o-mini-tts", "alloy"));
+            "openai", "gpt-5-nano", "openai", "gpt-4o-mini-tts", "alloy"));
 
     // Builds an orchestrator over the given fakes + a store seeded with one Ready turn; returns the
     // orchestrator, the store, and the seeded (sessionId, turnId).
@@ -69,7 +69,7 @@ public class CascadeBlobTests
     }
 
     private static CascadeBlobParams Params(string sessionId, string turnId, string encoding = "webm") =>
-        new(sessionId, turnId, EnToEs, encoding, "gpt-5.4-nano", "alloy");
+        new(sessionId, turnId, EnToEs, encoding, "gpt-5-nano", "alloy");
 
     [Fact]
     public async Task blob_runs_prerecorded_cascade_and_collects_turn()

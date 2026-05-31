@@ -22,7 +22,7 @@ public interface IConfigService
 public sealed class ConfigService : IConfigService
 {
     private static readonly string[] RealtimeModels = ["gpt-realtime", "gpt-realtime-mini"];
-    private static readonly string[] TranslationModels = ["gpt-5.4-nano", "gpt-5.4-mini"];
+    private static readonly string[] TranslationModels = ["gpt-5-nano", "gpt-5-mini"];
     private static readonly string[] Languages = ["en", "es"];
 
     private readonly RealtimeOptions _realtime;

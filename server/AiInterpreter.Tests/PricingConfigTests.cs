@@ -16,7 +16,7 @@ public class PricingConfigTests
 
         Assert.True(result.IsSuccess, result.Error);
         var p = result.Value;
-        Assert.Equal("2026-05-28-payg-estimates", p.Version);
+        Assert.Equal("2026-05-31-payg-estimates", p.Version);
         Assert.Equal("USD", p.Currency);
         Assert.False(string.IsNullOrWhiteSpace(p.Disclaimer));
 
@@ -34,9 +34,9 @@ public class PricingConfigTests
         Assert.Null(realtime.GptRealtimeMini.CachedAudioInputUsdPerMillionTokens); // mini lacks the cached rate
         Assert.False(string.IsNullOrWhiteSpace(realtime.EstimatorNote));
 
-        var nano = p.Providers.Openai.Translation!["gpt-5.4-nano"];
-        Assert.Equal(0.20m, nano.InputUsdPerMillionTokens);
-        Assert.Equal(1.25m, nano.OutputUsdPerMillionTokens);
+        var nano = p.Providers.Openai.Translation!["gpt-5-nano"];
+        Assert.Equal(0.05m, nano.InputUsdPerMillionTokens);
+        Assert.Equal(0.40m, nano.OutputUsdPerMillionTokens);
 
         Assert.Equal("audio_output_tokens", p.Providers.Openai.Tts!["gpt-4o-mini-tts"].PricingBasis);
         var tts1 = p.Providers.Openai.Tts["tts-1"];
@@ -69,18 +69,5 @@ public class PricingConfigTests
         {
             File.Delete(temp);
         }
-    }
-
-    [Fact]
-    public void gpt_5_4_mini_placeholder_present()
-    {
-        var result = PricingLoader.Load(CommittedPricingPath);
-
-        Assert.True(result.IsSuccess, result.Error);
-        var mini = result.Value.Providers!.Openai!.Translation!["gpt-5.4-mini"];
-        Assert.Equal(0.0m, mini.InputUsdPerMillionTokens);
-        Assert.Equal(0.0m, mini.OutputUsdPerMillionTokens);
-        Assert.NotNull(mini.Note);
-        Assert.Contains("CONFIRM", mini.Note!);
     }
 }

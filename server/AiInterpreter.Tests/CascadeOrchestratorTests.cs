@@ -73,7 +73,7 @@ public class CascadeOrchestratorTests
     }
 
     private static CascadeStartParams Params(TimeSpan? sttTimeout = null) =>
-        new("s1", "t1", EnToEs, "linear16", 16000, "gpt-5.4-nano", "alloy", SttTimeout: sttTimeout);
+        new("s1", "t1", EnToEs, "linear16", 16000, "gpt-5-nano", "alloy", SttTimeout: sttTimeout);
 
     private static async Task<List<CascadeOutputEvent>> Run(
         ISttProvider stt, ITranslationProvider translation, ITtsProvider tts, CascadeStartParams p)

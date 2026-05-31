@@ -154,7 +154,7 @@ public class DomainSerializationTests
         new LanguageDirection(LanguageCode.En, LanguageCode.Es),
         new ProviderProfile(
             "openai", "gpt-realtime", "deepgram", "nova-3", "multi",
-            "openai", "gpt-5.4-nano", "openai", "gpt-4o-mini-tts", "alloy"));
+            "openai", "gpt-5-nano", "openai", "gpt-4o-mini-tts", "alloy"));
 
     private static InterpretationSession BuildFullSession()
     {
@@ -178,7 +178,7 @@ public class DomainSerializationTests
                     new Dictionary<string, string> { ["provider"] = "deepgram" }),
             },
             new CostEstimate(
-                "openai", "gpt-5.4-nano", "tokens", 0.0012m, 0.07m,
+                "openai", "gpt-5-nano", "tokens", 0.0012m, 0.07m,
                 new Dictionary<string, decimal> { ["inputTokens"] = 12m, ["outputTokens"] = 8m },
                 "2026-05-28-payg-estimates", new[] { "estimate only" }),
             new WerResult("phrase_1", "hello world", "hello word", "hello world", "hello word", 1, 0, 0, 2, 0.5),
@@ -187,7 +187,7 @@ public class DomainSerializationTests
                 new("openai", "translation", "translation.rate_limited", "Rate limited", true, 429),
             },
             TurnStatus.Completed,
-            "gpt-5.4-nano",
+            "gpt-5-nano",
             "alloy");
 
         return new InterpretationSession(

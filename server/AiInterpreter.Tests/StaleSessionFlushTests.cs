@@ -133,12 +133,12 @@ public class StaleSessionFlushTests
     private static CreateSessionRequest Req() =>
         new(Label: "flush", Mode: InterpretationMode.Cascade,
             Direction: new LanguageDirection(LanguageCode.En, LanguageCode.Es),
-            RealtimeModel: "gpt-realtime", TranslationModel: "gpt-5.4-nano");
+            RealtimeModel: "gpt-realtime", TranslationModel: "gpt-5-nano");
 
     private static SessionConfig StoreConfig() =>
         new(InterpretationMode.Cascade, new LanguageDirection(LanguageCode.En, LanguageCode.Es),
             new ProviderProfile("openai", "gpt-realtime", "deepgram", "nova-3", "multi",
-                "openai", "gpt-5.4-nano", "openai", "gpt-4o-mini-tts", "alloy"));
+                "openai", "gpt-5-nano", "openai", "gpt-4o-mini-tts", "alloy"));
 
     private static string[] JsonFiles(string dir) =>
         Directory.Exists(dir) ? Directory.GetFiles(dir, "*.json") : Array.Empty<string>();
