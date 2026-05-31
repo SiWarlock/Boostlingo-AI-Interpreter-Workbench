@@ -1,3 +1,4 @@
+import { Headphones, Play, Power } from 'lucide-react'
 import { sessionsApi } from '../api/sessionsApi'
 import { realtimeConnectionManager } from '../realtime/realtimeConnectionManager'
 import { endSession, startSession } from '../state/sessionActions'
@@ -9,6 +10,11 @@ import type { LanguageDirection, RealtimeModel, TranslationModel } from '../type
 // updateSessionConfig (store = live config source-of-truth); Start/End delegate to the testable
 // sessionActions orchestration. Clean separation: no transport internals — just store reads, intent
 // dispatches, and the API client passed into the orchestration deps.
+//
+// H.1 styling: the design's card + .field/.select form, styled Start/End buttons. CSS/markup only —
+// both buttons stay always-rendered with the SAME disabled gating, Direction stays a <select> (the
+// kit's dir-swap click is a different interaction = logic, out of scope). Labels keep their implicit
+// control association.
 const DIRECTIONS: { label: string; value: LanguageDirection }[] = [
   { label: 'English → Spanish', value: { source: 'en', target: 'es' } },
   { label: 'Spanish → English', value: { source: 'es', target: 'en' } },
@@ -25,19 +31,29 @@ export default function SessionSetup() {
   const active = state.sessionStatus === 'active' || state.sessionStatus === 'readyForTurn'
 
   return (
-    <section aria-label="session-setup">
-      <label>
-        Label
+    <section className="card card-pad" aria-label="session-setup">
+      <div className="card-hd">
+        <span className="ic">
+          <Headphones size={18} aria-hidden />
+        </span>
+        <span className="card-title">Session</span>
+      </div>
+
+      <label className="field">
+        <span className="field-lab">Label</span>
         <input
+          className="input"
           type="text"
+          placeholder="e.g. clinic intake demo"
           value={state.label ?? ''}
           onChange={(e) => sessionStore.updateSessionConfig({ label: e.target.value })}
         />
       </label>
 
-      <label>
-        Direction
+      <label className="field">
+        <span className="field-lab">Direction</span>
         <select
+          className="select"
           value={directionKey(state.direction)}
           onChange={(e) => {
             const next = DIRECTIONS.find((d) => directionKey(d.value) === e.target.value)
@@ -52,9 +68,10 @@ export default function SessionSetup() {
         </select>
       </label>
 
-      <label>
-        Realtime model
+      <label className="field">
+        <span className="field-lab">Realtime model</span>
         <select
+          className="select"
           value={state.realtimeModel}
           onChange={(e) =>
             sessionStore.updateSessionConfig({ realtimeModel: e.target.value as RealtimeModel })
@@ -68,9 +85,10 @@ export default function SessionSetup() {
         </select>
       </label>
 
-      <label>
-        Translation model
+      <label className="field">
+        <span className="field-lab">Translation model</span>
         <select
+          className="select"
           value={state.translationModel}
           onChange={(e) =>
             sessionStore.updateSessionConfig({
@@ -86,24 +104,34 @@ export default function SessionSetup() {
         </select>
       </label>
 
-      <button
-        type="button"
-        disabled={starting || active}
-        onClick={() => void startSession({ store: sessionStore, api: sessionsApi })}
-      >
-        {starting ? 'Starting…' : 'Start session'}
-      </button>
-      <button
-        type="button"
-        disabled={!active}
-        onClick={() => {
-          void endSession({ store: sessionStore, api: sessionsApi })
-          // Tear down the realtime connection on End (idempotent — a no-op for cascade). E.5a.
-          realtimeConnectionManager.teardown()
-        }}
-      >
-        End session
-      </button>
+      <div className="session-actions">
+        <button
+          type="button"
+          className="btn btn-dark"
+          disabled={starting || active}
+          onClick={() => void startSession({ store: sessionStore, api: sessionsApi })}
+        >
+          <span className="ic">
+            <Play size={16} aria-hidden />
+          </span>
+          {starting ? 'Starting…' : 'Start session'}
+        </button>
+        <button
+          type="button"
+          className="btn btn-danger"
+          disabled={!active}
+          onClick={() => {
+            void endSession({ store: sessionStore, api: sessionsApi })
+            // Tear down the realtime connection on End (idempotent — a no-op for cascade). E.5a.
+            realtimeConnectionManager.teardown()
+          }}
+        >
+          <span className="ic">
+            <Power size={16} aria-hidden />
+          </span>
+          End session
+        </button>
+      </div>
     </section>
   )
 }

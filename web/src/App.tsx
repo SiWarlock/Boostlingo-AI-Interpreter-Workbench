@@ -10,6 +10,7 @@ import MetricsPanel from './components/MetricsPanel'
 import ModeToggle from './components/ModeToggle'
 import RecordingControls from './components/RecordingControls'
 import SessionSetup from './components/SessionSetup'
+import StatusPill from './components/StatusPill'
 import TranscriptPanel from './components/TranscriptPanel'
 import { sessionStore, useSessionState } from './state/sessionStore'
 
@@ -74,37 +75,77 @@ export default function App() {
   }, [state.sessionId, state.turns.length, refreshSummary])
 
   const health = state.providerHealth
+  // Provider chips: presence-only health (invariant #1) — configured -> green dot, else muted gray.
+  const providerChips: { key: string; label: string; configured: boolean }[] = health
+    ? [
+        { key: 'realtime', label: 'Realtime', configured: health.realtime.configured },
+        { key: 'stt', label: 'STT', configured: health.cascade.stt.configured },
+        {
+          key: 'translation',
+          label: 'Translation',
+          configured: health.cascade.translation.configured,
+        },
+        { key: 'tts', label: 'TTS', configured: health.cascade.tts.configured },
+      ]
+    : []
 
   return (
-    <main>
-      <h1>AI Interpreter Workbench</h1>
-      <p>
-        Session status: <strong>{state.sessionStatus}</strong>
-      </p>
-      <section aria-label="provider-health">
-        {health ? (
-          <ul>
-            <li>Realtime: {health.realtime.configured ? 'configured' : 'unavailable'}</li>
-            <li>Cascade STT: {health.cascade.stt.configured ? 'configured' : 'unavailable'}</li>
-            <li>
-              Cascade Translation:{' '}
-              {health.cascade.translation.configured ? 'configured' : 'unavailable'}
-            </li>
-            <li>Cascade TTS: {health.cascade.tts.configured ? 'configured' : 'unavailable'}</li>
-          </ul>
-        ) : (
-          <p>Loading configuration…</p>
-        )}
-      </section>
-      <ModeToggle />
-      <SessionSetup />
-      <RecordingControls />
-      <TranscriptPanel />
-      <MetricsPanel onRefresh={refreshSummary} />
-      <CostPanel />
-      <EvaluationPanel />
-      <ComparisonSummary />
+    <main className="wb-shell">
+      <header>
+        <div className="header-row">
+          <img className="header-mark" src="/mark.svg" alt="" />
+          <div style={{ flex: 1 }}>
+            <h1 className="header-title">AI Interpreter Workbench</h1>
+            <div className="header-sub">
+              Realtime vs Cascade · live latency, cost &amp; quality · EN ⇄ ES
+            </div>
+          </div>
+          <StatusPill value={state.sessionStatus} large />
+        </div>
+        <section aria-label="provider-health" className="chips-row">
+          <span className="chips-lab">Providers</span>
+          {health ? (
+            providerChips.map((p) => (
+              <span key={p.key} className={`chip${p.configured ? '' : ' muted'}`}>
+                <span
+                  className="d"
+                  style={{ background: p.configured ? 'var(--success)' : 'var(--metric-na)' }}
+                />
+                {p.label}
+              </span>
+            ))
+          ) : (
+            <span className="chip muted">
+              <span className="d" style={{ background: 'var(--metric-na)' }} />
+              Loading configuration…
+            </span>
+          )}
+        </section>
+      </header>
+
       <ErrorBanner />
+
+      <div className="wb-grid">
+        <div className="wb-stack">
+          <ModeToggle />
+          <SessionSetup />
+          <RecordingControls />
+        </div>
+        <div className="wb-stack">
+          <TranscriptPanel />
+        </div>
+        <div className="wb-stack">
+          <MetricsPanel onRefresh={refreshSummary} />
+          <CostPanel />
+        </div>
+      </div>
+
+      <div className="wb-band">
+        <ComparisonSummary />
+      </div>
+      <div className="wb-band">
+        <EvaluationPanel />
+      </div>
     </main>
   )
 }
