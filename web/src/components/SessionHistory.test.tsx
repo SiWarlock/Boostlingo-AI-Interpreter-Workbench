@@ -2,16 +2,25 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-// Mock the DI'd history fetch — the panel is a thin render+dispatch shell over it (ARCH-007). loadHistory
-// is mocked so no transport runs; the component drives its transient local list state from the result.
+// Mock the DI'd history fetches — the panel is a thin render+dispatch shell over them (ARCH-007); no
+// transport runs. SessionDetail is mocked to a marker (it has its own test) so these tests focus on the
+// accordion mechanics (expand / fetch-once-cache / single-open), not the detail rendering.
 vi.mock('../state/historyActions', () => ({
   loadHistory: vi.fn(),
+  loadSessionDetail: vi.fn(),
+}))
+vi.mock('./SessionDetail', () => ({
+  default: ({ session }: { session: { sessionId: string } }) => (
+    <div data-testid="session-detail">detail:{session.sessionId}</div>
+  ),
 }))
 
 import SessionHistory from './SessionHistory'
-import { loadHistory } from '../state/historyActions'
+import { loadHistory, loadSessionDetail } from '../state/historyActions'
 import { sessionStore } from '../state/sessionStore'
-import type { SessionListItem } from '../types/domain'
+import type { InterpretationSession, SessionListItem } from '../types/domain'
+
+const detailFor = (id: string) => ({ sessionId: id, turns: [] }) as unknown as InterpretationSession
 
 const items: SessionListItem[] = [
   {
@@ -101,5 +110,64 @@ describe('SessionHistory', () => {
     expect(await screen.findByText('Recent run')).toBeInTheDocument()
     expect(screen.getByText('session_1')).toBeInTheDocument()
     expect(loadHistory).toHaveBeenCalledTimes(2)
+  })
+
+  // --- 071 drill-in: bounded scroll + click-to-expand accordion ---------------------------------
+  it('wraps the list in a bounded-scroll container (the cap is applied)', async () => {
+    vi.mocked(loadHistory).mockResolvedValue(items)
+    render(<SessionHistory />)
+    await screen.findByText('Recent run')
+
+    expect(screen.getByTestId('history-scroll')).toHaveClass('hist-scroll') // fixed-height + overflow-y:auto
+  })
+
+  it('clicking a row expands it inline + fetches the detail ONCE (re-expand uses the cache, Q2)', async () => {
+    vi.mocked(loadHistory).mockResolvedValue(items)
+    vi.mocked(loadSessionDetail).mockResolvedValue(detailFor('session_2'))
+    render(<SessionHistory />)
+    await screen.findByText('Recent run')
+
+    fireEvent.click(screen.getByRole('button', { name: /Recent run/i }))
+    expect(await screen.findByTestId('session-detail')).toHaveTextContent('detail:session_2')
+    expect(loadSessionDetail).toHaveBeenCalledTimes(1)
+    expect(loadSessionDetail).toHaveBeenCalledWith(expect.anything(), 'session_2')
+
+    // collapse
+    fireEvent.click(screen.getByRole('button', { name: /Recent run/i }))
+    expect(screen.queryByTestId('session-detail')).not.toBeInTheDocument()
+
+    // re-expand → served from cache, NO refetch (a past session is immutable)
+    fireEvent.click(screen.getByRole('button', { name: /Recent run/i }))
+    expect(await screen.findByTestId('session-detail')).toBeInTheDocument()
+    expect(loadSessionDetail).toHaveBeenCalledTimes(1) // still ONE — fetch-once-cache
+  })
+
+  it('single-open: expanding another row collapses the first', async () => {
+    vi.mocked(loadHistory).mockResolvedValue(items)
+    vi.mocked(loadSessionDetail).mockImplementation((_deps, id: string) =>
+      Promise.resolve(detailFor(id)),
+    )
+    render(<SessionHistory />)
+    await screen.findByText('Recent run')
+
+    fireEvent.click(screen.getByRole('button', { name: /Recent run/i })) // session_2
+    expect(await screen.findByTestId('session-detail')).toHaveTextContent('detail:session_2')
+
+    fireEvent.click(screen.getByRole('button', { name: /session_1/i })) // session_1
+    expect(await screen.findByTestId('session-detail')).toHaveTextContent('detail:session_1')
+    expect(screen.getAllByTestId('session-detail')).toHaveLength(1) // single-open — only ONE detail shown
+  })
+
+  it('a detail-fetch failure (loadSessionDetail null) shows an inline note + no crash (error via the banner)', async () => {
+    vi.mocked(loadHistory).mockResolvedValue(items)
+    vi.mocked(loadSessionDetail).mockResolvedValue(null) // the action already routed a sanitized error to the sink
+    render(<SessionHistory />)
+    await screen.findByText('Recent run')
+
+    fireEvent.click(screen.getByRole('button', { name: /Recent run/i }))
+
+    expect(await screen.findByText(/details unavailable/i)).toBeInTheDocument() // inline, not a crash
+    expect(screen.queryByTestId('session-detail')).not.toBeInTheDocument()
+    expect(loadSessionDetail).toHaveBeenCalledTimes(1)
   })
 })

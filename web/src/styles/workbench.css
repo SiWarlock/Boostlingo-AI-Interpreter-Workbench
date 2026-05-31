@@ -993,3 +993,67 @@ button {
   display: flex;
   gap: 6px;
 }
+
+/* 071 drill-in: bounded-scroll + click-to-expand accordion */
+.hist-scroll {
+  max-height: 360px;
+  overflow-y: auto;
+  margin-top: 12px;
+}
+.hist-scroll .hist-list {
+  margin: 0;
+}
+.hist-row-wrap {
+  display: flex;
+  flex-direction: column;
+}
+/* The row header is a <button> (the accordion toggle) styled like the static .hist-row. */
+.hist-row-btn {
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.hist-row-btn[aria-expanded='true'] {
+  border-color: var(--bl-blue);
+}
+.hist-detail {
+  padding: 10px 12px;
+  margin-top: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+}
+.hist-summary {
+  margin-bottom: 10px;
+}
+.hist-turn-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.hist-turn {
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.hist-turn-hd {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.hist-tx {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 2px 0;
+}
+.hist-tx-text {
+  min-width: 0;
+}

@@ -1,6 +1,6 @@
 import { ApiError } from '../api/http'
 import type { SessionStore } from './sessionStore'
-import type { SessionListItem } from '../types/domain'
+import type { InterpretationSession, SessionListItem } from '../types/domain'
 
 // The session-history fetch (H.3-frontend; ARCH-009 / ARCH-017). DI'd + unit-tested against a mocked api +
 // the store (lesson §7); the SessionHistory panel is a thin render+dispatch caller. RETURNS the list for
@@ -32,6 +32,40 @@ export async function loadHistory(deps: HistoryDeps): Promise<SessionListItem[] 
         : {
             code: 'sessions.read_failed',
             safeMessage: 'Could not load the session history.',
+            retryable: true,
+          },
+    )
+    return null
+  }
+}
+
+// 071 drill-in: fetch ONE past session's full detail (GET /api/sessions/{id} — the 068 disk-fallback, so a
+// past/evicted session returns 200 + full detail rather than 404). Mirrors loadHistory: RETURNS the session
+// for the accordion's transient cache (read-only browse — NOT UiSessionState); a fetch failure routes a
+// sanitized UiError to the store sink (§2) + returns null so the caller shows an inline note, no crash.
+
+export type SessionDetailApi = {
+  getSession(sessionId: string): Promise<InterpretationSession>
+}
+
+export type SessionDetailDeps = {
+  store: Pick<SessionStore, 'addError'>
+  api: SessionDetailApi
+}
+
+export async function loadSessionDetail(
+  deps: SessionDetailDeps,
+  sessionId: string,
+): Promise<InterpretationSession | null> {
+  try {
+    return await deps.api.getSession(sessionId)
+  } catch (error) {
+    deps.store.addError(
+      error instanceof ApiError
+        ? error.uiError
+        : {
+            code: 'sessions.read_failed',
+            safeMessage: 'Could not load the session.',
             retryable: true,
           },
     )
