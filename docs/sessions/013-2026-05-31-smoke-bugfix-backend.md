@@ -4,7 +4,7 @@
 - **Phase:** G.4 (stability hardening — real-key-smoke-surfaced bugs)
 - **Role:** backend implementer (`boostlingo-main-backend-implementer`)
 - **Predecessor:** [012 — Phase-F F.4 eval-turn exclusion](012-2026-05-30-phase-f-f4-eval-turn-exclusion.md)
-- **Successor:** _(next backend session — fresh impl picks up 050-backend; wholesale team cycle)_
+- **Successor:** [016 — Backend: mode-switch, .env loader, cost arc, Phase-I cascade auto-VAD](016-2026-05-31-backend-cost-arc-and-phase-i-cascade-autovad.md)
 
 ## Why this session existed
 
