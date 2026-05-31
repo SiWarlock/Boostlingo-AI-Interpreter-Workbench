@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // Mock the connection manager so the mode-switch-away test asserts the teardown DISPATCH (E.5b), not the
@@ -7,11 +7,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 vi.mock('../realtime/realtimeConnectionManager', () => ({
   realtimeConnectionManager: { onModeSwitch: vi.fn(), teardown: vi.fn(), ensureConnected: vi.fn() },
 }))
+// Mock the sessions api (only setMode is exercised here — brief 050). The REAL switchMode flow runs
+// against it (we test the wiring, not the flow internals — those are unit-tested in sessionActions.test).
+vi.mock('../api/sessionsApi', () => ({ sessionsApi: { setMode: vi.fn() } }))
 
 import ModeToggle from './ModeToggle'
 import { realtimeConnectionManager } from '../realtime/realtimeConnectionManager'
+import { sessionsApi } from '../api/sessionsApi'
 import { sessionStore } from '../state/sessionStore'
-import type { ConfigResponse, TurnStatus } from '../types/domain'
+import type { ConfigResponse, InterpretationSession, TurnStatus } from '../types/domain'
 
 // PRD/ARCH-020 transition #1, held to a bar at the render level: the mode toggle is disabled while a
 // turn is in flight (recording/processing/playing) and enabled otherwise. Exercises D.2's ModeToggle +
@@ -31,7 +35,34 @@ const fullConfig: ConfigResponse = {
 afterEach(() => {
   cleanup()
   sessionStore.reset()
+  vi.clearAllMocks()
 })
+
+function session(mode: InterpretationSession['config']['currentMode']): InterpretationSession {
+  return {
+    sessionId: 'session_abc',
+    startedAt: '2026-05-29T12:00:00+00:00',
+    config: {
+      currentMode: mode,
+      direction: { source: 'en', target: 'es' },
+      providerProfile: {
+        realtimeProvider: 'openai',
+        realtimeModel: 'gpt-realtime',
+        sttProvider: 'deepgram',
+        sttModel: 'nova-3',
+        sttLanguage: 'multi',
+        translationProvider: 'openai',
+        translationModel: 'gpt-5-nano',
+        ttsProvider: 'openai',
+        ttsModel: 'gpt-4o-mini-tts',
+        ttsVoice: 'alloy',
+      },
+    },
+    turns: [],
+    modeTransitions: [],
+    pricingConfigVersion: 'v',
+  }
+}
 
 describe('ModeToggle — mode-toggle-disabled-during-active-turn (ARCH-020)', () => {
   it('disables both mode buttons during recording/processing/playing, enables them when idle/done', () => {
@@ -71,5 +102,22 @@ describe('ModeToggle — Flow-G mode-switch teardown (E.5b)', () => {
     // the toggle hands the manager (prev, next) so it can tear down on a switch-AWAY from realtime
     expect(realtimeConnectionManager.onModeSwitch).toHaveBeenCalledWith('realtime', 'cascade')
     expect(sessionStore.getState().mode).toBe('cascade') // the store mode still flips (additive to teardown)
+  })
+})
+
+describe('ModeToggle — backend mode-switch on an active session (Finding 2c, brief 050)', () => {
+  it('POSTs setMode and resyncs the mode from the response when switching mid-session', async () => {
+    sessionStore.reset()
+    sessionStore.loadConfig(fullConfig)
+    sessionStore.sessionStarted(session('cascade')) // active session, currently cascade
+    vi.mocked(sessionsApi.setMode).mockResolvedValue(session('realtime'))
+
+    render(<ModeToggle />)
+    fireEvent.click(screen.getByRole('button', { name: 'Realtime' }))
+
+    // the toggle dispatches the DI'd switchMode flow → POST /mode (2c: keep the backend CurrentMode in sync)
+    await waitFor(() => expect(sessionsApi.setMode).toHaveBeenCalledWith('session_abc', 'realtime'))
+    // the store mode is resynced from the authoritative returned session (Q4)
+    await waitFor(() => expect(sessionStore.getState().mode).toBe('realtime'))
   })
 })

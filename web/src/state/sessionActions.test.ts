@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { endSession, startSession } from './sessionActions'
+import { endSession, startSession, switchMode } from './sessionActions'
 import { createSessionStore } from './sessionStore'
 import { ApiError } from '../api/http'
 import type { EndSessionResponse, InterpretationSession, UiError } from '../types/domain'
@@ -204,5 +204,90 @@ describe('endSession', () => {
     expect(s.errors[0].code).toBe('session.end_failed')
     expect(s.errors[0].safeMessage).not.toContain('boom-internal-detail')
     expect(s.sessionStatus).toBe('active') // end didn't happen
+  })
+})
+
+describe('switchMode (Finding 2c — propagate a mid-session mode switch to the backend)', () => {
+  const cm = () => ({ onModeSwitch: vi.fn() })
+
+  // A wireSession with config.currentMode overridden (the authoritative response after a switch).
+  function sessionWithMode(
+    mode: InterpretationSession['config']['currentMode'],
+  ): InterpretationSession {
+    const s = wireSession()
+    s.config = { ...s.config, currentMode: mode }
+    return s
+  }
+
+  it('active session: POSTs setMode, resyncs the mode from the response, tears down on switch (success)', async () => {
+    const store = createSessionStore()
+    store.sessionStarted(wireSession()) // currentMode cascade -> store.mode 'cascade'
+    const api = { setMode: vi.fn().mockResolvedValue(sessionWithMode('realtime')) }
+    const connectionManager = cm()
+
+    await switchMode({ store, api, connectionManager }, 'realtime')
+
+    expect(api.setMode).toHaveBeenCalledWith('session_abc', 'realtime')
+    expect(connectionManager.onModeSwitch).toHaveBeenCalledWith('cascade', 'realtime')
+    expect(store.getState().mode).toBe('realtime') // resynced from response.config.currentMode (Q4)
+  })
+
+  it('on ApiError: surfaces the error, KEEPS the prior mode, does NOT tear down (no divergence — Q1)', async () => {
+    const store = createSessionStore()
+    store.sessionStarted(wireSession()) // cascade
+    const uiError: UiError = {
+      code: 'session.invalid_mode',
+      safeMessage: 'That mode is not available.',
+      retryable: false,
+    }
+    const api = { setMode: vi.fn().mockRejectedValue(new ApiError(uiError)) }
+    const connectionManager = cm()
+
+    await switchMode({ store, api, connectionManager }, 'realtime')
+
+    const s = store.getState()
+    expect(s.errors).toContainEqual(uiError)
+    expect(s.mode).toBe('cascade') // prior mode kept — no backend/frontend divergence
+    expect(connectionManager.onModeSwitch).not.toHaveBeenCalled() // no teardown on a failed switch
+  })
+
+  it('on a non-ApiError throw: synthesizes a fixed-message error and keeps the prior mode', async () => {
+    const store = createSessionStore()
+    store.sessionStarted(wireSession())
+    const api = { setMode: vi.fn().mockRejectedValue(new Error('boom-internal-detail')) }
+
+    await switchMode({ store, api, connectionManager: cm() }, 'realtime')
+
+    const s = store.getState()
+    expect(s.errors).toHaveLength(1)
+    expect(s.errors[0].code).toBe('session.mode_switch_failed')
+    expect(s.errors[0].safeMessage).not.toContain('boom-internal-detail')
+    expect(s.mode).toBe('cascade')
+  })
+
+  it('no-op when the target equals the current mode (no POST, no teardown)', async () => {
+    const store = createSessionStore()
+    store.sessionStarted(wireSession()) // cascade
+    const api = { setMode: vi.fn() }
+    const connectionManager = cm()
+
+    await switchMode({ store, api, connectionManager }, 'cascade')
+
+    expect(api.setMode).not.toHaveBeenCalled()
+    expect(connectionManager.onModeSwitch).not.toHaveBeenCalled()
+    expect(store.getState().mode).toBe('cascade')
+  })
+
+  it('pre-session (no sessionId): store-only switch, NO POST (Create sends the initial mode)', async () => {
+    const store = createSessionStore() // sessionId null
+    store.updateSessionConfig({ mode: 'cascade' })
+    const api = { setMode: vi.fn() }
+    const connectionManager = cm()
+
+    await switchMode({ store, api, connectionManager }, 'realtime')
+
+    expect(api.setMode).not.toHaveBeenCalled()
+    expect(connectionManager.onModeSwitch).toHaveBeenCalledWith('cascade', 'realtime')
+    expect(store.getState().mode).toBe('realtime')
   })
 })

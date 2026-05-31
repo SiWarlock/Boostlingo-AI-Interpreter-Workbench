@@ -204,6 +204,25 @@ export type EndSessionResponse = {
   persistenceWarning?: UiError
 }
 
+// POST /api/sessions/{id}/mode request (Finding 2c — ARCH-009 / ARCH-017 Flow G). The TARGET mode; the
+// backend derives the rest of the transition + records a ModeTransitionEvent, then returns the updated
+// InterpretationSession so the frontend can resync config.currentMode (authoritative).
+export type SetModeRequest = { mode: InterpretationMode }
+
+// Mode-transition timeline entry (Flow G) — camelCase mirror of the backend ModeTransitionEvent record
+// (SessionModels.cs). Graduated for H.3's session-history view; the backend records it on each
+// POST /api/sessions/{id}/mode. NOTE: InterpretationSession.modeTransitions stays opaque (unknown[])
+// until H.3 actually consumes the timeline — this type is registered + ready, not yet wired in.
+export type ModeTransitionEvent = {
+  transitionId: string
+  fromMode: InterpretationMode
+  toMode: InterpretationMode
+  directionAtTransition: LanguageDirection
+  occurredAt: string
+  clockSource: ClockSource
+  triggeredByTurnId?: string
+}
+
 // POST /api/realtime/client-secret (ARCH-009 §6 / ARCH-010) — mirror of the E.1 backend
 // RealtimeTokenRequest/RealtimeTokenResponse DTOs (Realtime/RealtimeModels.cs). The response's
 // clientSecret (`ek_…`) is the ONLY provider credential the frontend ever holds; it is used transiently

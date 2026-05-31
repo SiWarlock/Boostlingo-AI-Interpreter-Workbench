@@ -1,7 +1,9 @@
 import { ApiError } from '../api/http'
+import type { RealtimeConnectionManager } from '../realtime/realtimeConnectionManager'
 import type {
   CreateSessionRequest,
   EndSessionResponse,
+  InterpretationMode,
   InterpretationSession,
 } from '../types/domain'
 import type { SessionStore } from './sessionStore'
@@ -53,6 +55,57 @@ export async function startSession({ store, api }: SessionActionDeps): Promise<v
     )
     // Revert out of the in-flight 'starting' status — the session was not created.
     store.setSessionStatus('configured')
+  }
+}
+
+// Mode-switch orchestration (Finding 2c — ARCH-009 / ARCH-017 Flow G). A turn is stamped with the
+// session's CurrentMode at create, so a mid-session switch MUST propagate to the backend (a POST), not just
+// the frontend store, or turns are mislabeled + the by-mode comparison is invalid. DI'd (lesson §7): the
+// ModeToggle dispatches this intent; the connectionManager is injected so the §18 Flow-G realtime teardown
+// is gated on POST SUCCESS (a component-level teardown couldn't know success/failure → would tear down a
+// live pc on a failed POST). Errors → the store (single sink, §2/§7).
+export type SwitchModeApi = {
+  setMode(sessionId: string, mode: InterpretationMode): Promise<InterpretationSession>
+}
+
+export type SwitchModeDeps = {
+  store: SessionStore
+  api: SwitchModeApi
+  connectionManager: Pick<RealtimeConnectionManager, 'onModeSwitch'>
+}
+
+export async function switchMode(
+  { store, api, connectionManager }: SwitchModeDeps,
+  target: InterpretationMode,
+): Promise<void> {
+  const { sessionId, mode: prevMode } = store.getState()
+  if (target === prevMode) {
+    return // no-op (idempotent; matches the backend no-op)
+  }
+  if (sessionId === null) {
+    // Pre-session mode pick: no backend session yet — a pure store write (Create sends the initial mode).
+    connectionManager.onModeSwitch(prevMode, target)
+    store.updateSessionConfig({ mode: target })
+    return
+  }
+  try {
+    const session = await api.setMode(sessionId, target)
+    // Success: finalize — tear down realtime on a switch-AWAY (§18; no-op cascade→realtime), then resync the
+    // mode from the authoritative returned session (Q4). Backend + frontend now agree (the 2c fix).
+    connectionManager.onModeSwitch(prevMode, target)
+    store.updateSessionConfig({ mode: session.config.currentMode })
+  } catch (error) {
+    // Failure: KEEP the prior mode (no backend/frontend divergence — Q1) + NO teardown (the realtime pc, if
+    // any, stays up); surface a sanitized error.
+    store.addError(
+      error instanceof ApiError
+        ? error.uiError
+        : {
+            code: 'session.mode_switch_failed',
+            safeMessage: 'Could not switch the interpretation mode.',
+            retryable: true,
+          },
+    )
   }
 }
 

@@ -2,6 +2,7 @@ import type {
   CreateSessionRequest,
   CreateTurnResponse,
   EndSessionResponse,
+  InterpretationMode,
   InterpretationSession,
   InterpretationTurn,
   LatencyEvent,
@@ -35,6 +36,18 @@ export const sessionsApi = {
   endSession(sessionId: string): Promise<EndSessionResponse> {
     return request<EndSessionResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/end`, {
       method: 'POST',
+    })
+  },
+
+  // POST /api/sessions/{id}/mode (Finding 2c — ARCH-009 / ARCH-017 Flow G). Propagates a mid-session mode
+  // switch to the backend so a turn created AFTER the switch is stamped with the new mode (else the by-mode
+  // comparison is invalid); the backend records a ModeTransitionEvent + returns the updated session (body
+  // is the SetModeRequest mirror { mode }). The frontend resyncs config.currentMode from the response.
+  setMode(sessionId: string, mode: InterpretationMode): Promise<InterpretationSession> {
+    return request<InterpretationSession>(`/api/sessions/${encodeURIComponent(sessionId)}/mode`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode }),
     })
   },
 
