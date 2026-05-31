@@ -873,6 +873,9 @@ button {
 }
 .session-actions .btn {
   flex: 1;
+  /* Fix C (brief 049): allow the flex item to shrink below its nowrap content width so the buttons
+     stay WITHIN the 312px controls rail instead of overflowing the card (standard flex-overflow fix). */
+  min-width: 0;
 }
 
 /* Comparison (Q2=b): blue-Realtime / violet-Cascade mode-identity cards in the
