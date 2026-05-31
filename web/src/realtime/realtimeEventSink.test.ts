@@ -98,6 +98,26 @@ describe('createRealtimeEventSink', () => {
     })
   })
 
+  it('stamps a per-turn playback.started on the first audioDelta (A2 — never a session-<audio> once-leak)', () => {
+    const store = setupTurn()
+    const sink = createRealtimeEventSink({ store, clock: fixedClock })
+
+    sink.handle({ kind: 'audioDelta', base64: 'AAAA' })
+    sink.handle({ kind: 'audioDelta', base64: 'BBBB' })
+
+    // A2: realtime playback timing is per-turn (stamped here, post-stop), not the session-persistent
+    // <audio> onplaying once-latch that leaked a prior turn's stamp across turns (the negative-latency bug).
+    const playbackStamps = (store.getState().currentTurn?.latencyEvents ?? []).filter(
+      (e) => e.name === 'playback.started',
+    )
+    expect(playbackStamps).toHaveLength(1) // once per turn, on first audio
+    expect(playbackStamps[0]).toMatchObject({
+      stage: 'playback',
+      clockSource: 'browser',
+      timestamp: FIXED_TS,
+    })
+  })
+
   it('NEVER writes audio or a transcript to the store on audioDelta (invariant #3 sentinel)', () => {
     const store = setupTurn()
     const sink = createRealtimeEventSink({ store, clock: fixedClock })

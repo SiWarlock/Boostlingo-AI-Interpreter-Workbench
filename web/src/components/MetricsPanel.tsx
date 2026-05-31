@@ -148,16 +148,21 @@ export default function MetricsPanel({ onRefresh }: { onRefresh?: () => void }) 
         <Kv k="Total turn" v={ms(metrics?.totalTurnMs)} />
       </div>
 
-      <div aria-label="turn-stages" style={{ marginTop: 12 }}>
-        <div className="eyebrow" style={{ marginBottom: 4 }}>
-          Cascade stages
+      {/* Per-stage is cascade-only (ARCH-013): realtime has no STT/Translation/TTS stages, so the
+          whole section is mode-gated — a hardcoded "Cascade stages" header is wrong for realtime
+          (Fix B, brief 049). The realtime headline (speech→first audio) renders above. */}
+      {mode === 'cascade' && (
+        <div aria-label="turn-stages" style={{ marginTop: 12 }}>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>
+            Cascade stages
+          </div>
+          {stageNames.length === 0 ? (
+            <p className="na">{NA}</p>
+          ) : (
+            stageNames.map((name) => <Kv key={name} k={name} v={ms(stages[name])} />)
+          )}
         </div>
-        {stageNames.length === 0 ? (
-          <p className="na">{NA}</p>
-        ) : (
-          stageNames.map((name) => <Kv key={name} k={name} v={ms(stages[name])} />)
-        )}
-      </div>
+      )}
 
       <div aria-label="session-averages">
         <div className="divider" />

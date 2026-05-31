@@ -94,8 +94,15 @@ export function deriveTurnMetrics(turn: TurnViewModel): TurnViewModel['latency']
   // turn.completed (browser-clock, stamped on the WS `done`) is the canonical totalTurn terminal;
   // tts.complete (server-clock) is the cross-clock fallback when turn.completed isn't present.
   const terminal = byName.get('turn.completed') ?? byName.get('tts.complete')
+  // ARCH-013 selects the present output-audio event for speech_end_to_first_audio_ms:
+  // tts.first_audio (cascade) ?? realtime.first_audio_delta (realtime) ?? playback.started, else n/a.
+  // (A1, brief 049 — the realtime fallback was missing, so realtime turns showed a permanent n/a headline.)
+  const firstAudio =
+    byName.get('tts.first_audio') ??
+    byName.get('realtime.first_audio_delta') ??
+    byName.get('playback.started')
   return {
-    speechEndToFirstAudioMs: between(speechEnd, byName.get('tts.first_audio')),
+    speechEndToFirstAudioMs: between(speechEnd, firstAudio),
     speechEndToPlaybackMs: between(speechEnd, byName.get('playback.started')),
     totalTurnMs: between(recordingStarted, terminal),
     stages: turn.latency.stages,

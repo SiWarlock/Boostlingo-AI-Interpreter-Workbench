@@ -180,37 +180,22 @@ export function createRealtimeWebRtcClient(deps: RealtimeWebRtcDeps): RealtimeWe
 // ---- Production singleton + interim realtime audio output (E.4b; E.5 hardens reuse/teardown) ----
 
 // The remote translated voice is a LIVE WebRTC track — play it directly via a detached <audio> (never
-// captured/stored, invariant #3). Stamp `playback.started` on the `playing` event (browser clock): the
-// realtime speech_end→playback timing, and the fallback first-audio marker if WebRTC emits no
-// `output_audio.delta` on the DC (the E.4a smoke-uncertainty). All browser-internal (manual-smoke).
+// captured/stored, invariant #3). It only PLAYS; it no longer STAMPS. The realtime `playback.started`
+// timing moved to the PER-TURN event sink (A2, brief 049 — stamped on the turn's first post-stop
+// audioDelta): the session-persistent <audio>'s `onplaying` once-latch fired once per session and leaked a
+// prior turn's stamp across turns on the persistent pc, producing negative speech-end→playback deltas
+// (refines lesson §17 — the <audio> once-stamp was not per-turn). All browser-internal (manual-smoke).
 let remoteAudio: HTMLAudioElement | null = null
 
 function attachRemoteAudio(stream: MediaStream): void {
   remoteAudio ??= new Audio()
-  let stamped = false // stamp playback.started ONCE per attach — the `playing` event can re-fire (pause/resume)
-  remoteAudio.onplaying = () => {
-    if (stamped) {
-      return
-    }
-    stamped = true
-    sessionStore.appendLatencyEvent({
-      name: 'playback.started',
-      stage: 'playback',
-      timestamp: new Date().toISOString(),
-      relativeMs: 0,
-      clockSource: 'browser',
-      metadata: {},
-    })
-  }
   remoteAudio.srcObject = stream
   void remoteAudio.play()
 }
 
-// Detach + drop the remote <audio> on teardown (End/mode-switch) — the next attach gets a fresh element with
-// a fresh playback.started once-guard (discharges the <audio>-lifecycle reset).
+// Detach + drop the remote <audio> on teardown (End/mode-switch) — the next attach gets a fresh element.
 function detachRemoteAudio(): void {
   if (remoteAudio) {
-    remoteAudio.onplaying = null
     remoteAudio.srcObject = null
     remoteAudio = null
   }

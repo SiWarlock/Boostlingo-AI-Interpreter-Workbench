@@ -222,6 +222,50 @@ describe('deriveTurnMetrics', () => {
     expect(deriveTurnMetrics(t).speechEndToFirstAudioMs).toBe(-50) // NOT clamped to 0
   })
 
+  // A1 (brief 049): ARCH-013 documents speech_end_to_first_audio_ms as
+  // `tts.first_audio ?? realtime.first_audio_delta ?? playback.started`. The realtime fallback was
+  // missing (only tts.first_audio read), so realtime turns showed a permanent n/a headline.
+  it('realtime: uses realtime.first_audio_delta when tts.first_audio is absent (ARCH-013 chain)', () => {
+    const t = turn({
+      mode: 'realtime',
+      latencyEvents: [
+        latencyEvent('turn.recording.started', '2026-05-29T00:00:00.000Z'),
+        latencyEvent('turn.recording.stopped', '2026-05-29T00:00:02.000Z'), // speechEnd @ +2000ms
+        // realtime emits NO tts.first_audio; the per-turn sink stamps realtime.first_audio_delta (post-stop)
+        latencyEvent('realtime.first_audio_delta', '2026-05-29T00:00:02.800Z', {
+          stage: 'realtime',
+        }), // +800ms
+      ],
+    })
+    expect(deriveTurnMetrics(t).speechEndToFirstAudioMs).toBe(800)
+  })
+
+  it('prefers tts.first_audio over realtime.first_audio_delta when both are present (cascade-first chain)', () => {
+    const t = turn({
+      latencyEvents: [
+        latencyEvent('turn.recording.stopped', '2026-05-29T00:00:02.000Z'),
+        latencyEvent('tts.first_audio', '2026-05-29T00:00:02.600Z', {
+          stage: 'tts',
+          clockSource: 'server',
+        }), // +600
+        latencyEvent('realtime.first_audio_delta', '2026-05-29T00:00:02.900Z', {
+          stage: 'realtime',
+        }), // +900
+      ],
+    })
+    expect(deriveTurnMetrics(t).speechEndToFirstAudioMs).toBe(600) // tts.first_audio wins
+  })
+
+  it('falls back to playback.started when no first-audio marker exists (ARCH-013 chain tail)', () => {
+    const t = turn({
+      latencyEvents: [
+        latencyEvent('turn.recording.stopped', '2026-05-29T00:00:02.000Z'),
+        latencyEvent('playback.started', '2026-05-29T00:00:03.000Z'), // +1000
+      ],
+    })
+    expect(deriveTurnMetrics(t).speechEndToFirstAudioMs).toBe(1000)
+  })
+
   it('prefers turn.completed over tts.complete as the totalTurn endpoint (backend-canonical terminal)', () => {
     const t = turn({
       latencyEvents: [

@@ -1,5 +1,5 @@
 import type { SessionStore } from '../state/sessionStore'
-import type { LatencyEvent, TranscriptSegment, UiError } from '../types/domain'
+import type { LatencyEvent, LatencyStage, TranscriptSegment, UiError } from '../types/domain'
 import type { NormalizedRealtimeEvent } from './realtimeEvents'
 
 // Injected for deterministic tests; returns an ISO-8601 browser-clock timestamp.
@@ -48,10 +48,10 @@ export function createRealtimeEventSink(deps: {
   // Synthetic segment ids — the store keeps only {text,isFinal} (§10), so this is type-satisfaction only.
   let segmentSeq = 0
 
-  function stamp(name: string): void {
+  function stamp(name: string, stage: LatencyStage = 'realtime'): void {
     const event: LatencyEvent = {
       name,
-      stage: 'realtime',
+      stage,
       timestamp: clock(),
       relativeMs: 0, // browser-clock marker; canonical deltas come from absolute timestamps (lesson §13)
       clockSource: 'browser',
@@ -95,10 +95,15 @@ export function createRealtimeEventSink(deps: {
         sourceText = ''
         break
       case 'audioDelta':
-        // TIMING ONLY — stamp first_audio_delta once; write NO audio/transcript (invariant #3).
+        // TIMING ONLY — write NO audio/transcript (invariant #3). On the turn's FIRST post-stop audio,
+        // stamp both the realtime first-audio marker AND playback.started — PER TURN (A2, brief 049). The
+        // realtime playback timing lives here, not on the session-persistent <audio> onplaying once-latch
+        // (which leaked a prior turn's stamp across turns on the persistent pc → negative deltas; refines
+        // lesson §17). The detached <audio> still PLAYS the live track — it just no longer STAMPS.
         if (!firstAudioStamped) {
           firstAudioStamped = true
           stamp('realtime.first_audio_delta')
+          stamp('playback.started', 'playback')
         }
         break
       case 'responseDone': {
