@@ -154,6 +154,36 @@ describe('normalizeRealtimeEvent', () => {
     })
   })
 
+  it('maps the server-VAD buffer events (speech_started / speech_stopped / committed) — I.2 slice 2', () => {
+    // Phase-I auto-VAD: under turn_detection:server_vad the server emits these per detected speech segment
+    // (input_audio_buffer.speech_started → …speech_stopped → input_audio_buffer.committed → auto
+    // response.created → response.done). Standard GA server events (Context7-confirmed family; the exact
+    // type strings are re-pinned against the live oai-events capture at the next auto-VAD smoke, §27/§15).
+    // They carry only ids/offsets (item_id / audio_start_ms / audio_end_ms) — none the controller needs —
+    // so the normalized events are payload-less lifecycle markers the controller acts on (begin/anchor).
+    expect(
+      normalizeRealtimeEvent({
+        type: 'input_audio_buffer.speech_started',
+        audio_start_ms: 120,
+        item_id: 'item_1',
+      }),
+    ).toEqual({ kind: 'speechStarted' })
+    expect(
+      normalizeRealtimeEvent({
+        type: 'input_audio_buffer.speech_stopped',
+        audio_end_ms: 880,
+        item_id: 'item_1',
+      }),
+    ).toEqual({ kind: 'speechStopped' })
+    expect(
+      normalizeRealtimeEvent({
+        type: 'input_audio_buffer.committed',
+        item_id: 'item_1',
+        previous_item_id: null,
+      }),
+    ).toEqual({ kind: 'committed' })
+  })
+
   it('maps output_audio_buffer.started -> outputAudioStarted (the DC first-audio anchor under WebRTC, 053-C1)', () => {
     // response.output_audio.delta never arrives on the DC (audio rides the media track);
     // output_audio_buffer.started DOES fire (fixture #13) → the real first-audio anchor. It carries only

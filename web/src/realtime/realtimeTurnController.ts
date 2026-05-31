@@ -2,8 +2,9 @@ import { ApiError } from '../api/http'
 import { sessionsApi } from '../api/sessionsApi'
 import { sessionStore } from '../state/sessionStore'
 import type { SessionStore } from '../state/sessionStore'
-import type { CompleteTurnRequest, LatencyEvent } from '../types/domain'
+import type { CompleteTurnRequest, LanguageDirection, LatencyEvent, UiError } from '../types/domain'
 import { createRealtimeEventSink } from './realtimeEventSink'
+import type { RealtimeEventSink } from './realtimeEventSink'
 import { normalizeRealtimeEvent, parseRealtimeEvent } from './realtimeEvents'
 import type { RealtimeUsageTokens } from './realtimeEvents'
 import { realtimeConnectionManager } from './realtimeConnectionManager'
@@ -30,6 +31,14 @@ const SERVER_VAD_THRESHOLD = 0.5
 const SERVER_VAD_PREFIX_PADDING_MS = 300
 const SERVER_VAD_SILENCE_DURATION_MS = 500
 
+// The session.update input.turn_detection value: server_vad (auto) or null (manual buffer-delimited).
+type TurnDetection = {
+  type: 'server_vad'
+  threshold: number
+  prefix_padding_ms: number
+  silence_duration_ms: number
+} | null
+
 export type RealtimeTurnDeps = {
   store: Pick<
     SessionStore,
@@ -40,6 +49,7 @@ export type RealtimeTurnDeps = {
     | 'failTurn'
     | 'completeTurn'
     | 'addError'
+    | 'setTurnStatus'
   >
   client: Pick<RealtimeWebRtcClient, 'sendClientEvent' | 'onServerEvent'>
   // Persistent connect is delegated here (E.5a) — the manager holds one pc across turns (idempotent).
@@ -67,13 +77,30 @@ export function createRealtimeTurnController(deps: RealtimeTurnDeps): RealtimeTu
   // (one pc held across turns, idempotent), no longer a per-turn lazy-connect.
   let inFlight = false
 
+  // Phase-I auto-VAD continuous-listening state (I.2 slice 2; web §27). In auto mode ONE Start opens a
+  // continuous listening session and the server segments speech into MULTIPLE turns — so the per-segment
+  // turn + sink live here (not as a single per-Start sink like manual). `autoListening` gates segment
+  // creation + is cleared by close-listening Stop; `currentSegmentTurnId`/`currentSink` track the in-flight
+  // segment (null between segments); `segmentStarting` guards the async createTurn window against a
+  // duplicate/overlapping speech_started (sequential server-VAD makes overlap unlikely, but cheap to guard).
+  let autoListening = false
+  let currentSegmentTurnId: string | null = null
+  let currentSink: RealtimeEventSink | null = null
+  let segmentStarting = false
+  // A speech-end (speech_stopped) timestamp captured while the segment's turn was still being created (the
+  // async createTurn window): appendLatencyEvent needs a currentTurn, so the speech-end anchor can't land
+  // yet — hold the TRUE speech-stop time here + stamp it when beginTurn settles (else a short segment whose
+  // speech_stopped beats createTurn would silently lose its responsiveness anchor → n/a). Practically rare
+  // (speech_stopped trails speech by >= silence_duration_ms, well past a local createTurn) but correctness-safe.
+  let pendingRecordingStoppedTs: string | null = null
+
   // A browser-clock turn-lifecycle marker (stage 'overall'; relativeMs is a placeholder — the top-level
   // latency deltas use absolute timestamps, never relativeMs; lesson §13 / the recordingActions precedent).
-  function marker(name: string): LatencyEvent {
+  function marker(name: string, timestamp: string = clock()): LatencyEvent {
     return {
       name,
       stage: 'overall',
-      timestamp: clock(),
+      timestamp,
       relativeMs: 0,
       clockSource: 'browser',
       metadata: {},
@@ -131,21 +158,167 @@ export function createRealtimeTurnController(deps: RealtimeTurnDeps): RealtimeTu
     })
   }
 
+  // Sanitized connect-failure UiError (ARCH-018) — shared by the manual + auto connect paths. An ApiError
+  // carries its own sanitized uiError; anything else degrades to the fixed advise-switch message.
+  function connectError(error: unknown): UiError {
+    return error instanceof ApiError
+      ? error.uiError
+      : {
+          code: 'realtime.connect',
+          safeMessage:
+            'Could not establish the realtime voice connection. Retry, or switch to Cascade.',
+          retryable: true,
+        }
+  }
+
+  // Build the session.update input config for a turn/segment. 053-B: re-assert `transcription` in the SAME
+  // frame regardless of mode (else this partial audio.input clobbers the broker mint's input.transcription →
+  // no SOURCE transcript). turn_detection branches: AUTO → server_vad (the server auto-detects speech
+  // start/end + auto-creates responses); MANUAL → null (buffer-delimited; Stop commits). ARCH-010 §7.
+  function sessionUpdateInput(turnDetection: TurnDetection): void {
+    client.sendClientEvent({
+      type: 'session.update',
+      session: {
+        audio: {
+          input: {
+            turn_detection: turnDetection,
+            transcription: { model: REALTIME_INPUT_TRANSCRIPTION_MODEL },
+          },
+        },
+      },
+    })
+  }
+
   async function startTurn(): Promise<void> {
     if (inFlight) {
       return
     }
-    const { sessionId, direction } = store.getState()
+    const { sessionId, direction, turnControlMode } = store.getState()
     if (sessionId === null) {
       return // no active session
     }
     inFlight = true
     try {
-      let turnId: string
-      try {
-        const created = await api.createTurn(sessionId)
-        turnId = created.turnId
-      } catch (error) {
+      if (turnControlMode === 'auto') {
+        await startAutoSession(sessionId, direction)
+      } else {
+        await startManualTurn(sessionId, direction)
+      }
+    } finally {
+      inFlight = false
+    }
+  }
+
+  // MANUAL turn (ARCH-010 §7; web §17): buffer-delimited — createTurn → begin → connect → wire a single
+  // per-turn sink → session.update(turn_detection:null) + clear; Stop commits + asks for a response. One
+  // turn per Start (the slice-1 single-turn flow, minus the auto-only settled latch which moved to the
+  // auto path's continuous-listening model).
+  async function startManualTurn(sessionId: string, direction: LanguageDirection): Promise<void> {
+    let turnId: string
+    try {
+      const created = await api.createTurn(sessionId)
+      turnId = created.turnId
+    } catch (error) {
+      store.addError(
+        error instanceof ApiError
+          ? error.uiError
+          : {
+              code: 'turn.create_failed',
+              safeMessage: 'Could not start the turn.',
+              retryable: true,
+            },
+      )
+      return // abort before any client wiring
+    }
+
+    store.beginTurn({ turnId, mode: 'realtime', direction })
+
+    // Persistent connect: the manager holds one pc across turns (idempotent). A failed connect fails +
+    // aborts THIS turn (the manager reset its latch so a later turn can retry).
+    try {
+      await connectionManager.ensureConnected()
+    } catch (error) {
+      store.failTurn(connectError(error))
+      return
+    }
+
+    // A fresh per-turn sink (E.4a) wired to the client's server-event stream: raw → parse → normalize →
+    // sink; on responseDone the turn is finalized, so report + finalize it to the backend.
+    const sink = createRealtimeEventSink({ store, clock })
+    client.onServerEvent = (raw) => {
+      const event = normalizeRealtimeEvent(parseRealtimeEvent(raw))
+      if (event === null) {
+        return
+      }
+      sink.handle(event)
+      if (event.kind === 'responseDone') {
+        reportTurnEvents(sessionId, turnId)
+        finalizeTurn(sessionId, turnId, event.usage)
+      }
+    }
+
+    sessionUpdateInput(null)
+    client.sendClientEvent({ type: 'input_audio_buffer.clear' })
+    store.appendLatencyEvent(marker('turn.recording.started'))
+  }
+
+  // AUTO / server-VAD continuous-listening session (Phase I, I.2 slice 2; web §27). ONE Start opens the
+  // listening session — the server segments speech into MULTIPLE turns (a turn per detected segment), so NO
+  // eager turn is created here (no empty turn if the user never speaks). turnStatus → 'recording' opens the
+  // UI (Start disables / Stop enables); the per-segment turns are born from `speech_started`.
+  async function startAutoSession(sessionId: string, direction: LanguageDirection): Promise<void> {
+    autoListening = true
+    currentSegmentTurnId = null
+    currentSink = null
+    segmentStarting = false
+    pendingRecordingStoppedTs = null
+    store.setTurnStatus('recording')
+
+    try {
+      await connectionManager.ensureConnected()
+    } catch (error) {
+      autoListening = false
+      store.failTurn(connectError(error))
+      return
+    }
+
+    client.onServerEvent = (raw) => handleAutoServerEvent(raw, sessionId, direction)
+    sessionUpdateInput({
+      type: 'server_vad',
+      threshold: SERVER_VAD_THRESHOLD,
+      prefix_padding_ms: SERVER_VAD_PREFIX_PADDING_MS,
+      silence_duration_ms: SERVER_VAD_SILENCE_DURATION_MS,
+    })
+    client.sendClientEvent({ type: 'input_audio_buffer.clear' })
+  }
+
+  // Begin a turn for a server-detected speech segment (async createTurn → beginTurn → fresh per-segment
+  // sink → stamp recording.started). The turn exists before its transcript deltas arrive (deltas follow
+  // speech_started by >= silence_duration_ms). Guarded against a duplicate/overlapping speech_started + a
+  // close-listening (Stop) that lands during the async createTurn window.
+  function beginAutoSegment(sessionId: string, direction: LanguageDirection): void {
+    if (!autoListening || segmentStarting || currentSegmentTurnId !== null) {
+      return
+    }
+    segmentStarting = true
+    void api
+      .createTurn(sessionId)
+      .then(({ turnId }) => {
+        if (!autoListening) {
+          return // listening was closed (Stop) during createTurn — drop the segment cleanly
+        }
+        store.beginTurn({ turnId, mode: 'realtime', direction })
+        currentSegmentTurnId = turnId
+        currentSink = createRealtimeEventSink({ store, clock })
+        store.appendLatencyEvent(marker('turn.recording.started'))
+        // A speech_stopped that arrived during this createTurn window (before the turn existed) deferred its
+        // true speech-end time here — stamp it now so the responsiveness anchor isn't lost (3A; §25/§13).
+        if (pendingRecordingStoppedTs !== null) {
+          store.appendLatencyEvent(marker('turn.recording.stopped', pendingRecordingStoppedTs))
+          pendingRecordingStoppedTs = null
+        }
+      })
+      .catch((error: unknown) => {
         store.addError(
           error instanceof ApiError
             ? error.uiError
@@ -155,119 +328,87 @@ export function createRealtimeTurnController(deps: RealtimeTurnDeps): RealtimeTu
                 retryable: true,
               },
         )
-        return // abort before any client wiring
-      }
+      })
+      .finally(() => {
+        segmentStarting = false
+      })
+  }
 
-      store.beginTurn({ turnId, mode: 'realtime', direction })
-
-      // Persistent connect: the manager holds one pc across turns (idempotent), stamps connecting/connected,
-      // and surfaces disconnects. The first turn connects; subsequent turns reuse the live pc. A failed
-      // connect fails + aborts THIS turn (the manager reset its latch so a later turn can retry).
-      try {
-        await connectionManager.ensureConnected()
-      } catch (error) {
-        store.failTurn(
-          error instanceof ApiError
-            ? error.uiError
-            : {
-                code: 'realtime.connect',
-                safeMessage:
-                  'Could not establish the realtime voice connection. Retry, or switch to Cascade.',
-                retryable: true,
-              },
-        )
-        return
-      }
-
-      // A fresh per-turn sink (E.4a) wired to the client's server-event stream: raw frame → parse → normalize
-      // → sink; on responseDone the turn is finalized, so report its events to the backend.
-      const sink = createRealtimeEventSink({ store, clock })
-      // Per-turn latch (reset on each startTurn → a fresh turn after a settled one works). In Phase-I AUTO
-      // mode the turn is single-utterance (slice 1): after the first auto response.done we go IDLE so a 2nd
-      // server-VAD'd utterance can't re-finalize (re-POST /complete+/events) or garble turn 1 against a gone
-      // currentTurn. Multi-segment (a turn per server-detected segment) is slice 2.
-      let settled = false
-      let warnedPostSettled = false
-      // Replaces any prior turn's delegate — sinks are per-turn (the old closure is GC'd); only the active
-      // controller writes onServerEvent (the inFlight guard prevents a concurrent rebind).
-      client.onServerEvent = (raw) => {
-        if (settled) {
-          // DEV-only observability (manual-smoke-exempt, like the 053-B DC logger): make the documented
-          // single-utterance boundary visible — a 2nd server-VAD'd utterance is dropped here (its audio
-          // still plays via the media track, but no transcript/cost/events) until slice 2 handles
-          // multi-segment. Warn ONCE per turn so a live auto-VAD smoke catches it instead of reading "broken".
-          if (import.meta.env.DEV && !warnedPostSettled) {
-            warnedPostSettled = true
-            console.warn(
-              '[realtime auto-VAD] ignoring server events after the first auto turn — slice 1 is ' +
-                'single-utterance per Start; continuous multi-utterance is Phase-I slice 2.',
-            )
-          }
-          return
+  // Route a server event in AUTO mode: speech_started begins a segment-turn; speech_stopped stamps the
+  // speech-end anchor (3A — into turn.recording.stopped so deriveTurnMetrics + the backend session-avg
+  // agree); committed is a lifecycle no-op; everything else (transcript deltas, audio, response.*) routes
+  // to the current segment's sink, finalizing the segment on its response.done.
+  function handleAutoServerEvent(
+    raw: string,
+    sessionId: string,
+    direction: LanguageDirection,
+  ): void {
+    const event = normalizeRealtimeEvent(parseRealtimeEvent(raw))
+    if (event === null) {
+      return
+    }
+    switch (event.kind) {
+      case 'speechStarted':
+        beginAutoSegment(sessionId, direction)
+        break
+      case 'speechStopped':
+        // 3A speech-end anchor: stamp turn.recording.stopped from the SERVER signal (there is no manual Stop
+        // in auto) so deriveTurnMetrics anchors responsiveness on the real speech-end + reconciles with the
+        // backend session-avg (both read recording.stopped; mirrors cascade §25/§13).
+        if (currentSegmentTurnId !== null) {
+          store.appendLatencyEvent(marker('turn.recording.stopped'))
+        } else if (segmentStarting) {
+          // The segment's turn is still being created — hold the TRUE speech-end time + stamp it when
+          // beginTurn settles (the createTurn-window race; rare but anchor-preserving).
+          pendingRecordingStoppedTs = clock()
         }
-        const event = normalizeRealtimeEvent(parseRealtimeEvent(raw))
-        if (event === null) {
-          return
+        break
+      case 'committed':
+        // Buffer auto-committed (lifecycle); the auto response.created/.done follow. No store action.
+        break
+      default: {
+        // transcript deltas / audio / response.created / response.done / error → the current segment's sink.
+        if (currentSink !== null) {
+          currentSink.handle(event)
         }
-        sink.handle(event)
-        if (event.kind === 'responseDone') {
+        if (event.kind === 'responseDone' && currentSegmentTurnId !== null) {
+          // The sink's completeTurn (above) moved the turn into turns[]; report + finalize it (§26 /complete
+          // + /events per auto-turn), reset for the next segment, and re-arm 'recording' so the continuous
+          // session keeps listening (instead of the per-turn 'completed' that would re-enable Start mid-session).
+          const turnId = currentSegmentTurnId
           reportTurnEvents(sessionId, turnId)
           finalizeTurn(sessionId, turnId, event.usage)
-          if (store.getState().turnControlMode === 'auto') {
-            settled = true
+          currentSegmentTurnId = null
+          currentSink = null
+          if (autoListening) {
+            store.setTurnStatus('recording')
           }
         }
+        break
       }
-
-      // Manual VAD-off (ARCH-010 §7): disable server turn detection, then clear the input buffer to delimit
-      // the turn start. The mic track is already streaming (E.3 addTrack) — no per-turn mic toggle.
-      // Re-assert input transcription in the SAME frame (Finding 053): this partial audio.input would
-      // otherwise clobber the broker mint's input.transcription → no SOURCE transcript.
-      // Phase I: in AUTO mode the server VADs (auto-detects speech start/end + auto-creates responses) via
-      // `turn_detection: server_vad`; in MANUAL mode the turn is buffer-delimited (`turn_detection: null` +
-      // Stop commits). 053-B: re-assert `transcription` in the SAME frame regardless (else the source
-      // transcript regresses). The mode is gated mid-turn (canToggleMode), so it's stable across the turn.
-      client.sendClientEvent({
-        type: 'session.update',
-        session: {
-          audio: {
-            input: {
-              turn_detection:
-                store.getState().turnControlMode === 'auto'
-                  ? {
-                      type: 'server_vad',
-                      threshold: SERVER_VAD_THRESHOLD,
-                      prefix_padding_ms: SERVER_VAD_PREFIX_PADDING_MS,
-                      silence_duration_ms: SERVER_VAD_SILENCE_DURATION_MS,
-                    }
-                  : null,
-              transcription: { model: REALTIME_INPUT_TRANSCRIPTION_MODEL },
-            },
-          },
-        },
-      })
-      client.sendClientEvent({ type: 'input_audio_buffer.clear' })
-      store.appendLatencyEvent(marker('turn.recording.started'))
-    } finally {
-      inFlight = false
     }
   }
 
   function stopTurn(): void {
-    // Guard: only an active (started) turn can be stopped — a Stop before/without a turn is a no-op (avoids
+    if (store.getState().turnControlMode === 'auto') {
+      // AUTO close-listening (I.2 slice 2): stop the server VAD (turn_detection:null) + return to a startable
+      // state so the user can Start/End — NOT a commit/response.create (which would race the server's
+      // auto-commit → a double response; slice-1 rule). The continuous listening session (re-armed between
+      // segments) needs this control — otherwise only End could stop it. The guarded early-end of an in-flight
+      // segment is deferred; if Stop lands mid-segment the server's own response.done still finalizes the turn.
+      if (!autoListening) {
+        return
+      }
+      autoListening = false
+      sessionUpdateInput(null)
+      store.setTurnStatus('completed')
+      return
+    }
+    // Manual: only an active (started) turn can be stopped — a Stop before/without a turn is a no-op (avoids
     // commit/response.create on an unconnected channel + a stranded recording.stopped marker).
     if (store.getState().currentTurn === undefined) {
       return
     }
-    if (store.getState().turnControlMode === 'auto') {
-      // Auto-VAD (Phase I, slice 1): the SERVER owns segmentation (speech-stop → auto-commit → auto-response),
-      // so Stop is a no-op — sending commit/response.create here would RACE the server's auto-commit → a
-      // double response. The turn finalizes on the server's auto response.done. A guarded early-end override
-      // (only if no `committed` seen) is slice 2. The realtime metrics speech-end anchor in auto mode is a
-      // slice-2 concern (the user's Stop is not the speech-end here).
-      return
-    }
-    // Manual: commit the buffered audio + ask for a response (ARCH-010 §7); stamp the speech-end marker.
     client.sendClientEvent({ type: 'input_audio_buffer.commit' })
     client.sendClientEvent({ type: 'response.create' })
     store.appendLatencyEvent(marker('turn.recording.stopped'))

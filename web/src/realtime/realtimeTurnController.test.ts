@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createRealtimeTurnController } from './realtimeTurnController'
 import { createSessionStore } from '../state/sessionStore'
+import { deriveTurnMetrics } from '../state/selectors'
 import type { InterpretationSession } from '../types/domain'
 
 const FIXED_TS = '2026-05-29T12:00:00.000+00:00'
@@ -34,7 +35,7 @@ function realtimeSession(): InterpretationSession {
 // Real store (so the sink->store flow + the responseDone->report-reads-turns path are genuine, web §7/§11),
 // mocked client + api. The mock client exposes the surface the controller USES (connect/sendClientEvent +
 // a settable onServerEvent delegate); the real client's DC plumbing is manual-smoke.
-function setup() {
+function setup(clock: () => string = () => FIXED_TS) {
   const store = createSessionStore()
   store.sessionStarted(realtimeSession()) // sessionId + mode:realtime + direction + active
   const client = {
@@ -52,9 +53,29 @@ function setup() {
     client,
     connectionManager,
     api,
-    clock: () => FIXED_TS,
+    clock,
   })
   return { store, client, connectionManager, api, controller }
+}
+
+// Flush the microtask queue so an async beginAutoSegment (createTurn().then(beginTurn)) settles before the
+// next server event is fired. Mirrors the real timing: under server_vad the source emits speech_stopped /
+// transcript deltas hundreds of ms AFTER speech_started (>= silence_duration_ms), so the per-segment turn is
+// always created before its content arrives. Two ticks cover createTurn's resolve -> .then chain.
+async function flush(): Promise<void> {
+  await Promise.resolve()
+  await Promise.resolve()
+}
+
+// A monotonically increasing ISO clock (stepMs apart) so absolute-timestamp deltas (deriveTurnMetrics) are
+// real positive numbers — used to pin the auto-mode speech-end anchor as a non-zero responsiveness value.
+function incrementingClock(stepMs = 1000): () => string {
+  let t = 0
+  return () => {
+    const iso = new Date(t).toISOString()
+    t += stepMs
+    return iso
+  }
 }
 
 function eventTypes(client: ReturnType<typeof setup>['client']): string[] {
@@ -241,37 +262,21 @@ describe('createRealtimeTurnController', () => {
     expect(sessionUpdate.session.audio.input.transcription).toEqual({ model: 'gpt-4o-transcribe' })
   })
 
-  it('auto mode: Stop is a NO-OP — no input_audio_buffer.commit / response.create (server owns segmentation)', async () => {
-    const { store, client, controller } = setup()
+  it('auto mode: Start opens a listening session (turnStatus recording) WITHOUT creating a turn yet', async () => {
+    const { store, api, controller } = setup()
     store.setTurnControlMode('auto')
-    await controller.startTurn()
-    client.sendClientEvent.mockClear()
 
-    controller.stopTurn()
-
-    // sending commit/response.create here would RACE the server's auto-commit → a double response
-    expect(eventTypes(client)).not.toContain('input_audio_buffer.commit')
-    expect(eventTypes(client)).not.toContain('response.create')
-  })
-
-  it('auto mode: goes idle after the first auto response.done — a 2nd utterance does NOT re-finalize or garble turn 1 (slice 1 single-utterance bound)', async () => {
-    const { store, client, api, controller } = setup()
-    store.setTurnControlMode('auto')
     await controller.startTurn()
 
-    client.onServerEvent?.(JSON.stringify({ type: 'response.done', response: {} }))
-    // the server keeps VAD-ing — a 2nd utterance after turn 1 finalized MUST be ignored (slice 2 = multi-segment)
-    client.onServerEvent?.(
-      JSON.stringify({ type: 'response.output_audio_transcript.delta', delta: 'segunda' }),
-    )
-    client.onServerEvent?.(JSON.stringify({ type: 'response.done', response: {} }))
-
-    expect(api.completeTurn).toHaveBeenCalledTimes(1) // finalized ONCE (no re-POST of /complete)
-    expect(api.appendTurnEvents).toHaveBeenCalledTimes(1) // reported ONCE
-    expect(store.getState().turns).toHaveLength(1) // one turn, not double-processed
+    // The server now owns segmentation: Start opens the mic/listening session (so the Start button disables
+    // + Stop enables), but a turn is born only when the server detects a speech segment (speech_started) —
+    // NOT eagerly at Start (slice 1's eager createTurn is gone for auto).
+    expect(store.getState().turnStatus).toBe('recording')
+    expect(store.getState().currentTurn).toBeUndefined()
+    expect(api.createTurn).not.toHaveBeenCalled()
   })
 
-  it('auto mode: the settled latch resets PER startTurn — a 2nd auto turn after a settled one finalizes', async () => {
+  it('auto mode: a 2-segment server-VAD sequence creates 2 turns, each with its own transcript + /complete + /events', async () => {
     const { store, client, api, controller } = setup()
     store.setTurnControlMode('auto')
     api.createTurn.mockReset()
@@ -280,12 +285,212 @@ describe('createRealtimeTurnController', () => {
       .mockResolvedValueOnce({ turnId: 'turn_2' })
 
     await controller.startTurn()
-    client.onServerEvent?.(JSON.stringify({ type: 'response.done', response: {} })) // settles turn 1
-    await controller.startTurn() // a fresh Start → fresh settled=false (latch is per-turn, not module-scoped)
-    client.onServerEvent?.(JSON.stringify({ type: 'response.done', response: {} })) // finalizes turn 2
 
-    expect(api.completeTurn).toHaveBeenCalledTimes(2) // BOTH turns finalized — the latch reset (not dead)
-    expect(store.getState().turns).toHaveLength(2)
+    // --- segment 1 ---
+    client.onServerEvent?.(JSON.stringify({ type: 'input_audio_buffer.speech_started' }))
+    await flush() // createTurn(turn_1) -> beginTurn settles before the segment's content arrives
+    client.onServerEvent?.(
+      JSON.stringify({ type: 'response.output_audio_transcript.delta', delta: 'hola' }),
+    )
+    client.onServerEvent?.(JSON.stringify({ type: 'input_audio_buffer.speech_stopped' }))
+    client.onServerEvent?.(JSON.stringify({ type: 'output_audio_buffer.started' }))
+    client.onServerEvent?.(JSON.stringify({ type: 'response.done', response: {} }))
+
+    // --- segment 2 (a SECOND utterance in the SAME recording session → its own turn) ---
+    client.onServerEvent?.(JSON.stringify({ type: 'input_audio_buffer.speech_started' }))
+    await flush() // createTurn(turn_2) -> beginTurn
+    client.onServerEvent?.(
+      JSON.stringify({ type: 'response.output_audio_transcript.delta', delta: 'mundo' }),
+    )
+    client.onServerEvent?.(JSON.stringify({ type: 'input_audio_buffer.speech_stopped' }))
+    client.onServerEvent?.(JSON.stringify({ type: 'output_audio_buffer.started' }))
+    client.onServerEvent?.(JSON.stringify({ type: 'response.done', response: {} }))
+
+    const turns = store.getState().turns
+    expect(turns).toHaveLength(2) // one turn PER server-detected segment (not single-utterance-bound)
+    expect(api.createTurn).toHaveBeenCalledTimes(2)
+    expect(api.completeTurn).toHaveBeenCalledTimes(2) // /complete finalize per segment (§26 per auto-turn)
+    expect(api.appendTurnEvents).toHaveBeenCalledTimes(2) // /events per segment
+    // each segment's transcript rides into ITS OWN turn (no cross-segment bleed)
+    expect(turns[0]).toMatchObject({ turnId: 'turn_1' })
+    expect(turns[0].targetTranscript).toEqual([{ text: 'hola', isFinal: true }])
+    expect(turns[1]).toMatchObject({ turnId: 'turn_2' })
+    expect(turns[1].targetTranscript).toEqual([{ text: 'mundo', isFinal: true }])
+  })
+
+  it('auto mode: a single-segment sequence still yields exactly 1 turn (the slice-1 happy path, now via the lifecycle)', async () => {
+    const { store, client, api, controller } = setup()
+    store.setTurnControlMode('auto')
+
+    await controller.startTurn()
+    client.onServerEvent?.(JSON.stringify({ type: 'input_audio_buffer.speech_started' }))
+    await flush()
+    client.onServerEvent?.(
+      JSON.stringify({ type: 'response.output_audio_transcript.delta', delta: 'hola' }),
+    )
+    client.onServerEvent?.(JSON.stringify({ type: 'input_audio_buffer.speech_stopped' }))
+    client.onServerEvent?.(JSON.stringify({ type: 'response.done', response: {} }))
+
+    expect(store.getState().turns).toHaveLength(1)
+    expect(api.completeTurn).toHaveBeenCalledTimes(1)
+    expect(api.appendTurnEvents).toHaveBeenCalledTimes(1)
+  })
+
+  it('auto mode: the 2nd segment is HANDLED (produces a turn), NOT dropped — slice-1 settled-latch removed', async () => {
+    const { store, client, api, controller } = setup()
+    store.setTurnControlMode('auto')
+    api.createTurn.mockReset()
+    api.createTurn
+      .mockResolvedValueOnce({ turnId: 'turn_1' })
+      .mockResolvedValueOnce({ turnId: 'turn_2' })
+
+    await controller.startTurn()
+    // segment 1 fully finalizes
+    client.onServerEvent?.(JSON.stringify({ type: 'input_audio_buffer.speech_started' }))
+    await flush()
+    client.onServerEvent?.(JSON.stringify({ type: 'response.done', response: {} }))
+    // a 2nd utterance — under slice 1 this was DROPPED (settled latch + DEV warn); now it MUST become a turn
+    client.onServerEvent?.(JSON.stringify({ type: 'input_audio_buffer.speech_started' }))
+    await flush()
+    client.onServerEvent?.(
+      JSON.stringify({ type: 'response.output_audio_transcript.delta', delta: 'segunda' }),
+    )
+    client.onServerEvent?.(JSON.stringify({ type: 'response.done', response: {} }))
+
+    // the inverse of slice-1's drop-guard: a 2nd turn EXISTS with the 2nd utterance's transcript
+    const turns = store.getState().turns
+    expect(turns).toHaveLength(2)
+    expect(turns[1].targetTranscript).toEqual([{ text: 'segunda', isFinal: true }])
+  })
+
+  it('auto mode: between segments the session keeps listening (turnStatus re-armed to recording)', async () => {
+    const { store, client, controller } = setup()
+    store.setTurnControlMode('auto')
+
+    await controller.startTurn()
+    client.onServerEvent?.(JSON.stringify({ type: 'input_audio_buffer.speech_started' }))
+    await flush()
+    client.onServerEvent?.(JSON.stringify({ type: 'response.done', response: {} })) // segment 1 finalizes
+
+    // completeTurn flips turnStatus to 'completed' + clears currentTurn; the controller re-arms 'recording'
+    // so the hands-free session stays listening (Start stays disabled, Stop stays enabled) for the next
+    // segment — instead of the per-turn 'completed' that would re-enable Start mid-session.
+    expect(store.getState().turnStatus).toBe('recording')
+    expect(store.getState().currentTurn).toBeUndefined()
+  })
+
+  it('auto mode: speech_stopped is the speech-end anchor — recording.stopped is stamped from the SERVER signal (no manual Stop), yielding a real responsiveness delta', async () => {
+    const { store, client, controller } = setup(incrementingClock())
+    store.setTurnControlMode('auto')
+
+    await controller.startTurn()
+    client.onServerEvent?.(JSON.stringify({ type: 'input_audio_buffer.speech_started' }))
+    await flush()
+    client.onServerEvent?.(
+      JSON.stringify({ type: 'response.output_audio_transcript.delta', delta: 'hola' }),
+    )
+    client.onServerEvent?.(JSON.stringify({ type: 'input_audio_buffer.speech_stopped' })) // speech-end
+    client.onServerEvent?.(JSON.stringify({ type: 'output_audio_buffer.started' })) // first audio (later)
+    client.onServerEvent?.(JSON.stringify({ type: 'response.done', response: {} }))
+
+    const turn = store.getState().turns[0]
+    // stopTurn() was NEVER called (no manual Stop in auto) — yet the segment carries turn.recording.stopped,
+    // stamped at the server speech_stopped tick. deriveTurnMetrics anchors responsiveness on it (3A — reuse
+    // the marker so the per-turn metric reconciles with the backend session-avg; mirrors cascade §25/§13).
+    expect(turn.latencyEvents?.some((e) => e.name === 'turn.recording.stopped')).toBe(true)
+    const metrics = deriveTurnMetrics(turn)
+    expect(metrics.speechEndToFirstAudioMs).toBeGreaterThan(0) // anchored on server speech-end, not n/a
+  })
+
+  it('auto mode: Stop closes the listening session — session.update(turn_detection:null), Start re-enabled, NO commit/response.create', async () => {
+    const { store, client, controller } = setup()
+    store.setTurnControlMode('auto')
+    await controller.startTurn()
+    client.sendClientEvent.mockClear()
+
+    controller.stopTurn()
+
+    // Stop in auto = stop the SERVER VAD (turn_detection:null) + return to a startable state — NOT a manual
+    // commit/response.create (which would race the server's auto-commit → a double response, slice-1 rule).
+    const sessionUpdate = client.sendClientEvent.mock.calls
+      .map(
+        (c) =>
+          c[0] as { type: string; session?: { audio?: { input?: { turn_detection?: unknown } } } },
+      )
+      .find((e) => e.type === 'session.update')
+    expect(sessionUpdate?.session?.audio?.input?.turn_detection).toBeNull()
+    expect(eventTypes(client)).not.toContain('input_audio_buffer.commit')
+    expect(eventTypes(client)).not.toContain('response.create')
+    // the session returns to the startable 'completed' status (canStartRecording true again)
+    expect(store.getState().turnStatus).toBe('completed')
+  })
+
+  it('auto mode: speech_stopped DURING the createTurn window still anchors the segment (deferred recording.stopped)', async () => {
+    const { store, client, api, controller } = setup(incrementingClock())
+    store.setTurnControlMode('auto')
+    // Hold createTurn unresolved so speech_stopped arrives BEFORE the segment turn exists (the rare race the
+    // code-quality review flagged): the speech-end anchor must be deferred + applied when beginTurn settles,
+    // not silently dropped.
+    let resolveCreate: (v: { turnId: string }) => void = () => {}
+    api.createTurn.mockReturnValue(
+      new Promise<{ turnId: string }>((resolve) => {
+        resolveCreate = resolve
+      }),
+    )
+
+    await controller.startTurn()
+    client.onServerEvent?.(JSON.stringify({ type: 'input_audio_buffer.speech_started' }))
+    // speech_stopped fires while createTurn is STILL pending (currentSegmentTurnId null, segmentStarting true)
+    client.onServerEvent?.(JSON.stringify({ type: 'input_audio_buffer.speech_stopped' }))
+    resolveCreate({ turnId: 'turn_1' }) // NOW the turn is created
+    await flush()
+    client.onServerEvent?.(JSON.stringify({ type: 'output_audio_buffer.started' }))
+    client.onServerEvent?.(JSON.stringify({ type: 'response.done', response: {} }))
+
+    const turn = store.getState().turns[0]
+    expect(turn.latencyEvents?.some((e) => e.name === 'turn.recording.stopped')).toBe(true)
+    expect(deriveTurnMetrics(turn).speechEndToFirstAudioMs).toBeGreaterThan(0) // anchor preserved, not n/a
+  })
+
+  it('auto mode: a createTurn rejection on speech_started surfaces a sanitized error + keeps listening (segmentStarting resets)', async () => {
+    const { store, client, api, controller } = setup()
+    store.setTurnControlMode('auto')
+    api.createTurn.mockReset()
+    api.createTurn
+      .mockRejectedValueOnce(new Error('raw-create-detail'))
+      .mockResolvedValueOnce({ turnId: 'turn_2' })
+
+    await controller.startTurn()
+    client.onServerEvent?.(JSON.stringify({ type: 'input_audio_buffer.speech_started' }))
+    await flush() // createTurn rejects → .catch addError, .finally resets segmentStarting
+
+    const err = store.getState().errors.find((e) => e.code === 'turn.create_failed')
+    expect(err).toBeDefined()
+    expect(err?.safeMessage).not.toContain('raw-create-detail') // sanitized, never the raw error
+    expect(store.getState().turnStatus).toBe('recording') // the listening session is NOT torn down by one failed segment
+
+    // a SUBSEQUENT speech_started must produce a real turn (segmentStarting was reset → not wedged)
+    client.onServerEvent?.(JSON.stringify({ type: 'input_audio_buffer.speech_started' }))
+    await flush()
+    client.onServerEvent?.(JSON.stringify({ type: 'response.done', response: {} }))
+    expect(store.getState().turns).toHaveLength(1)
+    expect(store.getState().turns[0].turnId).toBe('turn_2')
+  })
+
+  it('auto mode: a duplicate speech_started DURING an active segment is a no-op (one turn, the guard holds)', async () => {
+    const { store, client, api, controller } = setup()
+    store.setTurnControlMode('auto')
+
+    await controller.startTurn()
+    client.onServerEvent?.(JSON.stringify({ type: 'input_audio_buffer.speech_started' }))
+    await flush() // segment active (currentSegmentTurnId set)
+    // a 2nd speech_started before the active segment's response.done must NOT begin a 2nd turn
+    client.onServerEvent?.(JSON.stringify({ type: 'input_audio_buffer.speech_started' }))
+    await flush()
+    client.onServerEvent?.(JSON.stringify({ type: 'response.done', response: {} }))
+
+    expect(api.createTurn).toHaveBeenCalledTimes(1) // the currentSegmentTurnId guard blocked the duplicate
+    expect(store.getState().turns).toHaveLength(1)
   })
 
   it('guards a concurrent double startTurn — only one turn is created', async () => {

@@ -24,6 +24,14 @@ export type NormalizedRealtimeEvent =
   | { kind: 'responseCreated' }
   | { kind: 'responseDone'; usage: RealtimeUsageTokens | null }
   | { kind: 'error'; code: string }
+  // Phase-I auto-VAD server-VAD buffer lifecycle (I.2 slice 2). Under turn_detection:server_vad the server
+  // auto-detects each speech segment: speechStarted (new-segment marker → the controller begins a turn) →
+  // speechStopped (the auto-mode speech-end anchor → the controller stamps turn.recording.stopped) →
+  // committed (buffer auto-committed → the auto response.created/.done follow). Payload-less — they carry
+  // only ids/offsets the controller doesn't need (item_id / audio_*_ms). Sequential under server-VAD.
+  | { kind: 'speechStarted' }
+  | { kind: 'speechStopped' }
+  | { kind: 'committed' }
 
 // Parse a raw data-channel text frame to a JSON object, or null when it is not valid JSON / not an object
 // (so normalize only ever sees an object). Never throws.
@@ -130,6 +138,16 @@ export function normalizeRealtimeEvent(event: unknown): NormalizedRealtimeEvent 
     // Confirmed GA `type` (ARCH-010 §7 audio-marker smoke-confirm).
     case 'output_audio_buffer.started':
       return { kind: 'outputAudioStarted' }
+    // Phase-I server-VAD buffer lifecycle (I.2 slice 2). Standard GA server events under
+    // turn_detection:server_vad — the exact type strings are re-pinned against the live oai-events capture
+    // at the next auto-VAD smoke (ARCH-010 §7; §15/§27 verify-the-live-GA-shape). They carry only
+    // ids/offsets (item_id / audio_*_ms) — none the controller needs — so they normalize payload-less.
+    case 'input_audio_buffer.speech_started':
+      return { kind: 'speechStarted' }
+    case 'input_audio_buffer.speech_stopped':
+      return { kind: 'speechStopped' }
+    case 'input_audio_buffer.committed':
+      return { kind: 'committed' }
     // Surface (never swallow) a session error (ARCH-018). E.3 only CLASSIFIES — it carries the bounded GA
     // error code (a safe enum) and deliberately drops the raw `error.message`; the full ProviderError +
     // safeMessage construction is E.5's job.
