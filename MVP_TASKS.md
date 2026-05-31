@@ -525,6 +525,12 @@ The project is "done" (ARCH-025 + PRD success criteria) when:
 - [x] Files: NEW — `docs/AI_COLLABORATION.md` (the operational `CLAUDE.md`/`AGENTS.md` pre-exist as the agent-instruction files and stand as-is; user-confirmed).
 - [x] Anchors: `ARCH-023`. Cross-doc invariant: none.
 
+### G.2b — Backend `.env` auto-loader (FINDING, deliverable correctness; origin 2026-05-31 smoke-prep)
+> **FINDING (lead, 2026-05-31 — during the real-key smoke prep):** the backend has **NO `.env` loader** — no `DotNetEnv`, no `Env.Load()` in `Program.cs`; .NET reads only **process** env vars. So `cp .env.example .env && dotnet run` leaves all keys unloaded (`GET /api/config` → `configured:false` everywhere), which **breaks "clean clone runs from README"** (ARCH-021/029). The lead unblocked the live smoke by sourcing the env (`set -a && source ../../.env && set +a && dotnet run`).
+- [x] **(a) Doc-correctness fix (DONE 2026-05-31):** the runbook §2 + README §2 start steps now use the working `set -a && source ../../.env && set +a && dotnet run` form (+ a note). So the README/runbook are correct **now**, before (b).
+- [ ] **(b) Backend auto-loader (small slice — backend impl, post-smoke):** add `DotNetEnv` to `AiInterpreter.Api` + `Env.Load()` at startup **Development-only** (guard on `ASPNETCORE_ENVIRONMENT==Development`; production uses real env / Secrets Manager per ARCH-022) so a plain `dotnet run` auto-loads `.env`. `.env` is already gitignored. **On (b) landing, simplify the README/runbook back to a plain `dotnet run`.** _(Not dispatched now — backend impl takes it after the smoke. Small; no cross-doc invariant. Lead-recommended over (a)-only.)_
+- [ ] Anchors: `ARCH-028`, `ARCH-029`. Cross-doc invariant: none.
+
 ### G.3 — Demo script
 - [ ] `docs/DEMO_SCRIPT.md` per `ARCH-021` (2 Realtime + 2 Cascade EN→ES, switch direction, 1+1, switch translation model + repeat a cascade turn, 1 WER, show summary, open JSON, explain tradeoffs); include the suggested EN/ES phrases.
 - [ ] Files: NEW — `docs/DEMO_SCRIPT.md`.

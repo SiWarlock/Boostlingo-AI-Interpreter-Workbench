@@ -48,11 +48,15 @@ A real run spends real provider credits — Deepgram STT minutes, OpenAI transla
 
 ```bash
 # Terminal 1 — backend (http://localhost:5179)
-cd server/AiInterpreter.Api && dotnet restore && dotnet run
+# ⚠️ .NET reads PROCESS env vars, not a .env file (no auto-loader yet — tracked as a G fix).
+# Source .env into the shell FIRST, then run — else GET /api/config reports configured:false everywhere:
+cd server/AiInterpreter.Api && set -a && source ../../.env && set +a && dotnet restore && dotnet run
 
 # Terminal 2 — frontend (http://localhost:5173)
 cd web && npm install && npm run dev
 ```
+
+> **Env-loading note (bash/zsh):** `set -a; source ../../.env; set +a` exports every `.env` var into the process the backend inherits (the `set -a` makes `source`'d assignments exported). A future small backend slice adds `DotNetEnv` so a plain `dotnet run` auto-loads `.env` in Development — until then, the `source` step is required.
 
 **Verify before testing:**
 
