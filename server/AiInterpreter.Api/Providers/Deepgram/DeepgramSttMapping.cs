@@ -36,6 +36,14 @@ internal static class DeepgramSttMapping
     }
 
     /// <summary>
+    /// A live-WS <c>UtteranceEnd</c> (endpointing / detected-silence) message -> <see cref="SttUtteranceEnd"/>
+    /// (I.1). No text — it is a turn-terminal MARKER the orchestrator honors only under auto-VAD. The SDK's
+    /// <c>last_word_end</c>/<c>channel</c> are not needed (the marker itself is the signal).
+    /// </summary>
+    public static SttEvent ToUtteranceEnd(UtteranceEndResponse response, DateTimeOffset timestamp) =>
+        new SttUtteranceEnd(timestamp);
+
+    /// <summary>
     /// The pre-recorded REST response -> the ordered fallback contract: <see cref="SttStarted"/> then a single
     /// <see cref="SttFinal"/> (no interim), empty transcript normalized to <see cref="string.Empty"/> (ARCH-011 fallback).
     /// </summary>
@@ -116,6 +124,9 @@ internal static class DeepgramSttMapping
         SampleRate = request.SampleRate,
         Channels = options.Channels,
         UtteranceEnd = options.UtteranceEndMs.ToString(CultureInfo.InvariantCulture),
+        // I.1 — vad_events enables Deepgram's endpointing/UtteranceEnd path (with interim_results +
+        // utterance_end_ms). Harmless when auto-VAD is off (the unsubscribed SpeechStarted events are ignored).
+        VadEvents = true,
     };
 
     private static string NormalizeFinal(string? transcript) =>

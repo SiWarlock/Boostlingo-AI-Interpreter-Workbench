@@ -9,6 +9,7 @@ using DeepgramPrerecordedSchema = Deepgram.Models.Listen.v1.REST.PreRecordedSche
 using DeepgramWsCloseResponse = Deepgram.Models.Listen.v2.WebSocket.CloseResponse;
 using DeepgramWsErrorResponse = Deepgram.Models.Listen.v2.WebSocket.ErrorResponse;
 using DeepgramWsResultResponse = Deepgram.Models.Listen.v2.WebSocket.ResultResponse;
+using DeepgramWsUtteranceEndResponse = Deepgram.Models.Listen.v2.WebSocket.UtteranceEndResponse;
 
 namespace AiInterpreter.Api.Providers.Deepgram;
 
@@ -48,6 +49,10 @@ public sealed class DeepgramSttProvider : ISttProvider
 
         await client.Subscribe((object? _, DeepgramWsResultResponse result) =>
             channel.Writer.TryWrite(DeepgramSttMapping.ToSttEvent(result, DateTimeOffset.UtcNow)));
+        // I.1 — surface Deepgram's UtteranceEnd (endpointing/detected-silence) as SttUtteranceEnd so the
+        // orchestrator can auto-finalize under auto-VAD. Inert when auto-VAD is off (the orchestrator ignores it).
+        await client.Subscribe((object? _, DeepgramWsUtteranceEndResponse response) =>
+            channel.Writer.TryWrite(DeepgramSttMapping.ToUtteranceEnd(response, DateTimeOffset.UtcNow)));
         await client.Subscribe((object? _, DeepgramWsErrorResponse _) =>
         {
             // The SDK error message is intentionally NOT propagated (ToFailed's SafeMessage is fixed-per-code).

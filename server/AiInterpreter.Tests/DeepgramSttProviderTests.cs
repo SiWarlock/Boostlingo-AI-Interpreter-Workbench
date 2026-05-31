@@ -7,6 +7,7 @@ using Deepgram.Models.Exceptions.v1;
 // Aliases disambiguate the two SDK DTO families that share type names across namespaces:
 // the live-WS result (v2.WebSocket) and the pre-recorded REST response (v1.REST).
 using WsResult = Deepgram.Models.Listen.v2.WebSocket.ResultResponse;
+using WsUtteranceEnd = Deepgram.Models.Listen.v2.WebSocket.UtteranceEndResponse;
 using WsChannel = Deepgram.Models.Listen.v2.WebSocket.Channel;
 using WsAlt = Deepgram.Models.Listen.v2.WebSocket.Alternative;
 using RestSync = Deepgram.Models.Listen.v1.REST.SyncResponse;
@@ -74,6 +75,17 @@ public class DeepgramSttProviderTests
 
         var partial = Assert.IsType<SttPartial>(ev);
         Assert.Equal(string.Empty, partial.Text);
+    }
+
+    [Fact]
+    public void utterance_end_response_maps_to_stt_utterance_end()
+    {
+        // I.1 — the SDK's UtteranceEnd (endpointing / detected-silence) message maps to the SttUtteranceEnd
+        // terminal marker (no text; the orchestrator honors it only under auto-VAD).
+        var ev = DeepgramSttMapping.ToUtteranceEnd(new WsUtteranceEnd(), Now);
+
+        Assert.IsType<SttUtteranceEnd>(ev);
+        Assert.Equal(Now, ev.Timestamp);
     }
 
     // === Group 2 — pre-recorded REST fallback parsing (pure, synthetic SyncResponse) ===
@@ -180,6 +192,7 @@ public class DeepgramSttProviderTests
         Assert.True(schema.SmartFormat == true);
         Assert.Equal((int?)1, schema.Channels);
         Assert.Equal("1000", schema.UtteranceEnd);
+        Assert.True(schema.VadEvents == true); // I.1 — vad_events enables the endpointing/UtteranceEnd path
     }
 
     // === synthetic SDK-DTO builders ===

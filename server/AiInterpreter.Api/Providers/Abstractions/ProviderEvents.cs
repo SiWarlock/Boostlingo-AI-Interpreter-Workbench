@@ -15,6 +15,11 @@ public sealed record SttFinal(string Text, DateTimeOffset Timestamp) : SttEvent(
 
 public sealed record SttFailed(ProviderError Error, DateTimeOffset Timestamp) : SttEvent(Timestamp);
 
+// I.1 (Phase I) — a Deepgram endpointing marker (utterance-end / detected silence), distinct from a
+// per-segment SttFinal. No text — it is a turn-terminal SIGNAL the orchestrator honors only under auto-VAD
+// (manual mode ignores it, finalizing on the client `stop`). Maps from the SDK's UtteranceEndResponse.
+public sealed record SttUtteranceEnd(DateTimeOffset Timestamp) : SttEvent(Timestamp);
+
 // --- Translation ---
 public abstract record TranslationEvent(DateTimeOffset Timestamp);
 
