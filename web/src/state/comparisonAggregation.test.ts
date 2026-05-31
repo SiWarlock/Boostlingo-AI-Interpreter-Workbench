@@ -33,21 +33,21 @@ function turn(
 describe('aggregateCostByVariant', () => {
   it('groups cost by (mode, model) — one row per distinct variant present', () => {
     const rows = aggregateCostByVariant([
-      turn('cascade', 'gpt-5.4-nano', 0.1),
-      turn('cascade', 'gpt-5.4-mini', 0.3),
+      turn('cascade', 'gpt-5-nano', 0.1),
+      turn('cascade', 'gpt-5-mini', 0.3),
       turn('realtime', 'gpt-realtime', 0.5),
     ])
 
     expect(rows).toHaveLength(3)
     expect(rows).toContainEqual({
       mode: 'cascade',
-      model: 'gpt-5.4-nano',
+      model: 'gpt-5-nano',
       avgCostPerMinuteUsd: 0.1,
       turnCount: 1,
     })
     expect(rows).toContainEqual({
       mode: 'cascade',
-      model: 'gpt-5.4-mini',
+      model: 'gpt-5-mini',
       avgCostPerMinuteUsd: 0.3,
       turnCount: 1,
     })
@@ -61,34 +61,34 @@ describe('aggregateCostByVariant', () => {
 
   it('averages cost/min per variant across its turns', () => {
     const rows = aggregateCostByVariant([
-      turn('cascade', 'gpt-5.4-nano', 0.1),
-      turn('cascade', 'gpt-5.4-nano', 0.2),
+      turn('cascade', 'gpt-5-nano', 0.1),
+      turn('cascade', 'gpt-5-nano', 0.2),
     ])
 
     expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ mode: 'cascade', model: 'gpt-5.4-nano', turnCount: 2 })
+    expect(rows[0]).toMatchObject({ mode: 'cascade', model: 'gpt-5-nano', turnCount: 2 })
     expect(rows[0].avgCostPerMinuteUsd).toBeCloseTo(0.15, 10)
   })
 
   it('skips null/unpriced cost — never fabricates a synthetic 0', () => {
     const rows = aggregateCostByVariant([
-      turn('cascade', 'gpt-5.4-nano', 0.2),
+      turn('cascade', 'gpt-5-nano', 0.2),
       turn('cascade', null, null), // cost entirely absent
       turn('realtime', 'gpt-realtime', null), // cost present but estimatedUsdPerMinute null
-      turn('cascade', 'gpt-5.4-mini', Number.NaN), // non-finite per-minute (malformed payload)
+      turn('cascade', 'gpt-5-mini', Number.NaN), // non-finite per-minute (malformed payload)
     ])
 
     // The priced nano turn keeps avg 0.20 — NOT dragged toward 0 by the null-cost turn.
     expect(rows).toContainEqual({
       mode: 'cascade',
-      model: 'gpt-5.4-nano',
+      model: 'gpt-5-nano',
       avgCostPerMinuteUsd: 0.2,
       turnCount: 1,
     })
     // The realtime variant with a null per-minute is ABSENT (not a fabricated 0 row).
     expect(rows.find((r) => r.mode === 'realtime')).toBeUndefined()
     // A non-finite (NaN) per-minute is skipped — never a "$NaN/min" row.
-    expect(rows.find((r) => r.model === 'gpt-5.4-mini')).toBeUndefined()
+    expect(rows.find((r) => r.model === 'gpt-5-mini')).toBeUndefined()
   })
 
   it('returns an empty breakdown for an empty session', () => {
@@ -121,7 +121,7 @@ describe('toComparisonTurn', () => {
   it('reads the wire `costEstimate` field (NOT the viewmodel `cost`) and defaults absent cost to null', () => {
     const wireCost: CostEstimate = {
       provider: 'openai',
-      model: 'gpt-5.4-nano',
+      model: 'gpt-5-nano',
       pricingBasis: 'tokens',
       estimatedUsd: 0,
       estimatedUsdPerMinute: 0.3,

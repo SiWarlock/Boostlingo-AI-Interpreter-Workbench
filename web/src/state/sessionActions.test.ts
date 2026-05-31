@@ -18,7 +18,7 @@ function wireSession(overrides: Partial<InterpretationSession> = {}): Interpreta
         sttModel: 'nova-3',
         sttLanguage: 'multi',
         translationProvider: 'openai',
-        translationModel: 'gpt-5.4-nano',
+        translationModel: 'gpt-5-nano',
         ttsProvider: 'openai',
         ttsModel: 'gpt-4o-mini-tts',
         ttsVoice: 'alloy',
@@ -40,7 +40,7 @@ describe('startSession', () => {
       mode: 'cascade',
       direction: { source: 'en', target: 'es' },
       realtimeModel: 'gpt-realtime',
-      translationModel: 'gpt-5.4-nano',
+      translationModel: 'gpt-5-nano',
     })
     store.addError({ code: 'config.load_failed', safeMessage: 'old error', retryable: true })
     expect(store.getState().errors).toHaveLength(1)
@@ -57,7 +57,7 @@ describe('startSession', () => {
       mode: 'cascade',
       direction: { source: 'en', target: 'es' },
       realtimeModel: 'gpt-realtime',
-      translationModel: 'gpt-5.4-nano',
+      translationModel: 'gpt-5-nano',
     })
     // clearErrors runs BEFORE createSession so a prior error can't survive a successful start
     expect(clearSpy.mock.invocationCallOrder[0]).toBeLessThan(
@@ -76,7 +76,7 @@ describe('startSession', () => {
       mode: 'cascade',
       direction: { source: 'en', target: 'es' },
       realtimeModel: 'gpt-realtime',
-      translationModel: 'gpt-5.4-nano',
+      translationModel: 'gpt-5-nano',
     })
     const prior: UiError = { code: 'prior', safeMessage: 'prior', retryable: false }
     store.addError(prior)
@@ -110,7 +110,7 @@ describe('startSession', () => {
       mode: 'cascade',
       direction: { source: 'en', target: 'es' },
       realtimeModel: 'gpt-realtime',
-      translationModel: 'gpt-5.4-nano',
+      translationModel: 'gpt-5-nano',
     })
     const api = {
       createSession: vi.fn().mockRejectedValue(new Error('boom-internal-detail')),

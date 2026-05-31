@@ -29,7 +29,7 @@ describe('cascadeApi', () => {
       turnId: 'turn_001',
       source: 'en',
       target: 'es',
-      translationModel: 'gpt-5.4-nano',
+      translationModel: 'gpt-5-nano',
       ttsVoice: 'alloy',
     }
     const audio = new Blob(['fake-audio-bytes'], { type: 'audio/webm' })
@@ -49,7 +49,7 @@ describe('cascadeApi', () => {
     expect(form.get('turnId')).toBe('turn_001')
     expect(form.get('source')).toBe('en') // always sent (mitigates the C.5 [Required] gap)
     expect(form.get('target')).toBe('es')
-    expect(form.get('translationModel')).toBe('gpt-5.4-nano')
+    expect(form.get('translationModel')).toBe('gpt-5-nano')
     expect(form.get('ttsVoice')).toBe('alloy')
     expect(form.get('audio')).toBeInstanceOf(Blob)
 
@@ -70,7 +70,7 @@ describe('cascadeApi', () => {
       sessionId: 'session_abc',
       source: 'es',
       target: 'en',
-      translationModel: 'gpt-5.4-mini',
+      translationModel: 'gpt-5-mini',
       ttsVoice: 'verse',
     }
     const audio = new Blob(['x'], { type: 'audio/webm' })

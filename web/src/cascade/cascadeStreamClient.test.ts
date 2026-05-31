@@ -17,7 +17,7 @@ const params: CascadeStartParams = {
   turnId: 'turn_001',
   direction: { source: 'en', target: 'es' },
   sampleRate: 48000,
-  translationModel: 'gpt-5.4-nano',
+  translationModel: 'gpt-5-nano',
   ttsVoice: 'alloy',
 }
 
@@ -81,7 +81,7 @@ describe('buildStartFrame', () => {
       direction: { source: 'en', target: 'es' },
       encoding: 'linear16',
       sampleRate: 48000,
-      translationModel: 'gpt-5.4-nano',
+      translationModel: 'gpt-5-nano',
       ttsVoice: 'alloy',
     })
   })
@@ -107,7 +107,7 @@ describe('dispatchCascadeMessage', () => {
   }
   const estimate: CostEstimate = {
     provider: 'cascade',
-    model: 'gpt-5.4-nano',
+    model: 'gpt-5-nano',
     pricingBasis: 'composite',
     estimatedUsd: 0.01,
     estimatedUsdPerMinute: 0.6,

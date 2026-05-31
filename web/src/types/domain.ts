@@ -37,7 +37,7 @@ export type LatencyStage =
 export type ClockSource = 'server' | 'browser'
 
 export type RealtimeModel = 'gpt-realtime' | 'gpt-realtime-mini'
-export type TranslationModel = 'gpt-5.4-nano' | 'gpt-5.4-mini'
+export type TranslationModel = 'gpt-5-nano' | 'gpt-5-mini'
 
 export type LanguageDirection = { source: LanguageCode; target: LanguageCode }
 

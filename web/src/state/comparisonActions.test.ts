@@ -18,7 +18,7 @@ function wireSession(overrides: Partial<InterpretationSession> = {}): Interpreta
         sttModel: 'nova-3',
         sttLanguage: 'multi',
         translationProvider: 'openai',
-        translationModel: 'gpt-5.4-nano',
+        translationModel: 'gpt-5-nano',
         ttsProvider: 'openai',
         ttsModel: 'gpt-4o-mini-tts',
         ttsVoice: 'alloy',
@@ -78,7 +78,7 @@ function cost(model: string, perMin: number): CostEstimate {
 function sessionWithTurns(): InterpretationSession {
   return wireSession({
     turns: [
-      { turnId: 't1', mode: 'cascade', costEstimate: cost('gpt-5.4-nano', 0.3) },
+      { turnId: 't1', mode: 'cascade', costEstimate: cost('gpt-5-nano', 0.3) },
       { turnId: 't2', mode: 'realtime', costEstimate: cost('gpt-realtime', 0.5) },
     ] as unknown as InterpretationSession['turns'],
   })
@@ -101,7 +101,7 @@ describe('loadComparison', () => {
     // The by-variant split is derived from the wire `costEstimate` field of each persisted turn.
     expect(result?.byVariant).toContainEqual({
       mode: 'cascade',
-      model: 'gpt-5.4-nano',
+      model: 'gpt-5-nano',
       avgCostPerMinuteUsd: 0.3,
       turnCount: 1,
     })

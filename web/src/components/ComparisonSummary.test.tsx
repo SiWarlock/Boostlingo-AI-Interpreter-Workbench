@@ -26,7 +26,7 @@ function activeSession(): InterpretationSession {
         sttModel: 'nova-3',
         sttLanguage: 'multi',
         translationProvider: 'openai',
-        translationModel: 'gpt-5.4-nano',
+        translationModel: 'gpt-5-nano',
         ttsProvider: 'openai',
         ttsModel: 'gpt-4o-mini-tts',
         ttsVoice: 'alloy',
@@ -109,7 +109,7 @@ describe('ComparisonSummary', () => {
 
   it('renders the by-model-variant cost breakdown rows', async () => {
     const byVariant: ComparisonData['byVariant'] = [
-      { mode: 'cascade', model: 'gpt-5.4-nano', avgCostPerMinuteUsd: 0.3, turnCount: 2 },
+      { mode: 'cascade', model: 'gpt-5-nano', avgCostPerMinuteUsd: 0.3, turnCount: 2 },
       { mode: 'realtime', model: 'gpt-realtime', avgCostPerMinuteUsd: 0.5, turnCount: 1 },
     ]
     vi.mocked(loadComparison).mockResolvedValue({ summary: summary(), byVariant })
@@ -118,7 +118,7 @@ describe('ComparisonSummary', () => {
     render(<ComparisonSummary />)
 
     const variants = await screen.findByLabelText('cost-by-variant')
-    expect(within(variants).getByText(/gpt-5\.4-nano/)).toBeInTheDocument()
+    expect(within(variants).getByText(/gpt-5-nano/)).toBeInTheDocument()
     expect(within(variants).getByText(/Estimated \$0\.30\/min/)).toBeInTheDocument()
     expect(within(variants).getByText(/gpt-realtime/)).toBeInTheDocument()
   })

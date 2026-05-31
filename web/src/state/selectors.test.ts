@@ -25,7 +25,7 @@ function config(overrides: Partial<ConfigResponse> = {}): ConfigResponse {
       translation: {
         configured: true,
         provider: 'openai',
-        models: ['gpt-5.4-nano', 'gpt-5.4-mini'],
+        models: ['gpt-5-nano', 'gpt-5-mini'],
       },
       tts: { configured: true, provider: 'openai', model: 'gpt-4o-mini-tts' },
     },
@@ -60,7 +60,7 @@ describe('availableModels', () => {
   it('returns the catalog model lists for configured capabilities', () => {
     expect(availableModels(config())).toEqual({
       realtimeModels: ['gpt-realtime', 'gpt-realtime-mini'],
-      translationModels: ['gpt-5.4-nano', 'gpt-5.4-mini'],
+      translationModels: ['gpt-5-nano', 'gpt-5-mini'],
     })
   })
 
@@ -81,8 +81,8 @@ describe('availableModels', () => {
       'gpt-realtime-mini',
     ])
     expect(availableModels(realtimeKeyAbsent).translationModels).toEqual([
-      'gpt-5.4-nano',
-      'gpt-5.4-mini',
+      'gpt-5-nano',
+      'gpt-5-mini',
     ])
   })
 })
@@ -293,7 +293,7 @@ describe('formatCostPerMinute', () => {
   function cost(overrides: Partial<CostEstimate> = {}): CostEstimate {
     return {
       provider: 'cascade',
-      model: 'gpt-5.4-nano',
+      model: 'gpt-5-nano',
       pricingBasis: 'composite',
       estimatedUsd: 0.0021,
       estimatedUsdPerMinute: 0.42,

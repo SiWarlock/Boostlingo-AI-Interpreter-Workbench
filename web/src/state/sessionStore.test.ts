@@ -14,7 +14,7 @@ const config: ConfigResponse = {
   realtime: { configured: true, models: ['gpt-realtime', 'gpt-realtime-mini'] },
   cascade: {
     stt: { configured: true, provider: 'deepgram', model: 'nova-3' },
-    translation: { configured: true, provider: 'openai', models: ['gpt-5.4-nano', 'gpt-5.4-mini'] },
+    translation: { configured: true, provider: 'openai', models: ['gpt-5-nano', 'gpt-5-mini'] },
     tts: { configured: true, provider: 'openai', model: 'gpt-4o-mini-tts' },
   },
   languages: ['en', 'es'],
@@ -37,7 +37,7 @@ const wireSession: InterpretationSession = {
       sttModel: 'nova-3',
       sttLanguage: 'multi',
       translationProvider: 'openai',
-      translationModel: 'gpt-5.4-mini',
+      translationModel: 'gpt-5-mini',
       ttsProvider: 'openai',
       ttsModel: 'gpt-4o-mini-tts',
       ttsVoice: 'alloy',
@@ -56,7 +56,7 @@ describe('sessionStore', () => {
       mode: 'cascade',
       direction: { source: 'en', target: 'es' },
       realtimeModel: 'gpt-realtime',
-      translationModel: 'gpt-5.4-nano',
+      translationModel: 'gpt-5-nano',
       sessionStatus: 'idle',
       turnStatus: 'ready',
       turns: [],
@@ -78,7 +78,7 @@ describe('sessionStore', () => {
     expect(s.mode).toBe('realtime') // from config.currentMode
     expect(s.direction).toEqual({ source: 'es', target: 'en' }) // from config.direction
     expect(s.realtimeModel).toBe('gpt-realtime-mini') // from config.providerProfile.realtimeModel
-    expect(s.translationModel).toBe('gpt-5.4-mini') // from config.providerProfile.translationModel
+    expect(s.translationModel).toBe('gpt-5-mini') // from config.providerProfile.translationModel
     expect(s.sessionStatus).toBe('active')
   })
 
@@ -158,14 +158,14 @@ describe('sessionStore', () => {
       mode: 'cascade',
       direction: { source: 'en', target: 'es' },
       realtimeModel: 'gpt-realtime-mini',
-      translationModel: 'gpt-5.4-mini',
+      translationModel: 'gpt-5-mini',
     })
     const s = store.getState()
     expect(s.label).toBe('my run')
     expect(s.mode).toBe('cascade')
     expect(s.direction).toEqual({ source: 'en', target: 'es' })
     expect(s.realtimeModel).toBe('gpt-realtime-mini')
-    expect(s.translationModel).toBe('gpt-5.4-mini')
+    expect(s.translationModel).toBe('gpt-5-mini')
     expect(s.sessionStatus).toBe('configured')
   })
 
@@ -282,7 +282,7 @@ describe('sessionStore streaming actions (D.4a)', () => {
 
     const estimate: CostEstimate = {
       provider: 'cascade',
-      model: 'gpt-5.4-nano',
+      model: 'gpt-5-nano',
       pricingBasis: 'composite',
       estimatedUsd: 0.012,
       estimatedUsdPerMinute: 0.6,
@@ -294,7 +294,7 @@ describe('sessionStore streaming actions (D.4a)', () => {
     const turn = store.getState().currentTurn
     expect(turn?.estimatedCostUsd).toBe(0.012)
     expect(turn?.estimatedCostPerMinuteUsd).toBe(0.6)
-    expect(turn?.translationModelUsed).toBe('gpt-5.4-nano')
+    expect(turn?.translationModelUsed).toBe('gpt-5-nano')
     // D.6: the FULL estimate is retained too (the CostPanel renders model + the assumptions tooltip).
     expect(turn?.cost).toEqual(estimate)
   })

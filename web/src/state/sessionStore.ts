@@ -78,7 +78,7 @@ function createInitialState(): UiSessionState {
     mode: 'cascade', // Phase D builds the cascade UI first; config-gating (D.2) disables an unconfigured mode
     direction: { source: 'en', target: 'es' },
     realtimeModel: 'gpt-realtime',
-    translationModel: 'gpt-5.4-nano',
+    translationModel: 'gpt-5-nano',
     sessionStatus: 'idle',
     turnStatus: 'ready',
     turns: [],

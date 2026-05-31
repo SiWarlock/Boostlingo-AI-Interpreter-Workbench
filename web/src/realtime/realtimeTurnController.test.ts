@@ -19,7 +19,7 @@ function realtimeSession(): InterpretationSession {
         sttModel: 'nova-3',
         sttLanguage: 'multi',
         translationProvider: 'openai',
-        translationModel: 'gpt-5.4-nano',
+        translationModel: 'gpt-5-nano',
         ttsProvider: 'openai',
         ttsModel: 'gpt-4o-mini-tts',
         ttsVoice: 'alloy',

@@ -24,7 +24,7 @@ const config: ConfigResponse = {
   realtime: { configured: true, models: ['gpt-realtime', 'gpt-realtime-mini'] },
   cascade: {
     stt: { configured: true, provider: 'deepgram', model: 'nova-3' },
-    translation: { configured: true, provider: 'openai', models: ['gpt-5.4-nano', 'gpt-5.4-mini'] },
+    translation: { configured: true, provider: 'openai', models: ['gpt-5-nano', 'gpt-5-mini'] },
     tts: { configured: true, provider: 'openai', model: 'gpt-4o-mini-tts' },
   },
   languages: ['en', 'es'],
@@ -44,7 +44,7 @@ const session: InterpretationSession = {
       sttModel: 'nova-3',
       sttLanguage: 'multi',
       translationProvider: 'openai',
-      translationModel: 'gpt-5.4-nano',
+      translationModel: 'gpt-5-nano',
       ttsProvider: 'openai',
       ttsModel: 'gpt-4o-mini-tts',
       ttsVoice: 'alloy',

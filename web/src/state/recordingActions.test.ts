@@ -9,7 +9,7 @@ function baseState(overrides: Partial<UiSessionState> = {}): UiSessionState {
     mode: 'cascade',
     direction: { source: 'en', target: 'es' },
     realtimeModel: 'gpt-realtime',
-    translationModel: 'gpt-5.4-nano',
+    translationModel: 'gpt-5-nano',
     sessionStatus: 'active',
     turnStatus: 'ready',
     turns: [],
@@ -61,7 +61,7 @@ describe('startRecording', () => {
         turnId: 'turn_001',
         direction: { source: 'en', target: 'es' },
         sampleRate: 48000, // from the capture handle
-        translationModel: 'gpt-5.4-nano',
+        translationModel: 'gpt-5-nano',
         ttsVoice: '', // blank -> the backend ResolveVoice picks the per-target-language voice
       }),
     )
