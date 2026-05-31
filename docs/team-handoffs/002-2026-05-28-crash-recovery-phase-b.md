@@ -3,7 +3,7 @@
 **Date:** 2026-05-28 (round); crash-recovery + `/team-end` completed 2026-05-29
 **Track:** `boostlingo-main`
 **Predecessor handoff:** `docs/team-handoffs/001-2026-05-28-context-cycle-phase-b.md`
-**Successor handoff:** _(filled in when the next /team-end runs)_
+**Successor handoff:** `docs/team-handoffs/003-2026-05-31-ui-design-pause.md`
 **Round-seal commit at handoff:** `352029c`
 
 ## Why this handoff exists
