@@ -61,6 +61,15 @@ describe('normalizeRealtimeEvent', () => {
     expect(normalizeRealtimeEvent({ type: 'response.done' })).toEqual({ kind: 'responseDone' })
   })
 
+  it('maps output_audio_buffer.started -> outputAudioStarted (the DC first-audio anchor under WebRTC, 053-C1)', () => {
+    // response.output_audio.delta never arrives on the DC (audio rides the media track);
+    // output_audio_buffer.started DOES fire (fixture #13) → the real first-audio anchor. It carries only
+    // response_id/event_id (no payload the sink needs), so the normalized event has no fields.
+    expect(
+      normalizeRealtimeEvent({ type: 'output_audio_buffer.started', response_id: 'resp_x' }),
+    ).toEqual({ kind: 'outputAudioStarted' })
+  })
+
   it('classifies error / response.error -> error carrying a safe code (never the raw message)', () => {
     expect(
       normalizeRealtimeEvent({

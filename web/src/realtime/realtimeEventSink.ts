@@ -60,6 +60,20 @@ export function createRealtimeEventSink(deps: {
     store.appendLatencyEvent(event)
   }
 
+  // First-audio is stamped ONCE per turn (the firstAudioStamped latch) by whichever audio marker fires
+  // first. Under WebRTC that is `output_audio_buffer.started` (the DC event that fires); `audioDelta`
+  // (response.output_audio.delta) is a latch-guarded FALLBACK for any env where the delta does arrive
+  // (053-C1). Stamps both the realtime first-audio marker AND playback.started, PER TURN (A2, brief 049 —
+  // never the session-persistent <audio> onplaying once-latch, which leaked a prior turn's stamp → negative
+  // deltas; refines §17/§23). The detached <audio> still PLAYS the live track — it just no longer STAMPS.
+  function stampFirstAudioOnce(): void {
+    if (!firstAudioStamped) {
+      firstAudioStamped = true
+      stamp('realtime.first_audio_delta')
+      stamp('playback.started', 'playback')
+    }
+  }
+
   function appendSegment(role: 'source' | 'target', text: string, isFinal: boolean): void {
     const segment: TranscriptSegment = {
       segmentId: `realtime-${role}-${++segmentSeq}`,
@@ -94,17 +108,15 @@ export function createRealtimeEventSink(deps: {
         appendSegment('source', event.text, true)
         sourceText = ''
         break
+      case 'outputAudioStarted':
+        // The DC first-audio anchor under WebRTC (053-C1) — output_audio_buffer.started carries NO audio,
+        // so the timing-only posture is strictly preserved (invariant #3).
+        stampFirstAudioOnce()
+        break
       case 'audioDelta':
-        // TIMING ONLY — write NO audio/transcript (invariant #3). On the turn's FIRST post-stop audio,
-        // stamp both the realtime first-audio marker AND playback.started — PER TURN (A2, brief 049). The
-        // realtime playback timing lives here, not on the session-persistent <audio> onplaying once-latch
-        // (which leaked a prior turn's stamp across turns on the persistent pc → negative deltas; refines
-        // lesson §17). The detached <audio> still PLAYS the live track — it just no longer STAMPS.
-        if (!firstAudioStamped) {
-          firstAudioStamped = true
-          stamp('realtime.first_audio_delta')
-          stamp('playback.started', 'playback')
-        }
+        // TIMING ONLY — write NO audio/transcript (invariant #3; the base64 is discarded). Latch-guarded
+        // FALLBACK first-audio anchor (response.output_audio.delta does not arrive on the DC under WebRTC).
+        stampFirstAudioOnce()
         break
       case 'responseDone': {
         // response.done is the target-transcript-final signal (E.3 handoff): finalize the running target

@@ -240,6 +240,23 @@ describe('deriveTurnMetrics', () => {
     expect(deriveTurnMetrics(t).speechEndToFirstAudioMs).toBe(800)
   })
 
+  it('realtime headline populates once first-audio is stamped (053-C1 outcome; selector UNCHANGED)', () => {
+    // Selector is untouched (the 056-c1 chain): realtime has no stt.final → speech-end = recording.stopped.
+    // 053-C1 makes the sink stamp realtime.first_audio_delta on output_audio_buffer.started (the DC event
+    // that fires), so this marker is now present on a real turn → the headline is no longer a permanent n/a.
+    const t = turn({
+      mode: 'realtime',
+      latencyEvents: [
+        latencyEvent('turn.recording.stopped', '2026-05-29T00:00:02.000Z'),
+        latencyEvent('realtime.first_audio_delta', '2026-05-29T00:00:02.450Z', {
+          stage: 'realtime',
+        }),
+      ],
+    })
+    const m = deriveTurnMetrics(t)
+    expect(m.speechEndToFirstAudioMs).toBe(450) // non-n/a — the realtime headline populates
+  })
+
   it('prefers tts.first_audio over realtime.first_audio_delta when both are present (cascade-first chain)', () => {
     const t = turn({
       latencyEvents: [

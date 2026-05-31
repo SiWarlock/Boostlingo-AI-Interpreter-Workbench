@@ -8,6 +8,7 @@
 
 export type NormalizedRealtimeEvent =
   | { kind: 'audioDelta'; base64: string }
+  | { kind: 'outputAudioStarted' }
   | { kind: 'targetTranscriptDelta'; text: string }
   | { kind: 'sourceTranscriptDelta'; text: string }
   | { kind: 'sourceTranscriptCompleted'; text: string }
@@ -71,6 +72,12 @@ export function normalizeRealtimeEvent(event: unknown): NormalizedRealtimeEvent 
       return { kind: 'responseCreated' }
     case 'response.done':
       return { kind: 'responseDone' }
+    // First-audio anchor under WebRTC (053-C1): output_audio_buffer.started is the DC event that actually
+    // fires — response.output_audio.delta does NOT arrive (audio rides the media track, pc.ontrack). No
+    // payload needed (carries only response_id/event_id); E.4's sink stamps the first-audio markers on it.
+    // Confirmed GA `type` (ARCH-010 §7 audio-marker smoke-confirm).
+    case 'output_audio_buffer.started':
+      return { kind: 'outputAudioStarted' }
     // Surface (never swallow) a session error (ARCH-018). E.3 only CLASSIFIES — it carries the bounded GA
     // error code (a safe enum) and deliberately drops the raw `error.message`; the full ProviderError +
     // safeMessage construction is E.5's job.

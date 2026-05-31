@@ -118,6 +118,41 @@ describe('createRealtimeEventSink', () => {
     })
   })
 
+  it('stamps first-audio (realtime.first_audio_delta + playback.started) once on outputAudioStarted (053-C1)', () => {
+    const store = setupTurn()
+    const sink = createRealtimeEventSink({ store, clock: fixedClock })
+
+    sink.handle({ kind: 'outputAudioStarted' })
+
+    const events = store.getState().currentTurn?.latencyEvents ?? []
+    expect(events.filter((e) => e.name === 'realtime.first_audio_delta')).toHaveLength(1)
+    expect(events.filter((e) => e.name === 'playback.started')).toHaveLength(1)
+  })
+
+  it('latch: outputAudioStarted then audioDelta stamps first-audio exactly once (no double-stamp)', () => {
+    const store = setupTurn()
+    const sink = createRealtimeEventSink({ store, clock: fixedClock })
+
+    sink.handle({ kind: 'outputAudioStarted' })
+    sink.handle({ kind: 'audioDelta', base64: 'AAAA' }) // fallback path — latch already held
+
+    const events = store.getState().currentTurn?.latencyEvents ?? []
+    expect(events.filter((e) => e.name === 'realtime.first_audio_delta')).toHaveLength(1)
+    expect(events.filter((e) => e.name === 'playback.started')).toHaveLength(1)
+  })
+
+  it('latch (reverse): audioDelta then outputAudioStarted stamps first-audio exactly once', () => {
+    const store = setupTurn()
+    const sink = createRealtimeEventSink({ store, clock: fixedClock })
+
+    sink.handle({ kind: 'audioDelta', base64: 'AAAA' }) // whichever fires first wins via the shared latch
+    sink.handle({ kind: 'outputAudioStarted' })
+
+    const events = store.getState().currentTurn?.latencyEvents ?? []
+    expect(events.filter((e) => e.name === 'realtime.first_audio_delta')).toHaveLength(1)
+    expect(events.filter((e) => e.name === 'playback.started')).toHaveLength(1)
+  })
+
   it('NEVER writes audio or a transcript to the store on audioDelta (invariant #3 sentinel)', () => {
     const store = setupTurn()
     const sink = createRealtimeEventSink({ store, clock: fixedClock })
