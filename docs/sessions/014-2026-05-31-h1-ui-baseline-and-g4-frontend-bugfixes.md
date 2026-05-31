@@ -5,7 +5,7 @@
 - **Area:** frontend (`web/`)
 - **Predecessor:** [012 — Phase F.4 eval-turn exclusion](012-2026-05-30-phase-f-f4-eval-turn-exclusion.md)
 - **Sibling (parallel backend close-out, same wholesale cycle):** [013 — backend G.4 bug-fix cycle](013-2026-05-31-smoke-bugfix-backend.md)
-- **Successor:** _(next session — TBD; fresh team, wholesale cycle)_
+- **Successor:** [015 — frontend metrics-correctness, realtime cost, Phase-I realtime slice 1](015-2026-05-31-frontend-metrics-realtime-cost-phase-i-slice1.md)
 
 > Implementer session doc (technical close-out only). `MVP_TASKS.md` / `LESSONS.md` / `ARCHITECTURE.md` are orchestrator-owned and untouched here. Cross-doc + lesson items are **surfaced** below for `/orchestrate-end`.
 
