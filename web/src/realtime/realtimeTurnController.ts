@@ -179,6 +179,13 @@ export function createRealtimeTurnController(deps: RealtimeTurnDeps): RealtimeTu
     client.sendClientEvent({
       type: 'session.update',
       session: {
+        // GA-required discriminator (brief 073): the Realtime `session.update` MUST carry
+        // session.type:"realtime" or OpenAI rejects it (missing_required_parameter) → no config
+        // applies → turn_detection/transcription never take effect → stuck "ready", 0 transcripts.
+        // It's a session discriminator (not a mutable field), so it rides on EVERY session.update
+        // (manual + auto + auto-stop). The rest of the payload is an incremental patch that
+        // preserves the minted session's existing config (Context7 / the session.created echo).
+        type: 'realtime',
         audio: {
           input: {
             turn_detection: turnDetection,

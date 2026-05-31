@@ -103,8 +103,14 @@ describe('createRealtimeTurnController', () => {
 
     expect(eventTypes(client)).toEqual(['session.update', 'input_audio_buffer.clear'])
     const sessionUpdate = client.sendClientEvent.mock.calls[0][0] as {
-      session: { audio: { input: { turn_detection: unknown; transcription: unknown } } }
+      session: {
+        type: unknown
+        audio: { input: { turn_detection: unknown; transcription: unknown } }
+      }
     }
+    // GA-required (brief 073): the session.update MUST carry session.type:"realtime" (the session
+    // discriminator) or OpenAI rejects the update (missing_required_parameter) → no config applies.
+    expect(sessionUpdate.session.type).toBe('realtime')
     expect(sessionUpdate.session.audio.input.turn_detection).toBeNull()
     // Fix B (brief 053): re-assert input transcription in the SAME session.update so this partial
     // audio.input doesn't clobber the mint's input.transcription — else the SOURCE transcript never arrives.
@@ -249,8 +255,14 @@ describe('createRealtimeTurnController', () => {
 
     expect(eventTypes(client)).toEqual(['session.update', 'input_audio_buffer.clear'])
     const sessionUpdate = client.sendClientEvent.mock.calls[0][0] as {
-      session: { audio: { input: { turn_detection: unknown; transcription: unknown } } }
+      session: {
+        type: unknown
+        audio: { input: { turn_detection: unknown; transcription: unknown } }
+      }
     }
+    // GA-required (brief 073): session.type:"realtime" rides on the auto session.update too (both modes
+    // were rejected for the missing discriminator).
+    expect(sessionUpdate.session.type).toBe('realtime')
     // server-VAD config (GA defaults) — the server now auto-detects speech start/end + auto-creates responses
     expect(sessionUpdate.session.audio.input.turn_detection).toEqual({
       type: 'server_vad',
@@ -415,9 +427,14 @@ describe('createRealtimeTurnController', () => {
     const sessionUpdate = client.sendClientEvent.mock.calls
       .map(
         (c) =>
-          c[0] as { type: string; session?: { audio?: { input?: { turn_detection?: unknown } } } },
+          c[0] as {
+            type: string
+            session?: { type?: unknown; audio?: { input?: { turn_detection?: unknown } } }
+          },
       )
       .find((e) => e.type === 'session.update')
+    // GA-required (brief 073): the close-listening session.update also carries the discriminator.
+    expect(sessionUpdate?.session?.type).toBe('realtime')
     expect(sessionUpdate?.session?.audio?.input?.turn_detection).toBeNull()
     expect(eventTypes(client)).not.toContain('input_audio_buffer.commit')
     expect(eventTypes(client)).not.toContain('response.create')
