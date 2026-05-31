@@ -5,6 +5,7 @@ using AiInterpreter.Api.Metrics;
 using AiInterpreter.Api.Providers.Abstractions;
 using AiInterpreter.Api.Providers.Fakes;
 using AiInterpreter.Api.Sessions;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace AiInterpreter.Tests;
 
@@ -23,6 +24,23 @@ public class CascadeOrchestratorTests
     private sealed class FakeClock(DateTimeOffset fixedNow) : IClock
     {
         public DateTimeOffset UtcNow => fixedNow;
+    }
+
+    // 057c — a clock that advances by a fixed step on each read, so consecutive stamps get strictly
+    // increasing timestamps (the fixed FakeClock reproduces the 0 ms coincident-stamp artifact instead).
+    private sealed class AdvancingClock(DateTimeOffset start, TimeSpan step) : IClock
+    {
+        private DateTimeOffset _now = start;
+
+        public DateTimeOffset UtcNow
+        {
+            get
+            {
+                var value = _now;
+                _now = _now.Add(step);
+                return value;
+            }
+        }
     }
 
     // Call-count spy decorators (Step-2.5 Q3). Calls increments when the stage is invoked at all;
@@ -79,7 +97,9 @@ public class CascadeOrchestratorTests
         ISttProvider stt, ITranslationProvider translation, ITtsProvider tts, CascadeStartParams p)
     {
         var clock = new FakeClock(Base);
-        var orch = new CascadeStreamingOrchestrator(stt, translation, tts, new LatencyEventFactory(clock), clock);
+        var orch = new CascadeStreamingOrchestrator(
+            stt, translation, tts, new LatencyEventFactory(clock), clock,
+            NullLogger<CascadeStreamingOrchestrator>.Instance);
         var outList = new List<CascadeOutputEvent>();
         await foreach (var e in orch.RunAsync(p, EmptyFrames(), CancellationToken.None))
         {
@@ -416,7 +436,8 @@ public class CascadeOrchestratorTests
             new FakeTranslationProvider(),
             new FakeTtsProvider(),
             new LatencyEventFactory(clock),
-            clock);
+            clock,
+            NullLogger<CascadeStreamingOrchestrator>.Instance);
 
         using var cts = new CancellationTokenSource();
         cts.Cancel();
@@ -427,6 +448,36 @@ public class CascadeOrchestratorTests
             {
             }
         });
+    }
+
+    // 057c — diagnostic guard (instrumentation, not a fix): the live 0 ms tts.first_audio
+    // (tts.started == tts.first_audio) is a provider-synchronous-yield / clock-resolution artifact, NOT a
+    // stamping bug — the two stamps are on DISTINCT provider events. Against a clock that advances between
+    // reads, the pair is delta-correct (tts.first_audio strictly after tts.started). Guards a future
+    // relabel-from-completion regression even though the live 0 ms itself is benign.
+    [Fact]
+    public async Task tts_first_audio_stamp_is_after_tts_started_against_a_non_degenerate_clock()
+    {
+        var clock = new AdvancingClock(Base, TimeSpan.FromMilliseconds(10));
+        var orch = new CascadeStreamingOrchestrator(
+            new FakeSttProvider(FakeSttBehavior.SuccessWithPartials),
+            new FakeTranslationProvider(FakeTranslationBehavior.TokenStreamThenFinal),
+            new FakeTtsProvider(FakeTtsBehavior.ChunkedThenComplete),
+            new LatencyEventFactory(clock),
+            clock,
+            NullLogger<CascadeStreamingOrchestrator>.Instance);
+
+        var events = new List<CascadeOutputEvent>();
+        await foreach (var e in orch.RunAsync(Params(), EmptyFrames(), CancellationToken.None))
+        {
+            events.Add(e);
+        }
+
+        var started = events.OfType<Latency>().Single(l => l.Event.Name == LatencyEventNames.TtsStarted).Event;
+        var firstAudio = events.OfType<Latency>().Single(l => l.Event.Name == LatencyEventNames.TtsFirstAudio).Event;
+        Assert.True(
+            firstAudio.Timestamp > started.Timestamp,
+            $"tts.first_audio ({firstAudio.Timestamp:o}) must be strictly after tts.started ({started.Timestamp:o})");
     }
 
     // === 052 — empty-final tolerance (skip spurious empty/whitespace finals; fail empty_transcript only

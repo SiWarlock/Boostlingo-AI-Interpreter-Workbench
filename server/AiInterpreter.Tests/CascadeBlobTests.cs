@@ -6,6 +6,7 @@ using AiInterpreter.Api.Metrics;
 using AiInterpreter.Api.Providers.Abstractions;
 using AiInterpreter.Api.Providers.Fakes;
 using AiInterpreter.Api.Sessions;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace AiInterpreter.Tests;
 
@@ -58,7 +59,8 @@ public class CascadeBlobTests
     {
         var clock = new FakeClock(Base);
         var factory = new LatencyEventFactory(clock);
-        var streaming = new CascadeStreamingOrchestrator(stt, translation, tts, factory, clock);
+        var streaming = new CascadeStreamingOrchestrator(
+            stt, translation, tts, factory, clock, NullLogger<CascadeStreamingOrchestrator>.Instance);
         var store = new SessionStore(clock);
         var writer = new SessionPersistenceWriter(Path.Combine(Path.GetTempPath(), "aiw-blob-tests"));
         var orch = new CascadeOrchestrator(streaming, store, writer, estimator, clock);

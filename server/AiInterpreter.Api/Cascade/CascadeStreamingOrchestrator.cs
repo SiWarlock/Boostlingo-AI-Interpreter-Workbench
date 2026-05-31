@@ -5,6 +5,7 @@ using AiInterpreter.Api.Common;
 using AiInterpreter.Api.Metrics;
 using AiInterpreter.Api.Providers.Abstractions;
 using AiInterpreter.Api.Sessions;
+using Microsoft.Extensions.Logging;
 
 namespace AiInterpreter.Api.Cascade;
 
@@ -36,7 +37,8 @@ public sealed class CascadeStreamingOrchestrator(
     ITranslationProvider translation,
     ITtsProvider tts,
     LatencyEventFactory factory,
-    IClock clock)
+    IClock clock,
+    ILogger<CascadeStreamingOrchestrator> logger)
 {
     private const string SttProviderLabel = "deepgram";
     private const string OpenAiProviderLabel = "openai";
@@ -338,6 +340,7 @@ public sealed class CascadeStreamingOrchestrator(
 
         var contentType = TtsDefaultContentType;
         var completed = false; // set on TtsComplete; if the stream ends without it → fail closed (C.4b)
+        DateTimeOffset? ttsStartedAt = null; // 057c — captured to log the tts.first_audio - tts.started delta
 
         while (true)
         {
@@ -384,12 +387,25 @@ public sealed class CascadeStreamingOrchestrator(
             switch (current)
             {
                 case TtsStarted:
-                    yield return Stamp(LatencyEventNames.TtsStarted, LatencyStage.Tts, origin, OpenAiProviderLabel);
+                    var ttsStarted = Stamp(LatencyEventNames.TtsStarted, LatencyStage.Tts, origin, OpenAiProviderLabel);
+                    ttsStartedAt = ttsStarted.Event.Timestamp;
+                    yield return ttsStarted;
                     break;
 
                 case TtsFirstAudio first:
                     contentType = first.ContentType;
-                    yield return Stamp(LatencyEventNames.TtsFirstAudio, LatencyStage.Tts, origin, OpenAiProviderLabel);
+                    var ttsFirstAudio = Stamp(LatencyEventNames.TtsFirstAudio, LatencyStage.Tts, origin, OpenAiProviderLabel);
+                    // 057c — diagnostic only: the live 0 ms (tts.started == tts.first_audio) is a provider-
+                    // synchronous-yield / clock-resolution artifact, NOT a stamping bug (the stamps are on
+                    // distinct provider events). Log the real delta so the live smoke quantifies it. No fix.
+                    if (ttsStartedAt is { } startedAt)
+                    {
+                        logger.LogDebug(
+                            "TTS first-audio delta: {DeltaMs} ms (tts.first_audio - tts.started)",
+                            (ttsFirstAudio.Event.Timestamp - startedAt).TotalMilliseconds);
+                    }
+
+                    yield return ttsFirstAudio;
                     break;
 
                 case TtsAudioChunk chunk:
