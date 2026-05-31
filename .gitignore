@@ -23,5 +23,9 @@ data/sessions/*.json
 # --- OS / editor cruft ---
 .DS_Store
 
+# --- Runtime artifacts (backend run logs, etc.) ---
+server/AiInterpreter.Api/log.txt
+*.log
+
 # --- Tool caches (code-index daemon, etc.) ---
 .codegraph/
