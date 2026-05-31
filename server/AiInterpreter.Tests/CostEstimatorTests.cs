@@ -133,6 +133,37 @@ public class CostEstimatorTests
     }
 
     [Fact]
+    public void estimate_realtime_prices_from_exact_audio_tokens()
+    {
+        // 053-C2a — exact DC audio-token counts (response.done.usage) priced directly at the per-million
+        // audio rates, NO seconds×50 estimate. Fixture: in 31 audio / out 54 audio / cached 0.
+        var r = Estimator().EstimateRealtime(
+            "gpt-realtime",
+            new CostUsage { AudioInputTokens = 31, AudioOutputTokens = 54, CachedAudioInputTokens = 0 });
+
+        Assert.True(r.IsSuccess, r.Error);
+        Assert.Equal(31m / Million * 32.0m + 54m / Million * 64.0m, r.Value.EstimatedUsd); // 0.004448
+        Assert.Equal("tokens", r.Value.PricingBasis);
+        Assert.Equal(31m, r.Value.Units["audioInputTokens"]);
+        Assert.Equal(54m, r.Value.Units["audioOutputTokens"]);
+        Assert.Contains(r.Value.Assumptions, a => a.Contains("text tokens are not priced"));
+        Assert.DoesNotContain(r.Value.Assumptions, a => a.Contains("50 tokens/sec")); // not the estimate path
+    }
+
+    [Fact]
+    public void estimate_realtime_exact_tokens_honors_cached_rate()
+    {
+        // Cached audio-input tokens priced at the configured cached rate (gpt-realtime: 0.40/M).
+        var r = Estimator().EstimateRealtime(
+            "gpt-realtime",
+            new CostUsage { AudioInputTokens = 31, AudioOutputTokens = 54, CachedAudioInputTokens = 10 });
+
+        Assert.Equal(
+            31m / Million * 32.0m + 54m / Million * 64.0m + 10m / Million * 0.40m,
+            r.Value.EstimatedUsd);
+    }
+
+    [Fact]
     public void cascade_turn_aggregates_three_stages()
     {
         var sttUsd = 0.5m * 0.0058m;

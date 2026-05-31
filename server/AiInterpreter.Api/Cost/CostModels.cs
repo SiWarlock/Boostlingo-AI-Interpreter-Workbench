@@ -18,7 +18,8 @@ public sealed record CostUsage
     /// <summary>Character count — tts-1/tts-1-hd characters basis.</summary>
     public long? Characters { get; init; }
 
-    /// <summary>TTS audio-output / text-input token counts — gpt-4o-mini-tts audio_output_tokens basis.</summary>
+    /// <summary>TTS audio-output / text-input token counts — gpt-4o-mini-tts audio_output_tokens basis;
+    /// also the realtime OUTPUT audio-token count (053-C2a exact-count path — identical meaning).</summary>
     public int? AudioOutputTokens { get; init; }
 
     public int? TextInputTokens { get; init; }
@@ -30,4 +31,14 @@ public sealed record CostUsage
     public decimal? CachedAudioInputSeconds { get; init; }
 
     public decimal? AudioOutputSeconds { get; init; }
+
+    /// <summary>
+    /// Realtime EXACT audio-token counts from the data channel's <c>response.done.usage</c> (053-C2a) —
+    /// priced directly at the per-million audio rates (no audio-seconds × factor estimate) when present.
+    /// <see cref="AudioOutputTokens"/> (above) carries the realtime OUTPUT audio tokens. Text tokens are
+    /// deliberately absent (disclosed-unpriced — no text rates configured).
+    /// </summary>
+    public int? AudioInputTokens { get; init; }
+
+    public int? CachedAudioInputTokens { get; init; }
 }

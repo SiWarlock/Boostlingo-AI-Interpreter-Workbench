@@ -64,12 +64,20 @@ public sealed record AppendEventsRequest(
 /// <c>OutputAudioDurationMs</c> (E.2b, optional) is the realtime OUTPUT audio the client played, used to
 /// price the output side of the turn's realtime cost (E.4 reports it); absent → output cost is disclosed-
 /// unavailable in the estimate's <c>Assumptions</c>, never silently 0 (ARCH-014 / streaming-honesty).
+/// The <c>*AudioTokens</c> fields (053-C2a) carry the realtime turn's EXACT audio-token counts from the
+/// DC's <c>response.done.usage</c> (input/output <c>token_details.audio_tokens</c> + input
+/// <c>cached_tokens</c>); present ⇒ the realtime cost prices from them exactly (no audio-seconds × factor
+/// estimate), absent ⇒ the seconds estimate. Trailing-optional → existing positional callers unaffected.
+/// Text tokens are deliberately not carried (disclosed-unpriced — no text rates configured). TS mirror = 053-C2b.
 /// </summary>
 public sealed record CompleteTurnRequest(
     long? AudioDurationMs,
     [MaxLength(500)] List<TranscriptSegment>? Transcripts,
     TurnStatus? Status,
-    [Range(0, long.MaxValue)] long? OutputAudioDurationMs = null); // non-negative ms; null ⇒ output cost disclosed-unavailable
+    [Range(0, long.MaxValue)] long? OutputAudioDurationMs = null, // non-negative ms; null ⇒ output cost disclosed-unavailable
+    [Range(0, int.MaxValue)] int? InputAudioTokens = null,        // 053-C2a realtime exact audio-token counts
+    [Range(0, int.MaxValue)] int? OutputAudioTokens = null,       // (response.done.usage); present ⇒ exact-count
+    [Range(0, int.MaxValue)] int? CachedAudioInputTokens = null); // pricing, absent ⇒ seconds estimate
 
 /// <summary>
 /// <c>POST …/turns/{turnId}/complete</c> response. The turn is always Completed in-memory; the per-turn

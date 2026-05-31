@@ -168,6 +168,13 @@ public sealed class CostEstimator(Result<PricingOptions> pricing)
             return Unavailable($"realtime rates absent for model '{model}'");
         }
 
+        // 053-C2a — exact-count path: when the DC's audio-token counts are supplied, price directly from them
+        // at the per-million audio rates (no seconds × 50 estimate). Absent → the legacy seconds estimate below.
+        if (usage.AudioInputTokens is not null || usage.AudioOutputTokens is not null)
+        {
+            return EstimateRealtimeFromTokens(model, usage, rates, inputRate, outputRate, audioDurationMs);
+        }
+
         var inputSeconds = usage.AudioInputSeconds ?? 0m;
         var outputSeconds = usage.AudioOutputSeconds ?? 0m;
         var cachedSeconds = usage.CachedAudioInputSeconds ?? 0m;
@@ -197,6 +204,46 @@ public sealed class CostEstimator(Result<PricingOptions> pricing)
             ["audioOutputSeconds"] = outputSeconds,
             ["cachedAudioInputSeconds"] = cachedSeconds,
             ["tokensPerAudioSecond"] = RealtimeTokensPerAudioSecond,
+        };
+        return Build("openai", model, "tokens", usd, audioDurationMs, units, [.. assumptions]);
+    }
+
+    // 053-C2a — exact-count realtime pricing from the DC's response.done.usage audio-token counts. Same basis
+    // ("tokens" at audio rates), exact counting (no seconds × factor). Text tokens are disclosed-unpriced (no
+    // text rates configured). Cached tokens use the cached rate when configured, else the full input rate
+    // (over-estimates slightly — the honest direction, never under-counts).
+    private Result<CostEstimate> EstimateRealtimeFromTokens(
+        string model, CostUsage usage, RealtimeModelRates rates, decimal inputRate, decimal outputRate, long audioDurationMs)
+    {
+        var inputTokens = usage.AudioInputTokens ?? 0;
+        var outputTokens = usage.AudioOutputTokens ?? 0;
+        var cachedTokens = usage.CachedAudioInputTokens ?? 0;
+
+        var usd = inputTokens / Million * inputRate + outputTokens / Million * outputRate;
+
+        var assumptions = new List<string>
+        {
+            AssumptionBase,
+            "Realtime priced from exact audio-token counts (response.done.usage); text tokens are not priced.",
+        };
+        if (cachedTokens > 0)
+        {
+            if (rates.CachedAudioInputUsdPerMillionTokens is { } cachedRate)
+            {
+                usd += cachedTokens / Million * cachedRate;
+            }
+            else
+            {
+                usd += cachedTokens / Million * inputRate;
+                assumptions.Add("No cached-input rate configured; cached tokens billed at the full input rate.");
+            }
+        }
+
+        var units = new Dictionary<string, decimal>
+        {
+            ["audioInputTokens"] = inputTokens,
+            ["audioOutputTokens"] = outputTokens,
+            ["cachedAudioInputTokens"] = cachedTokens,
         };
         return Build("openai", model, "tokens", usd, audioDurationMs, units, [.. assumptions]);
     }

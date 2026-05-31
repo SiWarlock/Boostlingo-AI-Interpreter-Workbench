@@ -139,6 +139,31 @@ public class RealtimeTurnCostTests
             a => a.Contains("output audio duration not reported", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public async Task realtime_complete_prices_from_exact_audio_tokens()
+    {
+        // 053-C2a — a realtime /complete carrying the DC's exact audio-token counts prices from them
+        // (no seconds×50 estimate). Fixture (response.done.usage): in 31 audio / out 54 audio / cached 0.
+        var svc = Build();
+        var session = await svc.CreateAsync(Req(InterpretationMode.Realtime, "gpt-realtime"));
+        var turnId = svc.CreateTurn(session.SessionId)!;
+
+        var outcome = await svc.CompleteTurnAsync(
+            session.SessionId, turnId,
+            new CompleteTurnRequest(
+                10_000, null, null, null,
+                InputAudioTokens: 31, OutputAudioTokens: 54, CachedAudioInputTokens: 0));
+
+        var cost = outcome!.Turn.CostEstimate;
+        Assert.NotNull(cost);
+        Assert.Equal(31m / Million * 32.0m + 54m / Million * 64.0m, cost!.EstimatedUsd); // 0.004448, exact-count
+        Assert.Equal("tokens", cost.PricingBasis);
+        Assert.Contains(cost.Assumptions, a => a.Contains("text tokens are not priced"));
+        // The seconds-estimate "output not reported" disclosure does NOT apply on the exact-count path.
+        Assert.DoesNotContain(cost.Assumptions,
+            a => a.Contains("output audio duration not reported", StringComparison.OrdinalIgnoreCase));
+    }
+
     // === helpers ===
 
     private static Task<CostEstimate?> CompleteRealtimeTurn(

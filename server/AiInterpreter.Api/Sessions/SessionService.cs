@@ -272,20 +272,39 @@ public sealed class SessionService : ISessionService
     // Input seconds from the merged turn duration; output seconds from the optional client-reported field.
     private CostEstimate? EstimateRealtimeCost(string realtimeModel, InterpretationTurn turn, CompleteTurnRequest request)
     {
-        // No reported input audio duration (CreateTurn's 0 default never overwritten by a client value) → the
-        // turn carries no usable audio signal; degrade to null rather than emit a synthetic $0.00 (lesson
-        // §9/§12 — absent data is "unavailable", never a zero charge).
-        if (turn.AudioDurationMs <= 0)
+        // 053-C2a — the exact-count path needs the DC's audio-token counts; the legacy estimate needs a
+        // positive audio duration. With NEITHER signal there's nothing to price → null, never a synthetic
+        // $0.00 (lesson §9/§12 — absent data is "unavailable", never a zero charge).
+        var hasTokens = request.InputAudioTokens is not null || request.OutputAudioTokens is not null;
+        if (!hasTokens && turn.AudioDurationMs <= 0)
         {
             return null;
         }
 
-        var outputSeconds = request.OutputAudioDurationMs is { } outputMs ? outputMs / 1000m : (decimal?)null;
-        var usage = new CostUsage
+        CostUsage usage;
+        decimal? outputSeconds = null;
+        if (hasTokens)
         {
-            AudioInputSeconds = turn.AudioDurationMs / 1000m,
-            AudioOutputSeconds = outputSeconds,
-        };
+            // ⚠ Deliberate naming FLIP across the boundary — do NOT "align" these into a bug: the REQUEST
+            // mirrors the OpenAI wire (InputAudioTokens = input_token_details.audio_tokens), while CostUsage
+            // mirrors its own seconds-fields (AudioInputTokens sits beside AudioInputSeconds). Each name is
+            // right for its own context; this map is the seam.
+            usage = new CostUsage
+            {
+                AudioInputTokens = request.InputAudioTokens,
+                AudioOutputTokens = request.OutputAudioTokens,
+                CachedAudioInputTokens = request.CachedAudioInputTokens,
+            };
+        }
+        else
+        {
+            outputSeconds = request.OutputAudioDurationMs is { } outputMs ? outputMs / 1000m : (decimal?)null;
+            usage = new CostUsage
+            {
+                AudioInputSeconds = turn.AudioDurationMs / 1000m,
+                AudioOutputSeconds = outputSeconds,
+            };
+        }
 
         var result = _costEstimator.EstimateRealtime(realtimeModel, usage, turn.AudioDurationMs);
         if (!result.IsSuccess)
@@ -295,10 +314,11 @@ public sealed class SessionService : ISessionService
         }
 
         var cost = result.Value;
-        if (outputSeconds is null)
+        if (!hasTokens && outputSeconds is null)
         {
-            // EstimateRealtime treats absent output as 0; disclose it (E.4 will report output duration) so the
-            // output side is never SILENTLY priced as 0 (streaming-honesty / ARCH-014).
+            // Seconds-estimate path only: the exact-count path carries the real output tokens, so this
+            // "output not reported" disclosure applies solely to the duration-estimate fallback
+            // (streaming-honesty / ARCH-014 — never SILENTLY price the output side as 0).
             cost = cost with
             {
                 Assumptions = [.. cost.Assumptions, "Realtime output audio duration not reported; output cost not included."],
