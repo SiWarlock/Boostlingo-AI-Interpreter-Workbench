@@ -2,6 +2,7 @@ import { useCallback, useEffect } from 'react'
 import { ApiError } from './api/http'
 import { configApi } from './api/configApi'
 import { sessionsApi } from './api/sessionsApi'
+import ComparisonSummary from './components/ComparisonSummary'
 import CostPanel from './components/CostPanel'
 import ErrorBanner from './components/ErrorBanner'
 import EvaluationPanel from './components/EvaluationPanel'
@@ -102,6 +103,7 @@ export default function App() {
       <MetricsPanel onRefresh={refreshSummary} />
       <CostPanel />
       <EvaluationPanel />
+      <ComparisonSummary />
       <ErrorBanner />
     </main>
   )

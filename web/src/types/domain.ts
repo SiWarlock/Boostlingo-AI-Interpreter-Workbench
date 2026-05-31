@@ -343,3 +343,11 @@ export type WerResponse = {
   result: WerResult
   persistenceWarning?: UiError
 }
+
+// --- Comparison (F.3) ---
+// A focused projection of the opaque wire InterpretationTurn for the cost-by-model-variant comparison —
+// reads ONLY the two fields the aggregation needs. The wire cost field is `costEstimate` (the C#
+// InterpretationTurn.CostEstimate), distinct from the frontend TurnViewModel.cost; reading the wrong
+// one silently empties the breakdown. The opaque InterpretationTurn stays opaque (pragmatic-accrete);
+// this is the minimal cross-doc surface.
+export type ComparisonTurn = { mode: InterpretationMode; cost: CostEstimate | null }
