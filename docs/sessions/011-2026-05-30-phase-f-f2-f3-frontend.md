@@ -46,7 +46,7 @@ Both reuse landed frontend seams: the `http`/`request` boundary (§3/§4), the D
 
 - **Q5 — a cascade client→server latency channel** for the comparison's cascade end-to-end latency. Accepted `n/a` + document (G.5). Adding a channel is a cross-area cascade-WS backend+frontend slice — out of scope; NOT escalated (the comparison stays rich: realtime end-to-end + cascade per-stage + cost + WER + errors + turns).
 - **Orphaned-eval-turn cleanup** (F.2). A `computeWer` failure AFTER `createTurn` leaves a valid turn with no `WerResult`. Bounded for the single-trusted-user demo; documented in-code; a backend turn cancel/cleanup endpoint would close it — Carry-forward (→ F.3/G).
-- **A backend eval-turn marker** so `ModeSummary` excludes eval turns from `turnCount` — deferred (a later backend slice); documented limitation suffices for the MVP.
+- **A backend eval-turn marker** so `ModeSummary` excludes eval turns from `turnCount` — ~~deferred (a later backend slice); documented limitation suffices for the MVP~~. **[SUPERSEDED 2026-05-30 — the user (via lead) REQUIRED the clean backend exclusion and explicitly REJECTED document-only. This is now the must-do slice F.4 (`IsEvaluation` marker set at `/wer` + `SummarizeMode` exclusion → exact comparison counts), landing before G.5 + the demo. F.3's frontend is unchanged (it reads `ModeSummary.TurnCount` live, so it auto-corrects). See MVP_TASKS F.4 + brief `046`.]**
 
 ## TDD compliance
 
