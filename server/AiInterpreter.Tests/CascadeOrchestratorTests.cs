@@ -659,4 +659,30 @@ public class CascadeOrchestratorTests
         Assert.Equal(TurnStatus.Completed, Assert.IsType<Done>(events[^1]).Status);
         Assert.DoesNotContain(events, e => e is Error);
     }
+
+    // === 069 Bug B — a trailing spurious empty PARTIAL must not false-fail a successful turn ===
+
+    [Fact]
+    public async Task real_final_then_trailing_empty_partial_succeeds()
+    {
+        // ⭐ The live artifact (069): a fully-correct turn (final translation + completed TTS), then a TRAILING
+        // spurious empty PARTIAL (Deepgram teardown noise, §30) for the next segment. Today it sets
+        // pendingPartial → the stream-end fail-closed (§22) emits stt.unknown → Done(Failed), false-failing a
+        // successful turn (+ poisoning errorCount). The empty partial must be SKIPPED (mirrors §31's empty-final
+        // skip): no pendingPartial, no empty source segment, no error — the turn Completes.
+        var translationSpy = new CountingTranslationProvider(new FakeTranslationProvider(FakeTranslationBehavior.TokenStreamThenFinal));
+        var ttsSpy = new CountingTtsProvider(new FakeTtsProvider(FakeTtsBehavior.ChunkedThenComplete));
+
+        var events = await Run(
+            new ScriptedSttProvider(new SttFinal("hola", Base), new SttPartial("", Base)),
+            translationSpy, ttsSpy, Params());
+
+        Assert.Equal(TurnStatus.Completed, Assert.IsType<Done>(events[^1]).Status);
+        Assert.DoesNotContain(events, e => e is Error);   // no spurious stt.unknown
+        // The trailing empty partial is not emitted as a source segment (cleans the transcript trail).
+        Assert.DoesNotContain(events, e => e is Transcript t
+            && t.Segment.Role == "source" && !t.Segment.IsFinal && t.Segment.Text == "");
+        Assert.Equal(1, translationSpy.Calls);            // the real final drove translation; the empty partial didn't
+        Assert.Equal(1, ttsSpy.Calls);
+    }
 }

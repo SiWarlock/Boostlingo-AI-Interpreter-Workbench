@@ -163,6 +163,17 @@ public sealed class CascadeStreamingOrchestrator(
                     break;
 
                 case SttPartial partial:
+                    // 069: SKIP a spurious empty/whitespace partial. Deepgram emits them around real speech and
+                    // at teardown (§30); a TRAILING empty partial (after a completed segment) would set
+                    // pendingPartial → the stream-end §22 reads it as a lost final → stt.unknown → false-FAIL a
+                    // successful turn (+ poison errorCount). Extends §31's empty-FINAL skip one level up: no
+                    // pendingPartial, no first-partial stamp, no empty source segment. A NON-empty partial that
+                    // never finalizes still fails closed (§22) — only empties are skipped.
+                    if (string.IsNullOrWhiteSpace(partial.Text))
+                    {
+                        break;
+                    }
+
                     pendingPartial = true;
                     if (!sttFirstPartialStamped)
                     {
