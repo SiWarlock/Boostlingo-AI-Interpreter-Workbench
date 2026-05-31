@@ -105,6 +105,38 @@ public class CascadeWebSocketTests
         Assert.Null(message);
     }
 
+    // === 069 Bug A — the TTS cost-usage builder (char-proxy → estimated output-audio minutes) ===
+
+    [Fact]
+    public void build_tts_cost_usage_estimates_minutes_from_target_chars()
+    {
+        // The cascade has no TTS token count (audio-streaming), so estimate the OUTPUT-audio minutes from the
+        // synthesized target text length (§21 char-proxy) at the named speaking-rate constant — feeding the
+        // estimator's approxUsdPerAudioMinute fallback (audio_output_tokens basis). Characters is also carried
+        // so a characters-basis TTS model prices exactly. A zero char-proxy (no synthesis) → no inputs (degrade).
+        var charsPerMinute = (long)CascadeWsMapping.TtsApproxCharsPerMinute;
+        var usage = CascadeWsMapping.BuildTtsCostUsage(targetChars: charsPerMinute);
+        Assert.Equal(1.0m, usage.AudioMinutes);     // chars / charsPerMinute = 1 minute
+        Assert.Equal(charsPerMinute, usage.Characters); // exact char-proxy carried for a characters-basis model
+
+        var none = CascadeWsMapping.BuildTtsCostUsage(targetChars: 0);
+        Assert.Null(none.AudioMinutes);
+        Assert.Null(none.Characters);
+    }
+
+    // === 069 voice — ttsVoiceUsed resolves from session config when the start frame omits the voice ===
+
+    [Fact]
+    public void resolve_tts_voice_falls_back_to_config_when_frame_voice_empty()
+    {
+        // The live start frame carried an empty ttsVoice → ttsVoiceUsed persisted as "". Resolve the configured
+        // voice (ProviderProfile.TtsVoice) when the frame omits it — so BOTH the TTS synthesis and the recorded
+        // ttsVoiceUsed reflect the configured voice; an explicit frame voice wins.
+        Assert.Equal("alloy", CascadeWsMapping.ResolveTtsVoice("", "alloy"));
+        Assert.Equal("alloy", CascadeWsMapping.ResolveTtsVoice("   ", "alloy"));
+        Assert.Equal("nova", CascadeWsMapping.ResolveTtsVoice("nova", "alloy"));
+    }
+
     // === Group 3 — turn.recording.* stamped LatencyStage.Overall (ARCH-013/ARCH-005) ===
 
     [Fact]

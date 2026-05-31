@@ -1,4 +1,5 @@
 using AiInterpreter.Api.Common;
+using AiInterpreter.Api.Cost;
 using AiInterpreter.Api.Metrics;
 using AiInterpreter.Api.Providers.Abstractions;
 using AiInterpreter.Api.Sessions;
@@ -83,6 +84,36 @@ internal static class CascadeWsMapping
 
         return new CascadeCostInputs(inputTokens, outputTokens, targetChars);
     }
+
+    // 069 — the cascade TTS leg's output-audio duration is unknowable from /v1/audio/speech (it returns audio
+    // bytes/SSE events, NO usage block — confirmed via the OpenAI API reference, unlike /transcriptions). For an
+    // audio_output_tokens-basis model (gpt-4o-mini-tts) with no token count, estimate the OUTPUT-audio minutes
+    // from the synthesized target text length at this speaking-rate constant → the estimator's
+    // approxUsdPerAudioMinute fallback prices it. ESTIMATE — confirm at build (like
+    // CostEstimator.RealtimeTokensPerAudioSecond); ~150 wpm × ~6 chars/word ⇒ ~900 chars/min. Sanity check on
+    // the constant (NOT a billing-basis equivalence — gpt-4o-mini-tts bills per audio-output token, not per
+    // char): 900 chars/min at $0.015/min ⇒ an effective ~$16.7/1M chars, a plausible speaking rate. The cascade
+    // is thus ESTIMATED where realtime is exact-count (059) — disclosed.
+    public const decimal TtsApproxCharsPerMinute = 900m;
+
+    /// <summary>
+    /// Builds the TTS cost-usage from the target char-proxy (069). Carries <c>Characters</c> (a characters-basis
+    /// model — e.g. tts-1 — prices exactly) AND an output-audio-minutes estimate (<c>chars / TtsApproxCharsPerMinute</c>)
+    /// so an <c>audio_output_tokens</c> model (gpt-4o-mini-tts) prices via the <c>approxUsdPerAudioMinute</c> fallback.
+    /// Zero chars (no synthesis) → no inputs → the composite degrades honestly to null (never a synthetic $0; §9/§25).
+    /// </summary>
+    public static CostUsage BuildTtsCostUsage(long targetChars) => targetChars > 0
+        ? new CostUsage { Characters = targetChars, AudioMinutes = targetChars / TtsApproxCharsPerMinute }
+        : new CostUsage();
+
+    /// <summary>
+    /// Resolves the TTS voice actually used (069): the start frame's voice if present, else the session's
+    /// configured voice (<c>ProviderProfile.TtsVoice</c>). The live frame shipped an empty voice → both the
+    /// synthesis ran voice-less AND <c>ttsVoiceUsed</c> persisted as <c>""</c>; resolving here (the endpoint
+    /// applies it to <see cref="CascadeStartParams"/> before the orchestrator) fixes BOTH. An explicit frame voice wins.
+    /// </summary>
+    public static string ResolveTtsVoice(string frameVoice, string configVoice) =>
+        string.IsNullOrWhiteSpace(frameVoice) ? configVoice : frameVoice;
 
     /// <summary>The <c>cost</c> message on a successful estimate; <c>null</c> when unavailable (B.5 degrade — no message, no crash).</summary>
     public static object? ToCostMessageOrNull(Result<CostEstimate> cost) =>

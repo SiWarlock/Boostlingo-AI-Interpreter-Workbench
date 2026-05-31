@@ -123,7 +123,7 @@ public sealed class CostEstimator(Result<PricingOptions> pricing)
             string[] assumptions =
             [
                 AssumptionBase,
-                "TTS audio-output token count unavailable; estimated from approxUsdPerAudioMinute × minutes.",
+                "TTS audio-output token count unavailable from the speech API; cost ESTIMATED from approxUsdPerAudioMinute × an estimated audio-output duration.",
             ];
             return Build("openai", model, "audio_output_tokens", usd, audioDurationMs, units, assumptions);
         }
@@ -280,6 +280,21 @@ public sealed class CostEstimator(Result<PricingOptions> pricing)
 
         var assumptions = new List<string> { AssumptionBase };
         assumptions.Add($"Composite cascade cost: STT ({stt.Value.PricingBasis}) + translation ({translation.Value.PricingBasis}) + TTS ({tts.Value.PricingBasis}).");
+
+        // 069 — carry each stage's METHOD disclosures into the composite (e.g. the TTS approx-minute ESTIMATE
+        // when audio-output tokens aren't reported) so the cascade-ESTIMATED vs realtime-EXACT (059) asymmetry
+        // is honest IN THE DATA (G.5). Accurate by construction: a stage adds its estimate disclosure only when
+        // it actually estimated (an exact char-basis TTS adds none). Dedup the shared base line.
+        foreach (var stage in new[] { stt.Value, translation.Value, tts.Value })
+        {
+            foreach (var assumption in stage.Assumptions)
+            {
+                if (assumption != AssumptionBase && !assumptions.Contains(assumption))
+                {
+                    assumptions.Add(assumption);
+                }
+            }
+        }
 
         // Model = the translation model (the cascade comparison axis per ARCH-014) so B.7 can group
         // cascade cost by translation-model variant.

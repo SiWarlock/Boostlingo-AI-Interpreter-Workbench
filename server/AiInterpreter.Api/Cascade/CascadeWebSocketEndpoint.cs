@@ -113,13 +113,19 @@ public sealed class CascadeWebSocketEndpoint(
         }
 
         var p = parse.Params!;
-        var turn = store.Get(p.SessionId)?.Turns.FirstOrDefault(t => t.TurnId == p.TurnId);
+        var session = store.Get(p.SessionId);
+        var turn = session?.Turns.FirstOrDefault(t => t.TurnId == p.TurnId);
         if (turn is null)
         {
             var notFound = new ProviderError("cascade", "cascade", "turn.not_found", "The turn was not found.", Retryable: false);
             await SendAsync(socket, new { type = "error", error = notFound }, ct);
             return;
         }
+
+        // 069 — resolve the TTS voice from the session config when the start frame omits it (the live frame
+        // shipped an empty voice). Applied to CascadeStartParams BEFORE the orchestrator, so BOTH the synthesis
+        // and the recorded ttsVoiceUsed reflect the configured voice. (session is non-null here — turn came from it.)
+        p = p with { TtsVoice = CascadeWsMapping.ResolveTtsVoice(p.TtsVoice, session!.Config.ProviderProfile.TtsVoice) };
 
         var origin = clock.UtcNow;
         var collected = new List<CascadeOutputEvent>();
@@ -216,7 +222,10 @@ public sealed class CascadeWebSocketEndpoint(
         var audioMinutes = durationMs / 60000m;
         var sttUsage = new CostUsage { AudioMinutes = audioMinutes };
         var translationUsage = new CostUsage { InputTokens = inputs.InputTokens, OutputTokens = inputs.OutputTokens };
-        var ttsUsage = new CostUsage { Characters = inputs.TargetChars > 0 ? inputs.TargetChars : null };
+        // 069 — the char-proxy alone can't price gpt-4o-mini-tts (audio_output_tokens basis); BuildTtsCostUsage
+        // also supplies a text-length-derived output-audio-minutes estimate so the approxUsdPerAudioMinute
+        // fallback prices the TTS leg (the composite was degrading wholesale to null). No synthesis: 0 chars → null.
+        var ttsUsage = CascadeWsMapping.BuildTtsCostUsage(inputs.TargetChars);
 
         return costEstimator.EstimateCascadeTurn(p.TranslationModel, p.TtsModel, sttUsage, translationUsage, ttsUsage, durationMs);
     }

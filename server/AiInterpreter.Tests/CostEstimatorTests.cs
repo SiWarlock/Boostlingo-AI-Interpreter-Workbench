@@ -1,3 +1,4 @@
+using AiInterpreter.Api.Cascade;
 using AiInterpreter.Api.Common;
 using AiInterpreter.Api.Config;
 using AiInterpreter.Api.Cost;
@@ -225,6 +226,51 @@ public class CostEstimatorTests
             ttsUsage: new CostUsage { Characters = 200 },
             audioDurationMs: 30000);
         Assert.False(oneStageMissing.IsSuccess);
+    }
+
+    // === 069 Bug A — the PRODUCTION cascade TTS model (gpt-4o-mini-tts, audio_output_tokens basis) prices ===
+
+    [Fact]
+    public void cascade_prices_default_audio_token_tts_model_from_char_proxy()
+    {
+        // The live artifact (069) failed to price: gpt-4o-mini-tts bills on audio_output_tokens, but the
+        // streaming cascade has no token count — only the target char-proxy (§21). CascadeWsMapping.BuildTtsCostUsage
+        // estimates the OUTPUT-audio minutes from the char count so the estimator's approxUsdPerAudioMinute
+        // fallback prices the TTS leg → the composite is non-null (was null, killing the cost axis). Real inputs only.
+        var ttsUsage = CascadeWsMapping.BuildTtsCostUsage(targetChars: 42);
+        var r = Estimator().EstimateCascadeTurn(
+            translationModel: "gpt-5-nano",
+            ttsModel: "gpt-4o-mini-tts",
+            sttUsage: new CostUsage { AudioMinutes = 0.5m },
+            translationUsage: new CostUsage { InputTokens = 49, OutputTokens = 29 },
+            ttsUsage: ttsUsage,
+            audioDurationMs: 30000);
+
+        Assert.True(r.IsSuccess, r.Error);
+        // Exact pin of the new path: ttsUsd = (chars / TtsApproxCharsPerMinute) minutes × approxUsdPerAudioMinute
+        // (0.015 in the test pricing) — so a future drift in the constant or the rate is caught, not just a sign.
+        Assert.Equal(42m / CascadeWsMapping.TtsApproxCharsPerMinute * 0.015m, r.Value.Units["ttsUsd"]);
+        Assert.True(r.Value.Units["translationUsd"] > 0m);  // translation 49/29 priced
+        Assert.Equal("cascade", r.Value.Provider);
+        // ⭐ The cascade-ESTIMATED vs realtime-EXACT asymmetry is disclosed IN THE DATA (G.5): the TTS leg's
+        // estimate disclosure carries into the composite Assumptions.
+        Assert.Contains(r.Value.Assumptions, a => a.Contains("ESTIMATED", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void cascade_with_no_target_chars_degrades_to_null_not_synthetic_zero()
+    {
+        // No synthesized target text (targetChars 0) → BuildTtsCostUsage carries no TTS input → the composite
+        // degrades wholesale to unavailable (honest), NEVER a synthetic $0 TTS leg (§9/§25). Degrade only on a
+        // genuinely-absent real input.
+        var ttsUsage = CascadeWsMapping.BuildTtsCostUsage(targetChars: 0);
+        var r = Estimator().EstimateCascadeTurn(
+            "gpt-5-nano", "gpt-4o-mini-tts",
+            new CostUsage { AudioMinutes = 0.5m },
+            new CostUsage { InputTokens = 49, OutputTokens = 29 },
+            ttsUsage, 30000);
+
+        Assert.False(r.IsSuccess);
     }
 
     [Fact]
