@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../api/http'
-import { exchangeSdpOffer, realtimeCallsUrl } from './realtimeWebRtcClient'
+import {
+  createRealtimeWebRtcClient,
+  exchangeSdpOffer,
+  realtimeCallsUrl,
+} from './realtimeWebRtcClient'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -90,5 +94,59 @@ describe('exchangeSdpOffer', () => {
     expect(caught).not.toBeInstanceOf(TypeError)
     expect((caught as ApiError).uiError.code).toBe('realtime.connect')
     expect((caught as ApiError).uiError.retryable).toBe(true)
+  })
+})
+
+// P0 072 — the DC-open gate at the client boundary. A client event sent while the DataChannel is
+// `connecting` previously called dc.send() → InvalidStateError → startTurn rejected → realtime dead.
+// sendClientEvent now routes through the queue (buffer-until-open) and flushes on the DC `onopen`. This
+// pins the LOAD-BEARING wiring (a missing onopen→flush = the session.update never reaches the server =
+// still-broken, same class as the bug) — over a fake pc/DC so it stays deterministic (the queue logic
+// itself is unit-pinned in realtimeClientEventQueue.test.ts).
+function fakeWebRtc() {
+  const dc = {
+    readyState: 'connecting' as RTCDataChannelState,
+    onopen: null as (() => void) | null,
+    onmessage: null as ((e: MessageEvent) => void) | null,
+    send: vi.fn(),
+    close: vi.fn(),
+  }
+  const pc = {
+    connectionState: 'connecting',
+    onconnectionstatechange: null,
+    ontrack: null,
+    createDataChannel: () => dc,
+    addTrack: vi.fn(),
+    createOffer: async () => ({ sdp: 'v=0\r\n...offer...' }),
+    setLocalDescription: async () => {},
+    setRemoteDescription: async () => {},
+    close: vi.fn(),
+  }
+  const stream = { getAudioTracks: () => [{ stop: vi.fn() }], getTracks: () => [{ stop: vi.fn() }] }
+  const deps = {
+    mint: vi.fn().mockResolvedValue({ clientSecret: 'ek_test_abc' }),
+    onRemoteTrack: vi.fn(),
+    getUserMedia: vi.fn().mockResolvedValue(stream as unknown as MediaStream),
+    createPeerConnection: () => pc as unknown as RTCPeerConnection,
+  }
+  return { deps, dc }
+}
+
+describe('createRealtimeWebRtcClient — sendClientEvent DC-open gate (P0 072)', () => {
+  it('buffers a send while the DC is `connecting` (NOT thrown, NOT sent) and flushes it on the DC onopen', async () => {
+    const { deps, dc } = fakeWebRtc()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('answer-sdp', { status: 200 })))
+    const client = createRealtimeWebRtcClient(deps)
+    await client.connect()
+
+    // DC is `connecting` → the old `dataChannel?.send(...)` would throw InvalidStateError here; the queue
+    // buffers it instead — no throw, nothing reaches dc.send yet.
+    expect(() => client.sendClientEvent({ type: 'session.update' })).not.toThrow()
+    expect(dc.send).not.toHaveBeenCalled()
+
+    // the DC opens → the buffered session.update is flushed (the load-bearing onopen→flush wiring)
+    dc.readyState = 'open'
+    dc.onopen?.()
+    expect(dc.send).toHaveBeenCalledWith(JSON.stringify({ type: 'session.update' }))
   })
 })

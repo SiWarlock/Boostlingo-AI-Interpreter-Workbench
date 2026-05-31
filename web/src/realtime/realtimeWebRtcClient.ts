@@ -2,6 +2,7 @@ import { realtimeApi } from '../api/realtimeApi'
 import { ApiError } from '../api/http'
 import { sessionStore } from '../state/sessionStore'
 import type { RealtimeTokenResponse, UiError } from '../types/domain'
+import { createClientEventQueue } from './realtimeClientEventQueue'
 
 // The browser Realtime WebRTC transport (ARCH-010 §7). Two layers:
 //   1. PURE, unit-tested handshake seams — `realtimeCallsUrl` + `exchangeSdpOffer` (fetch-mock'd).
@@ -97,10 +98,18 @@ export function createRealtimeWebRtcClient(deps: RealtimeWebRtcDeps): RealtimeWe
   let micStream: MediaStream | null = null
   let dataChannel: RTCDataChannel | null = null
 
+  // DC-open gate (P0 072): buffer client events until the channel is `open`, flush in order on `onopen`.
+  // The OLD `dataChannel?.send(...)` threw InvalidStateError when the DC was still `connecting` (the send
+  // races ahead of the channel after the SDP handshake) → startTurn rejected → realtime dead.
+  const eventQueue = createClientEventQueue({
+    isOpen: () => dataChannel?.readyState === 'open',
+    rawSend: (event) => dataChannel?.send(JSON.stringify(event)),
+  })
+
   const client: RealtimeWebRtcClient = {
     connect,
     teardown,
-    sendClientEvent: (event) => dataChannel?.send(JSON.stringify(event)),
+    sendClientEvent: (event) => eventQueue.send(event),
     onServerEvent: null,
     onConnectionState: null,
   }
@@ -131,6 +140,9 @@ export function createRealtimeWebRtcClient(deps: RealtimeWebRtcDeps): RealtimeWe
     // Server events arrive on the `oai-events` data channel (ARCH-010 §7 step 2) — forwarded RAW to the
     // settable delegate (the controller owns parse→normalize→sink, so that wiring is unit-tested).
     dataChannel = pc.createDataChannel('oai-events')
+    // P0 072: the channel opens asynchronously AFTER the SDP handshake — flush any client events the
+    // controller queued before `open` (e.g. the auto/manual session.update) in order, now that send() is safe.
+    dataChannel.onopen = () => eventQueue.flush()
     dataChannel.onmessage = (event: MessageEvent) => {
       if (typeof event.data === 'string') {
         // Diagnostic (brief 053, DEV-only): log every raw oai-events DC frame so the next live realtime
@@ -175,6 +187,9 @@ export function createRealtimeWebRtcClient(deps: RealtimeWebRtcDeps): RealtimeWe
       pc.close()
       pc = null
     }
+    // Drop any events still buffered for the (now torn-down) session BEFORE nulling the DC ref, so a stale
+    // onopen (or any flush racing teardown) can't replay a stale session.update onto a fresh session (P0 072).
+    eventQueue.clear()
     dataChannel = null
     client.onServerEvent = null
     client.onConnectionState = null
