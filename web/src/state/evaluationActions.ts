@@ -64,6 +64,17 @@ export async function runEvaluation(
     })
     return null
   }
+  if (capture.blob.size === 0) {
+    // A non-null but ZERO-BYTE blob slips the null guard above → don't POST empty audio to the paid
+    // /transcribe STT endpoint (a wasted round-trip + a confusing downstream result). Surface a distinct,
+    // actionable "nothing was recorded" error and abort before transcribe (060 hardening; extends §20).
+    deps.store.addError({
+      code: 'capture.empty',
+      safeMessage: 'No audio was captured. Check your microphone and try again.',
+      retryable: true,
+    })
+    return null
+  }
 
   // 2. Transcribe (STT-only). On failure, abort before creating a turn or scoring.
   let transcribed: TranscribeResponse

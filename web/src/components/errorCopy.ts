@@ -27,6 +27,12 @@ export function errorCopy(error: UiError): string {
       return 'Realtime connection lost — switch to Cascade mode and retry.'
     case 'session.mode_switch_failed':
       return "Couldn't switch mode — staying on the current mode. Retry."
+    // Eval capture-error path (060). capture.empty = a zero-byte recording (nothing captured); capture.failed
+    // = the §20 null-return (mic-denied / unsupported recorder). Both were previously silently generic.
+    case 'capture.empty':
+      return 'No audio was captured — check your mic and try again.'
+    case 'capture.failed':
+      return 'Could not record audio — check microphone access and retry.'
   }
 
   const { code } = error

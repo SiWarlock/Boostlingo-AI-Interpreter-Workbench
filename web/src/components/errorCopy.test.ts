@@ -37,6 +37,15 @@ describe('errorCopy', () => {
     expect(modeSwitch).not.toBe('Something went wrong. Please retry.') // not the generic fallback
     expect(modeSwitch).toMatch(/mode/i)
     expect(modeSwitch).toMatch(/retry/i) // actionable
+
+    // capture-error path (G.4/060) — both the new empty-blob code AND the existing mic-fail code must be
+    // actionable, never the generic fallback (both currently fall through — the discovered adjacent gap).
+    const captureEmpty = errorCopy(err('capture.empty'))
+    expect(captureEmpty).not.toBe('Something went wrong. Please retry.')
+    expect(captureEmpty).toMatch(/audio|captured|mic/i)
+    const captureFailed = errorCopy(err('capture.failed'))
+    expect(captureFailed).not.toBe('Something went wrong. Please retry.')
+    expect(captureFailed).toMatch(/record|audio|mic/i)
   })
 
   it('falls back to a safe generic for an unknown code (never an error, never raw)', () => {

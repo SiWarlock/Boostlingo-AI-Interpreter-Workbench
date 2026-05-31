@@ -240,5 +240,28 @@ describe('runEvaluation', () => {
     expect(deps.api.computeWer).not.toHaveBeenCalled()
     // recordBlob returns null silently (no onError on the blob path) — the flow surfaces its own error.
     expect(store.getState().errors).toHaveLength(1)
+    expect(store.getState().errors[0].code).toBe('capture.failed') // distinct from the empty-blob code
+  })
+
+  it('aborts when recordBlob returns an EMPTY (zero-byte) blob — never POSTs empty audio to the paid /transcribe (060)', async () => {
+    const store = createSessionStore()
+    store.sessionStarted(wireSession())
+    const emptyBlob = new Blob([], { type: 'audio/webm' }) // size === 0 — slips a null-only guard
+    const deps = makeDeps(store, {
+      capture: {
+        recordBlob: vi.fn().mockResolvedValue({ blob: emptyBlob, mimeType: 'audio/webm' }),
+      },
+    })
+
+    const result = await runEvaluation(deps, input)
+
+    expect(result).toBeNull()
+    // RED today: a non-null zero-byte blob passes the null guard → transcribe is wastefully called with empty audio.
+    expect(deps.api.transcribe).not.toHaveBeenCalled()
+    expect(deps.createTurn).not.toHaveBeenCalled()
+    expect(deps.api.computeWer).not.toHaveBeenCalled()
+    const errors = store.getState().errors
+    expect(errors).toHaveLength(1)
+    expect(errors[0].code).toBe('capture.empty') // distinct, actionable "nothing recorded" code
   })
 })
