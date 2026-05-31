@@ -48,15 +48,15 @@ A real run spends real provider credits — Deepgram STT minutes, OpenAI transla
 
 ```bash
 # Terminal 1 — backend (http://localhost:5179)
-# ⚠️ .NET reads PROCESS env vars, not a .env file (no auto-loader yet — tracked as a G fix).
-# Source .env into the shell FIRST, then run — else GET /api/config reports configured:false everywhere:
-cd server/AiInterpreter.Api && set -a && source ../../.env && set +a && dotnet restore && dotnet run
+# The backend auto-loads the repo-root .env at startup (G.2b) — plain `dotnet run` just works.
+# (Fill-gaps: an explicit `export` / CI / prod env var still wins over .env.)
+cd server/AiInterpreter.Api && dotnet restore && dotnet run
 
 # Terminal 2 — frontend (http://localhost:5173)
 cd web && npm install && npm run dev
 ```
 
-> **Env-loading note (bash/zsh):** `set -a; source ../../.env; set +a` exports every `.env` var into the process the backend inherits (the `set -a` makes `source`'d assignments exported). A future small backend slice adds `DotNetEnv` so a plain `dotnet run` auto-loads `.env` in Development — until then, the `source` step is required.
+> **Env-loading note (G.2b):** the backend **auto-loads the repo-root `.env`** at startup (`DotEnvLoader`, before `CreateBuilder`) — no manual `set -a && source` needed. It is **fill-gaps** (an explicit `export` / CI / prod var wins) and **gated out of the test host** (a dev `.env`'s real keys never load into `WebApplicationFactory`). If `GET /api/config` still reports `configured:false`, confirm `.env` exists at the repo root with the keys filled in.
 
 **Verify before testing:**
 

@@ -39,9 +39,10 @@ cp .env.example .env
 #    then edit .env and fill in OPENAI_API_KEY + DEEPGRAM_API_KEY
 
 # 2. Backend  (http://localhost:5179)
-#    .NET reads process env vars, not a .env file — source .env into the shell first
-#    (bash/zsh; `set -a` exports the assignments). A planned slice adds auto-loading.
-cd server/AiInterpreter.Api && set -a && source ../../.env && set +a && dotnet restore && dotnet run
+#    The backend auto-loads the repo-root .env at startup (G.2b) — plain `dotnet run`
+#    just works, no manual sourcing. (Fill-gaps only: an explicit `export` / CI / prod
+#    env var still wins over .env.)
+cd server/AiInterpreter.Api && dotnet restore && dotnet run
 
 # 3. Frontend (http://localhost:5173)  — in a second terminal
 cd web && npm install && npm run dev
