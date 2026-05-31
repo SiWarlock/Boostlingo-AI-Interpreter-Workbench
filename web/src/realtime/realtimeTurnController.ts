@@ -2,9 +2,10 @@ import { ApiError } from '../api/http'
 import { sessionsApi } from '../api/sessionsApi'
 import { sessionStore } from '../state/sessionStore'
 import type { SessionStore } from '../state/sessionStore'
-import type { LatencyEvent } from '../types/domain'
+import type { CompleteTurnRequest, LatencyEvent } from '../types/domain'
 import { createRealtimeEventSink } from './realtimeEventSink'
 import { normalizeRealtimeEvent, parseRealtimeEvent } from './realtimeEvents'
+import type { RealtimeUsageTokens } from './realtimeEvents'
 import { realtimeConnectionManager } from './realtimeConnectionManager'
 import type { RealtimeConnectionManager } from './realtimeConnectionManager'
 import { realtimeWebRtcClient } from './realtimeWebRtcClient'
@@ -44,6 +45,7 @@ export type RealtimeTurnDeps = {
       turnId: string,
       events: LatencyEvent[],
     ) => Promise<unknown>
+    completeTurn: (sessionId: string, turnId: string, body: CompleteTurnRequest) => Promise<unknown>
   }
   clock: Clock
 }
@@ -88,6 +90,35 @@ export function createRealtimeTurnController(deps: RealtimeTurnDeps): RealtimeTu
           : {
               code: 'realtime.report_failed',
               safeMessage: 'Could not report turn metrics.',
+              retryable: true,
+            },
+      )
+    })
+  }
+
+  // On responseDone, also FINALIZE the realtime turn on the backend at /complete (053-C2b) — a SIBLING to
+  // reportTurnEvents (independent backend writes, order-free). Forward the exact DC audio-token usage so the
+  // backend prices the realtime cost from it (an absent field is OMITTED — never a synthesized 0 — so the
+  // backend's disclosed-unavailable path runs, web §25). A failure is surfaced (sanitized, ARCH-018), never
+  // swallowed. The cost is read back via GET /session (web §21), never through the store (invariant #3).
+  function finalizeTurn(
+    sessionId: string,
+    turnId: string,
+    usage: RealtimeUsageTokens | null,
+  ): void {
+    const body: CompleteTurnRequest = { status: 'completed' }
+    if (usage?.inputAudioTokens !== undefined) body.inputAudioTokens = usage.inputAudioTokens
+    if (usage?.outputAudioTokens !== undefined) body.outputAudioTokens = usage.outputAudioTokens
+    if (usage?.cachedAudioInputTokens !== undefined) {
+      body.cachedAudioInputTokens = usage.cachedAudioInputTokens
+    }
+    void api.completeTurn(sessionId, turnId, body).catch((error: unknown) => {
+      store.addError(
+        error instanceof ApiError
+          ? error.uiError
+          : {
+              code: 'realtime.complete_failed',
+              safeMessage: 'Could not finalize the turn.',
               retryable: true,
             },
       )
@@ -155,6 +186,7 @@ export function createRealtimeTurnController(deps: RealtimeTurnDeps): RealtimeTu
         sink.handle(event)
         if (event.kind === 'responseDone') {
           reportTurnEvents(sessionId, turnId)
+          finalizeTurn(sessionId, turnId, event.usage)
         }
       }
 
@@ -205,6 +237,7 @@ export const realtimeTurnController = createRealtimeTurnController({
     createTurn: (sessionId) => sessionsApi.createTurn(sessionId),
     appendTurnEvents: (sessionId, turnId, events) =>
       sessionsApi.appendTurnEvents(sessionId, turnId, events),
+    completeTurn: (sessionId, turnId, body) => sessionsApi.completeTurn(sessionId, turnId, body),
   },
   clock: () => new Date().toISOString(),
 })

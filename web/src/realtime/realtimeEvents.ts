@@ -6,6 +6,15 @@
 // guard-the-body discipline (lesson §9). The exact GA `type` strings + error envelope are smoke-confirmable
 // (ARCH-010 §7 note); classification is stable regardless of envelope detail.
 
+// The exact realtime audio-token counts the FE forwards to /complete (053-C2b) — mapped from the DC
+// response.done.usage. Each field is OPTIONAL + independently guarded; a real `cachedAudioInputTokens: 0`
+// is distinct from absent (omitted) — never fabricate a 0 (web §25). Frontend-internal (not a wire mirror).
+export type RealtimeUsageTokens = {
+  inputAudioTokens?: number
+  outputAudioTokens?: number
+  cachedAudioInputTokens?: number
+}
+
 export type NormalizedRealtimeEvent =
   | { kind: 'audioDelta'; base64: string }
   | { kind: 'outputAudioStarted' }
@@ -13,7 +22,7 @@ export type NormalizedRealtimeEvent =
   | { kind: 'sourceTranscriptDelta'; text: string }
   | { kind: 'sourceTranscriptCompleted'; text: string }
   | { kind: 'responseCreated' }
-  | { kind: 'responseDone' }
+  | { kind: 'responseDone'; usage: RealtimeUsageTokens | null }
   | { kind: 'error'; code: string }
 
 // Parse a raw data-channel text frame to a JSON object, or null when it is not valid JSON / not an object
@@ -33,6 +42,47 @@ export function parseRealtimeEvent(rawText: string): Record<string, unknown> | n
 
 function nonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+// A nullable-narrowing variant of isObject — returns the object or null, so an absent/non-object key reads
+// cleanly via optional chaining (`asObject(x)?.field`) without the implicit CFA narrowing of a raw guard.
+function asObject(value: unknown): Record<string, unknown> | null {
+  return isObject(value) ? value : null
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+// Extract the exact realtime audio-token counts from a response.done frame's `usage` (053-C2b). GA nests
+// usage under `response.usage`; tolerate a top-level `usage` too (dual-read — the wire shape is the
+// load-bearing call: a wrong path ⇒ usage always null ⇒ realtime cost silently stays n/a). Guard every
+// path independently (each may be absent/non-number); cached=0 is a REAL value (kept) vs absent (omitted).
+// Returns null when usage is absent/malformed OR yields no token field (→ the controller still finalizes
+// /complete, just without token fields — the honest-degrade path, web §25). Never throws (§9).
+function extractRealtimeUsage(event: Record<string, unknown>): RealtimeUsageTokens | null {
+  // GA nests usage under response.usage; tolerate a top-level usage too (dual-read — see the doc comment).
+  const usage = asObject(asObject(event.response)?.usage) ?? asObject(event.usage)
+  if (usage === null) {
+    return null
+  }
+  const inputDetails = asObject(usage.input_token_details)
+  const outputDetails = asObject(usage.output_token_details)
+  const tokens: RealtimeUsageTokens = {}
+  const inputAudio = finiteNumber(inputDetails?.audio_tokens)
+  const outputAudio = finiteNumber(outputDetails?.audio_tokens)
+  // Q5 (053-C2b): the BE-confirmed path is input_token_details.cached_tokens (the contract 2977f7f priced
+  // from) — FE/BE must agree on one path. The audio-specific cached_tokens_details.audio_tokens nuance is a
+  // Step-9 note (immaterial while cached=0).
+  const cached = finiteNumber(inputDetails?.cached_tokens)
+  if (inputAudio !== undefined) tokens.inputAudioTokens = inputAudio
+  if (outputAudio !== undefined) tokens.outputAudioTokens = outputAudio
+  if (cached !== undefined) tokens.cachedAudioInputTokens = cached
+  return Object.keys(tokens).length > 0 ? tokens : null
 }
 
 // Classify a parsed GA event. Returns the semantic NormalizedRealtimeEvent, or null for an unknown type /
@@ -71,7 +121,9 @@ export function normalizeRealtimeEvent(event: unknown): NormalizedRealtimeEvent 
     case 'response.created':
       return { kind: 'responseCreated' }
     case 'response.done':
-      return { kind: 'responseDone' }
+      // E.4 stamps turn.completed + finalizes the target transcript; 053-C2b extracts the exact
+      // audio-token usage the controller forwards to /complete for the realtime cost estimate.
+      return { kind: 'responseDone', usage: extractRealtimeUsage(e) }
     // First-audio anchor under WebRTC (053-C1): output_audio_buffer.started is the DC event that actually
     // fires — response.output_audio.delta does NOT arrive (audio rides the media track, pc.ontrack). No
     // payload needed (carries only response_id/event_id); E.4's sink stamps the first-audio markers on it.

@@ -45,6 +45,7 @@ function setup() {
   const api = {
     createTurn: vi.fn().mockResolvedValue({ turnId: 'turn_1' }),
     appendTurnEvents: vi.fn().mockResolvedValue({}),
+    completeTurn: vi.fn().mockResolvedValue({}),
   }
   const controller = createRealtimeTurnController({
     store,
@@ -154,6 +155,69 @@ describe('createRealtimeTurnController', () => {
     expect(tid).toBe('turn_1')
     // the finalized turn's accumulated client events are reported (incl. the store's turn.completed stamp)
     expect((events as { name: string }[]).some((e) => e.name === 'turn.completed')).toBe(true)
+  })
+
+  it('finalizes the turn at /complete with the DC usage token counts + status:completed (053-C2b)', async () => {
+    const { client, api, controller } = setup()
+    await controller.startTurn()
+
+    client.onServerEvent?.(
+      JSON.stringify({
+        type: 'response.done',
+        response: {
+          usage: {
+            input_token_details: { audio_tokens: 31, cached_tokens: 0 },
+            output_token_details: { audio_tokens: 54 },
+          },
+        },
+      }),
+    )
+
+    expect(api.completeTurn).toHaveBeenCalledTimes(1)
+    const [sid, tid, body] = api.completeTurn.mock.calls[0]
+    expect(sid).toBe('session_abc')
+    expect(tid).toBe('turn_1')
+    expect(body).toEqual({
+      status: 'completed',
+      inputAudioTokens: 31,
+      outputAudioTokens: 54,
+      cachedAudioInputTokens: 0, // real 0 sent (not omitted)
+    })
+  })
+
+  it('still reports turn events on responseDone (regression — /complete is a sibling, not a replacement)', async () => {
+    const { client, api, controller } = setup()
+    await controller.startTurn()
+
+    client.onServerEvent?.(JSON.stringify({ type: 'response.done', response: {} }))
+
+    expect(api.appendTurnEvents).toHaveBeenCalledTimes(1)
+    expect(api.completeTurn).toHaveBeenCalledTimes(1)
+  })
+
+  it('honest degrade: usage null → still POSTs /complete to finalize, but WITHOUT token fields', async () => {
+    const { client, api, controller } = setup()
+    await controller.startTurn()
+
+    client.onServerEvent?.(JSON.stringify({ type: 'response.done' })) // no usage payload → usage null
+
+    expect(api.completeTurn).toHaveBeenCalledTimes(1)
+    const [, , body] = api.completeTurn.mock.calls[0]
+    expect(body).toEqual({ status: 'completed' }) // no token fields — backend degrades to disclosed-unavailable
+  })
+
+  it('surfaces a sanitized realtime.complete_failed when /complete fails (no raw leak)', async () => {
+    const { store, client, api, controller } = setup()
+    api.completeTurn.mockRejectedValue(new Error('raw-complete-detail'))
+    await controller.startTurn()
+
+    client.onServerEvent?.(JSON.stringify({ type: 'response.done' }))
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const added = store.getState().errors.find((e) => e.code === 'realtime.complete_failed')
+    expect(added).toBeDefined()
+    expect(added?.safeMessage).not.toContain('raw-complete-detail')
   })
 
   it('guards a concurrent double startTurn — only one turn is created', async () => {

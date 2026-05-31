@@ -1,4 +1,6 @@
 import type {
+  CompleteTurnRequest,
+  CompleteTurnResponse,
   CreateSessionRequest,
   CreateTurnResponse,
   EndSessionResponse,
@@ -76,6 +78,24 @@ export const sessionsApi = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ events }),
+      },
+    )
+  },
+
+  // POST /api/sessions/{id}/turns/{turnId}/complete (ARCH-009 §6; the realtime finalize, 053-C2b) — finalizes
+  // the realtime turn terminal + prices its cost from the exact DC audio-token counts (CompleteTurnRequest's
+  // *AudioTokens, 053-C2a). Cascade is WS-priced/finalized — never here. Body = the CompleteTurnRequest mirror.
+  completeTurn(
+    sessionId: string,
+    turnId: string,
+    body: CompleteTurnRequest,
+  ): Promise<CompleteTurnResponse> {
+    return request<CompleteTurnResponse>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/complete`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
       },
     )
   },

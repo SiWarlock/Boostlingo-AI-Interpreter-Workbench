@@ -149,6 +149,39 @@ describe('sessionsApi', () => {
     expect(JSON.parse(reqInit.body as string)).toEqual({ events: [event] }) // AppendEventsRequest wire shape
   })
 
+  it('completeTurn POSTs the CompleteTurnRequest body to /api/sessions/{id}/turns/{turnId}/complete (053-C2b)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ turn: { turnId: 'turn_001' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const body = {
+      status: 'completed',
+      inputAudioTokens: 31,
+      outputAudioTokens: 54,
+      cachedAudioInputTokens: 0,
+    } as const
+    await sessionsApi.completeTurn('session_abc', 'turn_001', body)
+
+    const [url, init] = fetchMock.mock.calls[0]
+    const reqInit = init as RequestInit
+    expect(url).toBe('/api/sessions/session_abc/turns/turn_001/complete')
+    expect(reqInit.method).toBe('POST')
+    expect(new Headers(reqInit.headers).get('Content-Type')).toBe('application/json')
+    expect(JSON.parse(reqInit.body as string)).toEqual(body)
+  })
+
+  it('completeTurn surfaces a non-OK status as ApiError', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ code: 'turn.not_found' }, 404))
+    vi.stubGlobal('fetch', fetchMock)
+
+    let caught: unknown
+    try {
+      await sessionsApi.completeTurn('session_abc', 'turn_001', { status: 'completed' })
+    } catch (e) {
+      caught = e
+    }
+    expect(caught).toBeInstanceOf(ApiError)
+  })
+
   it('appendTurnEvents surfaces a non-OK status as ApiError', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ code: 'turn.not_found' }, 404))
     vi.stubGlobal('fetch', fetchMock)

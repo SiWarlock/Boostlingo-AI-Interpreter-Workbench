@@ -197,6 +197,28 @@ export type InterpretationSession = {
 // POST /api/sessions/{id}/turns response.
 export type CreateTurnResponse = { turnId: string }
 
+// POST /api/sessions/{id}/turns/{turnId}/complete request — the realtime finalize (053-C2b). Full wire
+// mirror of the backend CompleteTurnRequest (Sessions/SessionDtos.cs); the realtime path populates ONLY
+// the audio-token fields (from the DC response.done.usage) + status:'completed'. The *AudioTokens fields
+// (053-C2a) carry the exact DC counts → the backend prices the realtime cost from them exactly (absent →
+// the seconds estimate; outputAudioDurationMs is the superseded E.2b path, never sent here).
+export type CompleteTurnRequest = {
+  audioDurationMs?: number | null
+  transcripts?: TranscriptSegment[] | null
+  status?: TurnStatus | null
+  outputAudioDurationMs?: number | null
+  inputAudioTokens?: number | null
+  outputAudioTokens?: number | null
+  cachedAudioInputTokens?: number | null
+}
+
+// POST …/complete response — the turn is always Completed in-memory; the per-turn persist is best-effort
+// (200, never 500) → a write failure surfaces a safe persistence.failed UiError in persistenceWarning.
+export type CompleteTurnResponse = {
+  turn: InterpretationTurn
+  persistenceWarning?: UiError
+}
+
 // POST /api/sessions/{id}/end response (Flow F). Exactly one of path/warning is non-null; 200 never 500.
 export type EndSessionResponse = {
   session: InterpretationSession

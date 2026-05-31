@@ -170,7 +170,7 @@ describe('createRealtimeEventSink', () => {
     const store = setupTurn()
     const sink = createRealtimeEventSink({ store, clock: fixedClock })
 
-    sink.handle({ kind: 'responseDone' })
+    sink.handle({ kind: 'responseDone', usage: null }) // usage is controller-only; the sink ignores it
 
     const state = store.getState()
     expect(state.currentTurn).toBeUndefined()
@@ -191,7 +191,7 @@ describe('createRealtimeEventSink', () => {
 
     sink.handle({ kind: 'targetTranscriptDelta', text: 'ho' })
     sink.handle({ kind: 'targetTranscriptDelta', text: 'la' })
-    sink.handle({ kind: 'responseDone' })
+    sink.handle({ kind: 'responseDone', usage: null }) // usage is controller-only; the sink ignores it
 
     // response.done is the target-final signal (E.3 handoff): the accumulated target rides into turns[]
     // as a SINGLE final segment (finalize-target THEN completeTurn).

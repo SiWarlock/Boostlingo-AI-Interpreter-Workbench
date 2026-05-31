@@ -58,7 +58,100 @@ describe('normalizeRealtimeEvent', () => {
     expect(normalizeRealtimeEvent({ type: 'response.created' })).toEqual({
       kind: 'responseCreated',
     })
-    expect(normalizeRealtimeEvent({ type: 'response.done' })).toEqual({ kind: 'responseDone' })
+    // 053-C2b: responseDone now carries `usage` (null for a bare frame with no usage payload).
+    expect(normalizeRealtimeEvent({ type: 'response.done' })).toEqual({
+      kind: 'responseDone',
+      usage: null,
+    })
+  })
+
+  it('extracts exact audio-token usage from response.done (053-C2b — the fixture frame)', () => {
+    // GA response.done nests usage under `response.usage`. inputAudio←input_token_details.audio_tokens,
+    // outputAudio←output_token_details.audio_tokens, cached←input_token_details.cached_tokens (BE-confirmed
+    // path, 053-C2a). The fixture (runbook event #20): input audio 31, output audio 54, cached 0.
+    const frame = {
+      type: 'response.done',
+      response: {
+        status: 'completed',
+        usage: {
+          total_tokens: 139,
+          input_tokens: 68,
+          input_token_details: { text_tokens: 37, audio_tokens: 31, cached_tokens: 0 },
+          output_tokens: 71,
+          output_token_details: { text_tokens: 17, audio_tokens: 54 },
+        },
+      },
+    }
+    expect(normalizeRealtimeEvent(frame)).toEqual({
+      kind: 'responseDone',
+      usage: { inputAudioTokens: 31, outputAudioTokens: 54, cachedAudioInputTokens: 0 },
+    })
+  })
+
+  it('extracts usage from a TOP-LEVEL usage too (the runbook print-shape) — dual-read pins both nesting branches', () => {
+    // The runbook trims fields + collapses the `response:` wrapper, printing usage flat. The dual-read
+    // `e.response?.usage ?? e.usage` must extract identically whether usage is nested (GA wire, A1 above)
+    // or top-level (runbook shape) — a wrong path ⇒ usage always null ⇒ realtime cost silently stays n/a.
+    const flatFrame = {
+      type: 'response.done',
+      status: 'completed',
+      usage: {
+        input_token_details: { audio_tokens: 31, cached_tokens: 0 },
+        output_token_details: { audio_tokens: 54 },
+      },
+    }
+    expect(normalizeRealtimeEvent(flatFrame)).toEqual({
+      kind: 'responseDone',
+      usage: { inputAudioTokens: 31, outputAudioTokens: 54, cachedAudioInputTokens: 0 },
+    })
+  })
+
+  it('response.done with absent/malformed usage → usage null (never throws)', () => {
+    expect(normalizeRealtimeEvent({ type: 'response.done', response: {} })).toEqual({
+      kind: 'responseDone',
+      usage: null,
+    })
+    expect(
+      normalizeRealtimeEvent({ type: 'response.done', response: { usage: 'not-an-object' } }),
+    ).toEqual({ kind: 'responseDone', usage: null })
+    // a non-object `response` (number / null) must also degrade cleanly via the asObject guard (§9)
+    expect(normalizeRealtimeEvent({ type: 'response.done', response: 42 })).toEqual({
+      kind: 'responseDone',
+      usage: null,
+    })
+    expect(normalizeRealtimeEvent({ type: 'response.done', response: null })).toEqual({
+      kind: 'responseDone',
+      usage: null,
+    })
+  })
+
+  it('guards each usage field independently — partial usage yields only the present fields', () => {
+    // output_token_details present, input_token_details absent → only outputAudioTokens set (no fabricated 0s).
+    const frame = {
+      type: 'response.done',
+      response: { usage: { output_token_details: { audio_tokens: 54 } } },
+    }
+    expect(normalizeRealtimeEvent(frame)).toEqual({
+      kind: 'responseDone',
+      usage: { outputAudioTokens: 54 },
+    })
+  })
+
+  it('distinguishes a real cached 0 (present) from an absent cached field (omitted)', () => {
+    // cached_tokens absent → cachedAudioInputTokens OMITTED (the honest-degrade pin; A1 covers cached=0 present).
+    const frame = {
+      type: 'response.done',
+      response: {
+        usage: {
+          input_token_details: { audio_tokens: 31 },
+          output_token_details: { audio_tokens: 54 },
+        },
+      },
+    }
+    expect(normalizeRealtimeEvent(frame)).toEqual({
+      kind: 'responseDone',
+      usage: { inputAudioTokens: 31, outputAudioTokens: 54 },
+    })
   })
 
   it('maps output_audio_buffer.started -> outputAudioStarted (the DC first-audio anchor under WebRTC, 053-C1)', () => {
