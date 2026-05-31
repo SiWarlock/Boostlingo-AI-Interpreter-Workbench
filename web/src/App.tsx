@@ -9,6 +9,7 @@ import EvaluationPanel from './components/EvaluationPanel'
 import MetricsPanel from './components/MetricsPanel'
 import ModeToggle from './components/ModeToggle'
 import RecordingControls from './components/RecordingControls'
+import SessionHistory from './components/SessionHistory'
 import SessionSetup from './components/SessionSetup'
 import StatusPill from './components/StatusPill'
 import TranscriptPanel from './components/TranscriptPanel'
@@ -145,6 +146,9 @@ export default function App() {
       </div>
       <div className="wb-band">
         <EvaluationPanel />
+      </div>
+      <div className="wb-band">
+        <SessionHistory />
       </div>
     </main>
   )

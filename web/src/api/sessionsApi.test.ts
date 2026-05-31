@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { sessionsApi } from './sessionsApi'
 import { ApiError } from './http'
-import type { CreateSessionRequest, InterpretationSession, LatencyEvent } from '../types/domain'
+import type {
+  CreateSessionRequest,
+  InterpretationSession,
+  LatencyEvent,
+  SessionListItem,
+} from '../types/domain'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -193,5 +198,58 @@ describe('sessionsApi', () => {
       caught = e
     }
     expect(caught).toBeInstanceOf(ApiError)
+  })
+
+  it('listSessions GETs /api/sessions and parses the SessionListItem[] (H.3 — a bare array)', async () => {
+    const items: SessionListItem[] = [
+      {
+        sessionId: 'session_2',
+        label: 'Recent run',
+        startedAt: '2026-05-31T10:00:00+00:00',
+        endedAt: '2026-05-31T10:05:00+00:00',
+        turnCount: 3,
+        modes: ['realtime', 'cascade'],
+      },
+      {
+        sessionId: 'session_1',
+        label: null,
+        startedAt: '2026-05-30T09:00:00+00:00',
+        endedAt: null,
+        turnCount: 1,
+        modes: ['cascade'],
+      },
+    ]
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(items)) // bare array, NOT { sessions: [] }
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await sessionsApi.listSessions()
+
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/sessions')
+    expect((init as RequestInit).method).toBe('GET')
+    expect(result).toHaveLength(2)
+    expect(result[0].sessionId).toBe('session_2') // backend order (most-recent-first) preserved verbatim
+    expect(result[0].modes).toEqual(['realtime', 'cascade'])
+  })
+
+  it('listSessions surfaces the backend sessions.read_failed 500 as ApiError (the §35 read-fail boundary)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      // a real sanitized backend UiError body (code + safeMessage + retryable) — the §3 boundary surfaces
+      // a well-formed UiError verbatim (vs the generic http.<status> for ProblemDetails/non-UiError bodies)
+      jsonResponse(
+        { code: 'sessions.read_failed', safeMessage: 'Could not read sessions.', retryable: false },
+        500,
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    let caught: unknown
+    try {
+      await sessionsApi.listSessions()
+    } catch (e) {
+      caught = e
+    }
+    expect(caught).toBeInstanceOf(ApiError)
+    expect((caught as ApiError).uiError.code).toBe('sessions.read_failed')
   })
 })

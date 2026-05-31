@@ -198,6 +198,20 @@ export type InterpretationSession = {
   pricingConfigVersion: string
 }
 
+// GET /api/sessions response item (H.3 — the persisted-session history list, 065 / §35). A LIGHTWEIGHT
+// summary (Option B — NOT the full InterpretationSession): wire mirror of the backend SessionListItem.
+// The endpoint returns a BARE array, most-recent-first (the view does not re-sort). label/endedAt are
+// explicit-null on the wire (a labelless / never-ended session). modes = the DISTINCT interpretation modes
+// the session's turns used, first-seen order (empty for a turnless session).
+export type SessionListItem = {
+  sessionId: string
+  label?: string | null
+  startedAt: string
+  endedAt?: string | null
+  turnCount: number
+  modes: InterpretationMode[]
+}
+
 // POST /api/sessions/{id}/turns response.
 export type CreateTurnResponse = { turnId: string }
 

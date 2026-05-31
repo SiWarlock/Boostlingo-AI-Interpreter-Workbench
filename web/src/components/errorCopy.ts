@@ -33,6 +33,10 @@ export function errorCopy(error: UiError): string {
       return 'No audio was captured — check your mic and try again.'
     case 'capture.failed':
       return 'Could not record audio — check microphone access and retry.'
+    // Session-history list-read failure (H.3/067 → §35 sessions.read_failed). The GET /api/sessions fetch
+    // can 500 (a misconfigured data dir) → actionable, never the bare generic.
+    case 'sessions.read_failed':
+      return 'Could not load past sessions. Refresh to retry.'
   }
 
   const { code } = error

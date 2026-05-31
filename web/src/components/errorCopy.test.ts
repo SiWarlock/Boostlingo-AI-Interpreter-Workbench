@@ -46,6 +46,13 @@ describe('errorCopy', () => {
     const captureFailed = errorCopy(err('capture.failed'))
     expect(captureFailed).not.toBe('Something went wrong. Please retry.')
     expect(captureFailed).toMatch(/record|audio|mic/i)
+
+    // session-history read failure (H.3/067) — actionable + NOT the generic fallback (the GET /api/sessions
+    // list fetch can 500 → §35 sessions.read_failed; don't show the bare generic).
+    const historyRead = errorCopy(err('sessions.read_failed'))
+    expect(historyRead).not.toBe('Something went wrong. Please retry.')
+    expect(historyRead).toMatch(/session|history|past/i)
+    expect(historyRead).toMatch(/retry|refresh/i) // actionable
   })
 
   it('falls back to a safe generic for an unknown code (never an error, never raw)', () => {

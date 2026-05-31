@@ -8,6 +8,7 @@ import type {
   InterpretationSession,
   InterpretationTurn,
   LatencyEvent,
+  SessionListItem,
   SessionSummary,
 } from '../types/domain'
 import { request } from './http'
@@ -27,6 +28,14 @@ export const sessionsApi = {
     return request<InterpretationSession>(`/api/sessions/${encodeURIComponent(sessionId)}`, {
       method: 'GET',
     })
+  },
+
+  // GET /api/sessions (ARCH-009 / ARCH-016 read tier; H.3-backend 065) — the persisted-session history
+  // list. Returns a BARE SessionListItem[] (Option B — lightweight summaries, not full sessions),
+  // most-recent-first (the view does not re-sort). A wholesale read failure → a sanitized
+  // sessions.read_failed UiError (500) surfaced via the §3 http boundary as an ApiError.
+  listSessions(): Promise<SessionListItem[]> {
+    return request<SessionListItem[]>('/api/sessions', { method: 'GET' })
   },
 
   createTurn(sessionId: string): Promise<CreateTurnResponse> {
