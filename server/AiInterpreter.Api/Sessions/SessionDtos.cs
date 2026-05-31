@@ -18,6 +18,17 @@ public sealed record CreateSessionRequest(
     [Required, MaxLength(256)] string TranslationModel);
 
 /// <summary>
+/// <c>POST /api/sessions/{id}/mode</c> request (ARCH-009 / Flow G, 050). The TARGET interpretation mode
+/// as the wire string (<c>"cascade"</c>|<c>"realtime"</c>, the shape the frontend ships). Typed as a raw
+/// <see cref="string"/> — NOT the <see cref="InterpretationMode"/> enum — so an off-enum value is rejected
+/// as a sanitized <c>400 session.invalid_mode</c> <see cref="UiError"/> at the service chokepoint
+/// (<see cref="SessionService"/>) rather than a framework ProblemDetails deserialization error
+/// (lesson §27 pattern). Capped at the boundary (ARCH-019); the service validates against the enum
+/// allowlist (<c>Enum.TryParse</c> + <c>Enum.IsDefined</c>).
+/// </summary>
+public sealed record SetModeRequest([MaxLength(32)] string? Mode);
+
+/// <summary>
 /// <c>POST /api/sessions/{id}/end</c> response (ARCH-009 Flow F). The end always succeeds in-memory
 /// (<see cref="InterpretationSession.EndedAt"/> + summary set); persistence is MUST-but-reported:
 /// <see cref="PersistedPath"/> (filename only — no absolute-path disclosure, ARCH-019) on a successful

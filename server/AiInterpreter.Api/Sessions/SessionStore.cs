@@ -180,6 +180,29 @@ public sealed class SessionStore
     }
 
     /// <summary>
+    /// Atomically switches the session's interpretation mode (Flow G, 050): under ONE gate hold it records
+    /// <paramref name="transition"/> (when non-null, via the wired <see cref="RecordModeTransition"/> — the
+    /// gate is re-entrant) AND swaps <c>Config.CurrentMode</c>. Atomicity means a concurrent
+    /// <see cref="CreateTurn"/> can never observe the new mode without the transition also recorded (no torn
+    /// window). A null <paramref name="transition"/> is the idempotent no-op switch (a same-mode toggle): the
+    /// mode is set with NO transition recorded. Returns the updated session, or null if the id is unknown.
+    /// </summary>
+    public InterpretationSession? SwitchMode(string sessionId, InterpretationMode newMode, ModeTransitionEvent? transition)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var entry)) return null;
+        lock (entry.Gate)
+        {
+            if (transition is not null)
+            {
+                RecordModeTransition(sessionId, transition); // re-entrant under the same gate (atomic with the swap)
+            }
+
+            entry.Session = entry.Session with { Config = entry.Session.Config with { CurrentMode = newMode } };
+            return entry.Session;
+        }
+    }
+
+    /// <summary>
     /// Stamps <c>EndedAt</c> from the clock and returns the ended session, or null if unknown. Idempotent
     /// (C.4b): an already-ended session is returned unchanged (no re-stamp) so a second <c>/end</c> — or the
     /// WS terminal path colliding with the HTTP end path — can't move the end time.

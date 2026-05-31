@@ -95,4 +95,67 @@ public class SessionStoreTests
         var secondEnd = store.End(session.SessionId);
         Assert.Equal(T1, secondEnd!.EndedAt); // not re-stamped to T2
     }
+
+    // 050 (Finding 2c / Flow G) — the atomic SwitchMode primitive: swap config.CurrentMode AND record
+    // the transition under ONE gate hold (so a concurrent CreateTurn can't observe the new mode without
+    // the transition also recorded). RecordModeTransition is the wired single-owner of the append.
+    private static ModeTransitionEvent Transition(InterpretationMode from, InterpretationMode to) =>
+        new("transition_t1", from, to,
+            new LanguageDirection(LanguageCode.En, LanguageCode.Es), T1, ClockSource.Server, null);
+
+    [Fact]
+    public void switch_mode_swaps_current_mode_and_records_transition()
+    {
+        var store = new SessionStore(new MutableClock { UtcNow = T1 });
+        var session = store.Create(Config(), "v1"); // starts Cascade
+
+        var updated = store.SwitchMode(
+            session.SessionId, InterpretationMode.Realtime,
+            Transition(InterpretationMode.Cascade, InterpretationMode.Realtime));
+
+        Assert.NotNull(updated);
+        Assert.Equal(InterpretationMode.Realtime, updated!.Config.CurrentMode);
+        var recorded = Assert.Single(updated.ModeTransitions);
+        Assert.Equal(InterpretationMode.Cascade, recorded.FromMode);
+        Assert.Equal(InterpretationMode.Realtime, recorded.ToMode);
+
+        // The live store reflects both the swap and the recorded transition.
+        var stored = store.Get(session.SessionId)!;
+        Assert.Equal(InterpretationMode.Realtime, stored.Config.CurrentMode);
+        Assert.Single(stored.ModeTransitions);
+    }
+
+    [Fact]
+    public void switch_mode_with_null_transition_swaps_mode_without_recording()
+    {
+        // The no-op path primitive (Step-2.5 Q2): swap the mode but record NO transition.
+        var store = new SessionStore(new MutableClock { UtcNow = T1 });
+        var session = store.Create(Config(), "v1"); // Cascade
+
+        var updated = store.SwitchMode(session.SessionId, InterpretationMode.Realtime, transition: null);
+
+        Assert.Equal(InterpretationMode.Realtime, updated!.Config.CurrentMode);
+        Assert.Empty(updated.ModeTransitions);
+    }
+
+    [Fact]
+    public void switch_mode_returns_null_for_unknown_session()
+    {
+        var store = new SessionStore(new MutableClock { UtcNow = T1 });
+        Assert.Null(store.SwitchMode("session_missing", InterpretationMode.Realtime, transition: null));
+    }
+
+    [Fact]
+    public void turn_created_after_switch_inherits_new_mode()
+    {
+        // The 2c fix at the store level: CreateTurn stamps config.CurrentMode, so a turn created AFTER
+        // a switch must carry the NEW mode (the stale-mode root cause).
+        var store = new SessionStore(new MutableClock { UtcNow = T1 });
+        var session = store.Create(Config(), "v1"); // Cascade
+        store.SwitchMode(session.SessionId, InterpretationMode.Realtime, transition: null);
+
+        var turn = store.CreateTurn(session.SessionId)!;
+
+        Assert.Equal(InterpretationMode.Realtime, turn.Mode);
+    }
 }

@@ -28,6 +28,13 @@ public interface ISessionService
     InterpretationTurn? AppendEvents(string sessionId, string turnId, IReadOnlyList<LatencyEvent> events);
     Task<CompleteTurnOutcome?> CompleteTurnAsync(
         string sessionId, string turnId, CompleteTurnRequest request, CancellationToken cancellationToken = default);
+
+    // Mode switch (050 / Flow G, Finding 2c): validate the target mode against the enum allowlist
+    // (off-enum/blank → InvalidMode → 400), update the session's CurrentMode + record a
+    // ModeTransitionEvent; NotFound if the session id is unknown. Synchronous — the in-memory swap is what
+    // the 2c fix needs (CreateTurn stamps from CurrentMode); the transition persists at the next /complete
+    // or /end write, like the rest of the in-memory store.
+    SwitchModeOutcome SwitchMode(string sessionId, string? requestedMode);
 }
 
 /// <summary>The in-memory result of ending a session: the ended session + the MUST-write outcome
@@ -36,6 +43,15 @@ public sealed record EndSessionOutcome(InterpretationSession Session, Result<str
 
 /// <summary>The in-memory result of completing a turn: the completed turn + the best-effort-write outcome.</summary>
 public sealed record CompleteTurnOutcome(InterpretationTurn Turn, Result<string> Persist);
+
+/// <summary>The outcome of a mode-switch request (050 / Flow G): a <see cref="SwitchModeStatus"/> the
+/// controller maps to 200/400/404 + the updated session (non-null only on
+/// <see cref="SwitchModeStatus.Ok"/>).</summary>
+public sealed record SwitchModeOutcome(SwitchModeStatus Status, InterpretationSession? Session);
+
+/// <summary>Mode-switch result discriminator: <see cref="Ok"/> (switched), <see cref="NotFound"/> (unknown
+/// session → 404), <see cref="InvalidMode"/> (target not in the enum allowlist → 400).</summary>
+public enum SwitchModeStatus { Ok, NotFound, InvalidMode }
 
 /// <inheritdoc cref="ISessionService"/>
 public sealed class SessionService : ISessionService
@@ -149,6 +165,55 @@ public sealed class SessionService : ISessionService
     }
 
     public string? CreateTurn(string sessionId) => _store.CreateTurn(sessionId)?.TurnId;
+
+    public SwitchModeOutcome SwitchMode(string sessionId, string? requestedMode)
+    {
+        var session = _store.Get(sessionId);
+        if (session is null)
+        {
+            return new SwitchModeOutcome(SwitchModeStatus.NotFound, null);
+        }
+
+        if (!TryParseMode(requestedMode, out var target))
+        {
+            return new SwitchModeOutcome(SwitchModeStatus.InvalidMode, null);
+        }
+
+        // No-op switch (target == current): idempotent, NO transition recorded (Q2). Build the transition
+        // only on an actual change; the store swaps CurrentMode either way (the same value on a no-op is
+        // harmless) and records iff transition is non-null — one path. fromMode/direction are read from the
+        // live session just before the store gate: a benign single-user/between-turns TOCTOU (flagged Step 9).
+        var current = session.Config;
+        ModeTransitionEvent? transition = target == current.CurrentMode
+            ? null
+            : new ModeTransitionEvent(
+                TransitionId: GenerateTransitionId(),
+                FromMode: current.CurrentMode,
+                ToMode: target,
+                DirectionAtTransition: current.Direction,
+                OccurredAt: _clock.UtcNow,
+                ClockSource: ClockSource.Server,
+                TriggeredByTurnId: null);
+
+        // Non-null: Get just resolved the id and the store has no eviction (the EndAsync/SetSummary precedent).
+        var updated = _store.SwitchMode(sessionId, target, transition)!;
+        return new SwitchModeOutcome(SwitchModeStatus.Ok, updated);
+    }
+
+    // Parse + allowlist the requested mode (lesson §27 chokepoint): reject null/blank, non-enum strings, and
+    // out-of-range numeric strings (Enum.TryParse accepts "99" as an UNDEFINED value, so Enum.IsDefined gates
+    // it). Lenient case (frontend always sends lowercase) — harmless, the wire value is the only producer.
+    private static bool TryParseMode(string? raw, out InterpretationMode mode)
+    {
+        mode = default;
+        return !string.IsNullOrWhiteSpace(raw)
+            && Enum.TryParse(raw, ignoreCase: true, out mode)
+            && Enum.IsDefined(mode);
+    }
+
+    // transition_<short-id>: a GUID segment, like the store's session/turn ids (not path-bound, but kept
+    // consistent with the ^[A-Za-z0-9_-]+$ id form).
+    private static string GenerateTransitionId() => "transition_" + Guid.NewGuid().ToString("N")[..8];
 
     public InterpretationTurn? AppendEvents(string sessionId, string turnId, IReadOnlyList<LatencyEvent> events) =>
         _store.UpdateTurn(sessionId, turnId, turn => turn with

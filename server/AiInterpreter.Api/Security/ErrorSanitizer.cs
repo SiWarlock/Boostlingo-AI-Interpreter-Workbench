@@ -127,6 +127,7 @@ public sealed class ErrorSanitizer
         "turn.not_found" => "Turn not found.",
         "evaluation.invalid_phrase" => "The submitted text is too long or invalid.",
         "evaluation.phrase_not_found" => "Evaluation phrase not found.",
+        "session.invalid_mode" => "The requested interpretation mode is invalid.",
         _ => GenericMessage,
     };
 }

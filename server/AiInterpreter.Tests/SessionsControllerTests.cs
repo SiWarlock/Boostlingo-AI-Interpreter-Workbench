@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using AiInterpreter.Api.Common;
 using AiInterpreter.Api.Security;
@@ -465,5 +466,134 @@ public class SessionsControllerTests : IDisposable
         Assert.Equal(3, root.GetProperty("turnCount").GetInt32());                  // top-level counts all turns
         Assert.Equal(2, root.GetProperty("cascade").GetProperty("turnCount").GetInt32()); // per-mode excludes eval
         Assert.Equal(1, root.GetProperty("wer").GetProperty("sampleCount").GetInt32());    // WER keeps it
+    }
+
+    // ===== 050 — POST /{id}/mode mode-switch endpoint (Finding 2c / Flow G) =====
+
+    // Posts the RAW request body so the exact frontend wire shape ({"mode":"realtime"}, camelCase key +
+    // lowercase enum, shipped at 7dc398e) is pinned, not just a serializer round-trip.
+    private static StringContent ModeBody(string rawJson) => new(rawJson, Encoding.UTF8, "application/json");
+
+    // M1 — a valid switch: 200 with the updated session; config.currentMode flips AND a server-derived
+    // ModeTransitionEvent is recorded (fromMode/toMode/clockSource=server/triggeredByTurnId=null).
+    [Fact]
+    public async Task switch_mode_updates_current_mode_and_records_transition()
+    {
+        using var factory = Factory(TempDir());
+        var (client, id) = await CreatedSession(factory, InterpretationMode.Cascade);
+
+        var resp = await client.PostAsync($"/api/sessions/{id}/mode", ModeBody("{\"mode\":\"realtime\"}"));
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        var root = doc.RootElement;
+        Assert.Equal("realtime", root.GetProperty("config").GetProperty("currentMode").GetString());
+        var transitions = root.GetProperty("modeTransitions");
+        Assert.Equal(1, transitions.GetArrayLength());
+        var tr = transitions[0];
+        Assert.Equal("cascade", tr.GetProperty("fromMode").GetString());
+        Assert.Equal("realtime", tr.GetProperty("toMode").GetString());
+        Assert.Equal("server", tr.GetProperty("clockSource").GetString());
+        Assert.Equal(JsonValueKind.Null, tr.GetProperty("triggeredByTurnId").ValueKind);
+        Assert.Matches("^[A-Za-z0-9_-]+$", tr.GetProperty("transitionId").GetString()!);
+        // directionAtTransition = the session's current direction (load-bearing shared-contract field).
+        var dir = tr.GetProperty("directionAtTransition");
+        Assert.Equal("en", dir.GetProperty("source").GetString());
+        Assert.Equal("es", dir.GetProperty("target").GetString());
+    }
+
+    // M2 — an invalid target mode -> a sanitized 400 session.invalid_mode UiError (NOT a framework
+    // ProblemDetails): the DTO carries the raw string so the service chokepoint owns the rejection
+    // (lesson §27 pattern) across off-enum, empty, out-of-range-numeric, and a missing key.
+    [Theory]
+    [InlineData("{\"mode\":\"bogus\"}")]
+    [InlineData("{\"mode\":\"\"}")]
+    [InlineData("{\"mode\":\"99\"}")]
+    [InlineData("{}")]
+    public async Task switch_mode_invalid_target_returns_sanitized_400(string body)
+    {
+        using var factory = Factory(TempDir());
+        var (client, id) = await CreatedSession(factory, InterpretationMode.Cascade);
+
+        var resp = await client.PostAsync($"/api/sessions/{id}/mode", ModeBody(body));
+        var payload = await resp.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        var ui = JsonSerializer.Deserialize<UiError>(payload, JsonDefaults.Options);
+        Assert.Equal("session.invalid_mode", ui!.Code);
+        Assert.DoesNotContain("Exception", payload, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // M3 — /mode on an unknown id -> 404 session.not_found UiError.
+    [Fact]
+    public async Task switch_mode_unknown_session_returns_sanitized_404()
+    {
+        using var factory = Factory(TempDir());
+
+        var resp = await factory.CreateClient()
+            .PostAsync("/api/sessions/session_nope/mode", ModeBody("{\"mode\":\"realtime\"}"));
+
+        Assert.Equal(HttpStatusCode.NotFound, resp.StatusCode);
+        var ui = JsonSerializer.Deserialize<UiError>(await resp.Content.ReadAsStringAsync(), JsonDefaults.Options);
+        Assert.Equal("session.not_found", ui!.Code);
+    }
+
+    // M4 — a no-op switch (target == current) is idempotent: 200, mode unchanged, NO transition recorded
+    // (Step-2.5 Q2 — a redundant toggle must not pollute the Flow-G timeline).
+    [Fact]
+    public async Task switch_mode_noop_same_mode_records_no_transition()
+    {
+        using var factory = Factory(TempDir());
+        var (client, id) = await CreatedSession(factory, InterpretationMode.Cascade);
+
+        var resp = await client.PostAsync($"/api/sessions/{id}/mode", ModeBody("{\"mode\":\"cascade\"}"));
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        var root = doc.RootElement;
+        Assert.Equal("cascade", root.GetProperty("config").GetProperty("currentMode").GetString());
+        Assert.Equal(0, root.GetProperty("modeTransitions").GetArrayLength());
+    }
+
+    // M5 — THE 2c fix end-to-end: a turn created AFTER a switch is stamped with the NEW mode (the root
+    // cause was CreateTurn stamping a stale CurrentMode). create cascade -> /mode realtime -> /turns ->
+    // the new turn's mode is realtime.
+    [Fact]
+    public async Task turn_created_after_switch_is_stamped_with_new_mode()
+    {
+        using var factory = Factory(TempDir());
+        var (client, id) = await CreatedSession(factory, InterpretationMode.Cascade);
+
+        await client.PostAsync($"/api/sessions/{id}/mode", ModeBody("{\"mode\":\"realtime\"}"));
+        var turnId = await CreateTurn(client, id);
+
+        using var doc = JsonDocument.Parse(
+            await (await client.GetAsync($"/api/sessions/{id}")).Content.ReadAsStringAsync());
+        var turn = doc.RootElement.GetProperty("turns").EnumerateArray()
+            .Single(t => t.GetProperty("turnId").GetString() == turnId);
+        Assert.Equal("realtime", turn.GetProperty("mode").GetString());
+    }
+
+    // M6 — the recorded transition lands in the persisted session JSON (modeTransitions) at /end, with
+    // invariants intact (metadata only — no secret, no raw-audio field).
+    [Fact]
+    public async Task switch_mode_transition_persists_in_session_json()
+    {
+        var dir = TempDir();
+        using var factory = Factory(dir);
+        var (client, id) = await CreatedSession(factory, InterpretationMode.Cascade);
+
+        await client.PostAsync($"/api/sessions/{id}/mode", ModeBody("{\"mode\":\"realtime\"}"));
+        await client.PostAsync($"/api/sessions/{id}/end", null);
+
+        var file = Assert.Single(Directory.GetFiles(dir, "*.json"));
+        var json = await File.ReadAllTextAsync(file);
+        using var doc = JsonDocument.Parse(json);
+        var transitions = doc.RootElement.GetProperty("modeTransitions");
+        Assert.Equal(1, transitions.GetArrayLength());
+        Assert.Equal("realtime", transitions[0].GetProperty("toMode").GetString());
+        Assert.DoesNotContain("sk-", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("ek_", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"audio\"", json, StringComparison.Ordinal);
     }
 }

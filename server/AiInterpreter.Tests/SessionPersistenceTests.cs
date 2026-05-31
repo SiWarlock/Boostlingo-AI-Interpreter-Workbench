@@ -80,10 +80,16 @@ public class SessionPersistenceTests : IDisposable
             cost, null, new List<ProviderError> { error },
             TurnStatus.Completed, "gpt-5-nano", "alloy");
 
+        // A recorded Flow-G mode transition (050) — metadata only, so the sentinel scans below cover it
+        // too (lesson §29: keep this fixture current with the model's fields).
+        var transition = new ModeTransitionEvent(
+            "transition_1", InterpretationMode.Cascade, InterpretationMode.Realtime,
+            direction, T.AddSeconds(1), ClockSource.Server, null);
+
         return new InterpretationSession(
             sessionId, "Demo run 1", T, T.AddMinutes(1), config,
             new List<InterpretationTurn> { turn },
-            new List<ModeTransitionEvent>(), null, "2026-05-28-payg-estimates");
+            new List<ModeTransitionEvent> { transition }, null, "2026-05-28-payg-estimates");
     }
 
     // 1 — round-trip: write -> read -> deserialize -> re-serialize equals the original serialization;

@@ -51,6 +51,23 @@ public sealed class SessionsController : ControllerBase
         return Ok(new EndSessionResponse(outcome.Session, persistedPath, warning));
     }
 
+    // Flow-G mode switch (050 / Finding 2c): validate + update the session's CurrentMode and record a
+    // ModeTransitionEvent. Off-enum target -> sanitized 400 session.invalid_mode (NOT a framework
+    // ProblemDetails — the DTO carries the raw string so this chokepoint owns the rejection, lesson §27).
+    [HttpPost("{id}/mode")]
+    public ActionResult<InterpretationSession> SwitchMode(string id, [FromBody] SetModeRequest request)
+    {
+        var outcome = _sessions.SwitchMode(id, request.Mode);
+        return outcome.Status switch
+        {
+            SwitchModeStatus.NotFound => NotFoundUiError(),
+            SwitchModeStatus.InvalidMode => StatusCode(
+                StatusCodes.Status400BadRequest,
+                _sanitizer.ForCode("session.invalid_mode", StatusCodes.Status400BadRequest)),
+            _ => Ok(outcome.Session),
+        };
+    }
+
     [HttpGet("{id}/summary")]
     public ActionResult<SessionSummary> Summary(string id)
     {
