@@ -23,11 +23,13 @@ export function latencyCeilingMs(mode: InterpretationMode): number {
 }
 
 // good = comfortably under the ideal; warn = under the ceiling but over the ideal; over = past the
-// ceiling; na = no / non-finite measurement (a missing metric renders muted 'n/a', never green, never
-// an error color — and never a fabricated 0; mirrors the comparison aggregation's Number.isFinite guard,
-// web §21 — NaN/Infinity must not read as "good").
+// ceiling; na = no / non-finite / NEGATIVE measurement (a missing metric renders muted 'n/a', never green,
+// never an error color — and never a fabricated 0; mirrors the comparison aggregation's Number.isFinite
+// guard, web §21 — NaN/Infinity must not read as "good"). A negative latency (a residual cross-clock skew,
+// or a pre-VAD manual-stop anchor — 056 bug 3) is not a valid "good" measurement → 'na' (no misleading
+// green/over badge); the VALUE is still disclosed by deriveTurnMetrics (ARCH-013 no-clamp), only the badge mutes.
 export function latencyTier(mode: InterpretationMode, ms: number | null | undefined): LatencyTier {
-  if (ms === null || ms === undefined || !Number.isFinite(ms)) {
+  if (ms === null || ms === undefined || !Number.isFinite(ms) || ms < 0) {
     return 'na'
   }
   const { goodUnderMs, ceilingMs } = TARGETS[mode]

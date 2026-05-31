@@ -67,11 +67,14 @@ export default function MetricsPanel({ onRefresh }: { onRefresh?: () => void }) 
   const turn: TurnViewModel | undefined = state.currentTurn ?? state.turns[state.turns.length - 1]
   const metrics = turn ? deriveTurnMetrics(turn) : undefined
   const stages = metrics?.stages ?? {}
-  const stageNames = Object.keys(stages)
   const summary = state.summary
 
   const mode: InterpretationMode = turn?.mode ?? state.mode
-  const headlineMs = mode === 'realtime' ? metrics?.speechEndToFirstAudioMs : metrics?.totalTurnMs
+  // Headline = the RESPONSIVENESS metric (speech-end → first audio) for BOTH modes — the <3s/<1.5s
+  // ARCH-013 targets are responsiveness targets, never total-turn (which includes the user's talk + hold).
+  // Total-turn is shown as secondary context in the per-turn rows, with NO badge (056 bug 4). Cascade's
+  // speech-end is stt.final-anchored (deriveTurnMetrics) so it's hold-robust + positive.
+  const headlineMs = metrics?.speechEndToFirstAudioMs
   const tier = latencyTier(mode, headlineMs)
   const ceilingS = latencyCeilingMs(mode) / 1000
 
@@ -94,10 +97,9 @@ export default function MetricsPanel({ onRefresh }: { onRefresh?: () => void }) 
         )}
       </div>
 
-      <div className="eyebrow">
-        {mode === 'realtime' ? 'This turn · speech → first audio' : 'This turn · total turn'}
-      </div>
+      <div className="eyebrow">This turn · speech → first audio</div>
       <div
+        aria-label="turn-headline"
         style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginTop: 8, flexWrap: 'wrap' }}
       >
         <span className={`metric-big ${TIER_CLASS[tier]}`}>
@@ -110,13 +112,16 @@ export default function MetricsPanel({ onRefresh }: { onRefresh?: () => void }) 
         {tier !== 'na' && <span className={`tgt-pill tgt-${tier}`}>target &lt; {ceilingS}s</span>}
       </div>
 
+      {/* Per-stage is cascade-only (ARCH-013): realtime has no STT/Translation/TTS stages, so the whole
+          section is mode-gated — a hardcoded "Cascade stages" header is wrong for realtime (Fix B, brief
+          049). The values are deriveTurnMetrics's stt/translation/tts stage DURATIONS (ARCH-013, 056). */}
       {mode === 'cascade' && (
-        <div style={{ marginTop: 16 }}>
-          <div className="eyebrow">Per-stage</div>
+        <div aria-label="turn-stages" style={{ marginTop: 16 }}>
+          <div className="eyebrow">Cascade stages</div>
           <div className="stage-bar">
             {STAGE_META.map((st) => {
               const v = stages[st.key]
-              const total = STAGE_META.reduce((a, x) => a + (stages[x.key] || 0), 0) || 1
+              const total = STAGE_META.reduce((a, x) => a + Math.max(0, stages[x.key] ?? 0), 0) || 1
               return v ? (
                 <div
                   key={st.key}
@@ -147,22 +152,6 @@ export default function MetricsPanel({ onRefresh }: { onRefresh?: () => void }) 
         <Kv k="Speech-end → playback" v={ms(metrics?.speechEndToPlaybackMs)} />
         <Kv k="Total turn" v={ms(metrics?.totalTurnMs)} />
       </div>
-
-      {/* Per-stage is cascade-only (ARCH-013): realtime has no STT/Translation/TTS stages, so the
-          whole section is mode-gated — a hardcoded "Cascade stages" header is wrong for realtime
-          (Fix B, brief 049). The realtime headline (speech→first audio) renders above. */}
-      {mode === 'cascade' && (
-        <div aria-label="turn-stages" style={{ marginTop: 12 }}>
-          <div className="eyebrow" style={{ marginBottom: 4 }}>
-            Cascade stages
-          </div>
-          {stageNames.length === 0 ? (
-            <p className="na">{NA}</p>
-          ) : (
-            stageNames.map((name) => <Kv key={name} k={name} v={ms(stages[name])} />)
-          )}
-        </div>
-      )}
 
       <div aria-label="session-averages">
         <div className="divider" />

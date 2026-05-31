@@ -90,7 +90,15 @@ export function deriveTurnMetrics(turn: TurnViewModel): TurnViewModel['latency']
     }
   }
   const recordingStarted = byName.get('turn.recording.started')
-  const speechEnd = byName.get('turn.recording.stopped')
+  const recordingStopped = byName.get('turn.recording.stopped')
+  // Speech-end proxy for the RESPONSIVENESS metric (speech_end_to_first_audio_ms). ARCH-013 documents
+  // turn.recording.stopped, BUT pre-VAD that is the MANUAL stop — held seconds after the user finished
+  // speaking — so the responsiveness goes negative (056 bug 3). For cascade, stt.final (Deepgram
+  // endpointing) is the hold-robust true-speech-end signal; fall back to recording.stopped when absent
+  // (realtime has no stt.final → unchanged). Signed-off ARCH-013 realization note (056) — scoped to
+  // first-audio ONLY; speech_end_to_playback_ms below keeps the literal recording.stopped anchor so it
+  // stays consistent with the backend ModeSummary.avgSpeechEndToPlaybackMs.
+  const responsivenessAnchor = byName.get('stt.final') ?? recordingStopped
   // turn.completed (browser-clock, stamped on the WS `done`) is the canonical totalTurn terminal;
   // tts.complete (server-clock) is the cross-clock fallback when turn.completed isn't present.
   const terminal = byName.get('turn.completed') ?? byName.get('tts.complete')
@@ -102,11 +110,33 @@ export function deriveTurnMetrics(turn: TurnViewModel): TurnViewModel['latency']
     byName.get('realtime.first_audio_delta') ??
     byName.get('playback.started')
   return {
-    speechEndToFirstAudioMs: between(speechEnd, firstAudio),
-    speechEndToPlaybackMs: between(speechEnd, byName.get('playback.started')),
+    speechEndToFirstAudioMs: between(responsivenessAnchor, firstAudio),
+    speechEndToPlaybackMs: between(recordingStopped, byName.get('playback.started')),
     totalTurnMs: between(recordingStarted, terminal),
-    stages: turn.latency.stages,
+    stages: deriveStageDurations(byName),
   }
+}
+
+// Per-stage DURATIONS (ARCH-013 cascade stage metrics, line ~1051), differenced from the stage markers
+// via absolute-timestamp Between — NOT the relativeMs passthrough. The store's `stages` map held
+// {eventName: relativeMs-from-origin}, whose keys never matched the panel's stt/translation/tts AND whose
+// values were not stage durations → the per-stage display read a permanent n/a (056 bug 1). A stage whose
+// marker is absent is omitted (honest n/a, never a fabricated 0 — §13).
+function deriveStageDurations(byName: Map<string, LatencyEvent>): Record<string, number> {
+  const stages: Record<string, number> = {}
+  const add = (key: string, fromName: string, toName: string): void => {
+    const d = between(byName.get(fromName), byName.get(toName))
+    // Omit an absent OR negative duration. Stage markers are all SERVER clock, so a negative is a
+    // mis-stamp (NOT disclosed cross-clock skew) — render honest n/a, never a negative that poisons the
+    // panel's stage-bar divisor, never a fabricated 0 (§13).
+    if (d !== undefined && d >= 0) {
+      stages[key] = d
+    }
+  }
+  add('stt', 'cascade.audio.received', 'stt.final')
+  add('translation', 'translation.started', 'translation.final')
+  add('tts', 'tts.started', 'tts.complete')
+  return stages
 }
 
 // Formats a USD-per-minute figure as the always-qualified "Estimated $X.XX/min" (ARCH-014); returns the

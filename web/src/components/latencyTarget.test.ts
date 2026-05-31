@@ -29,6 +29,14 @@ describe('latencyTier', () => {
     expect(latencyTier('realtime', Number.NaN)).toBe('na')
     expect(latencyTier('cascade', Number.POSITIVE_INFINITY)).toBe('na')
   })
+
+  it('a negative latency tiers as n/a — never a misleading green/over badge (056 bug 3)', () => {
+    // A negative responsiveness (a residual cross-clock skew, or a pre-VAD manual-stop anchor) is not a
+    // valid "good" measurement: −3762 < goodUnderMs would otherwise read as GREEN. The VALUE is still
+    // disclosed by deriveTurnMetrics (ARCH-013 no-clamp); the TIER/badge just gets no color.
+    expect(latencyTier('cascade', -3762)).toBe('na')
+    expect(latencyTier('realtime', -50)).toBe('na')
+  })
 })
 
 describe('latencyCeilingMs', () => {
