@@ -13,6 +13,13 @@ using AiInterpreter.Api.Security;
 using AiInterpreter.Api.Sessions;
 using Microsoft.AspNetCore.Http.Features;
 
+// G.2b — auto-load the repo-root .env into the process environment so a clean clone runs with plain
+// `dotnet run` (no manual `set -a && source ../../.env`). Fill-gaps (explicit env / CI / prod wins) +
+// degrade-if-absent; GATED to the real API entry point so the WebApplicationFactory test host never loads
+// the dev .env (its real keys would flip provider DI fakes->real → live calls). MUST run before
+// CreateBuilder so the vars exist when the config providers snapshot the environment.
+DotEnvLoader.AutoLoad(AppContext.BaseDirectory);
+
 var builder = WebApplication.CreateBuilder(args);
 
 const string corsPolicyName = "frontend";
