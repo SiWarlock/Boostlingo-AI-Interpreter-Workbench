@@ -924,6 +924,15 @@ button {
   color: var(--fg-3);
   font-size: 13px;
 }
+/* Per-mode metric line — single text node (combined "Label: value") so the ComparisonSummary
+   test's getByText(/Speech→first audio: 900 ms/) assertions hold; mono for the data-panel feel. */
+.cmp-line {
+  margin: 5px 0;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+  color: var(--fg-2);
+}
 
 /* "Estimated" cost qualifier chip (CostPanel + comparison). */
 .est-chip {

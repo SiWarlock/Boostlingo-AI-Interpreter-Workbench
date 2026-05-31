@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Info, Mic, Target } from 'lucide-react'
 import { evaluationApi } from '../api/evaluationApi'
 import { sessionsApi } from '../api/sessionsApi'
 import { audioCaptureController } from '../audio/audioCaptureController'
@@ -13,6 +14,11 @@ import type { EvaluationPhrase } from '../types/domain'
 // state + the store (errors only); dispatches the DI'd evaluationActions flow — no transport internals
 // here (clean separation, forbidden-pattern #3). WER is STT-only: it measures recognition quality, not
 // translation quality (the spec-required explanation copy, verbatim from ARCH-015).
+//
+// H.1 styling: card + .eval-row (phrase + reference on the left, the WER score on the right). CSS/markup
+// only — the single phrase <select> (getByRole('combobox')), the reference-text / wer-result / hypothesis
+// aria-labels, the S/I/D text, the "Record & evaluate" button, the session hint, and the verbatim WER
+// explanation are all unchanged. The flow logic (phrase load, handleEvaluate, gates) is untouched.
 const WER_EXPLANATION =
   'WER compares the recognized transcript to a known reference phrase. It is useful for STT quality, not a full measure of translation quality.'
 
@@ -78,42 +84,99 @@ export default function EvaluationPanel() {
   }
 
   return (
-    <section aria-label="evaluation-panel">
-      <h2>WER Evaluation</h2>
+    <section className="card card-pad" aria-label="evaluation-panel">
+      <div className="card-hd">
+        <span className="ic">
+          <Target size={18} aria-hidden />
+        </span>
+        <span className="card-title">Evaluation · WER</span>
+        <span className="right eyebrow">STT accuracy only</span>
+      </div>
 
-      <label>
-        Phrase
-        <select
-          value={selectedPhraseId ?? ''}
-          onChange={(e) => setSelectedPhraseId(e.target.value)}
-        >
-          {phrases.map((p) => (
-            <option key={p.phraseId} value={p.phraseId}>
-              {p.phraseId} ({p.language})
-            </option>
-          ))}
-        </select>
-      </label>
-
-      {selected && <p aria-label="reference-text">{selected.referenceText}</p>}
-
-      <button type="button" disabled={!canEvaluate} onClick={() => void handleEvaluate()}>
-        {evaluating ? 'Evaluating…' : 'Record & evaluate'}
-      </button>
-      {state.sessionId === null && <p>Start a session to evaluate.</p>}
-
-      {outcome && (
-        <div aria-label="wer-result">
-          <p>{`WER: ${(outcome.werResult.wer * 100).toFixed(1)}%`}</p>
-          <p>{`Substitutions: ${outcome.werResult.substitutions}`}</p>
-          <p>{`Insertions: ${outcome.werResult.insertions}`}</p>
-          <p>{`Deletions: ${outcome.werResult.deletions}`}</p>
-          <p>{`Reference words: ${outcome.werResult.referenceWordCount}`}</p>
-          <p aria-label="hypothesis">{outcome.hypothesis}</p>
+      <div className="eval-row">
+        <div className="eval-ref">
+          <label className="field" style={{ marginBottom: 0 }}>
+            <span className="field-lab">Scripted phrase</span>
+            <select
+              className="select"
+              value={selectedPhraseId ?? ''}
+              onChange={(e) => setSelectedPhraseId(e.target.value)}
+            >
+              {phrases.map((p) => (
+                <option key={p.phraseId} value={p.phraseId}>
+                  {p.phraseId} ({p.language})
+                </option>
+              ))}
+            </select>
+          </label>
+          {selected && (
+            <p aria-label="reference-text" className="txt">
+              {selected.referenceText}
+            </p>
+          )}
         </div>
-      )}
 
-      <p>{WER_EXPLANATION}</p>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 12,
+            alignItems: 'center',
+            minWidth: 180,
+          }}
+        >
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={!canEvaluate}
+            onClick={() => void handleEvaluate()}
+          >
+            {evaluating ? (
+              <>
+                <span className="spin" /> Evaluating…
+              </>
+            ) : (
+              <>
+                <span className="ic">
+                  <Mic size={17} aria-hidden />
+                </span>
+                Record &amp; evaluate
+              </>
+            )}
+          </button>
+          {state.sessionId === null && (
+            <p className="bl-sm" style={{ margin: 0 }}>
+              Start a session to evaluate.
+            </p>
+          )}
+
+          {outcome && (
+            <div aria-label="wer-result" className="wer-score">
+              <div className="metric-big" style={{ fontSize: 40 }}>
+                {(outcome.werResult.wer * 100).toFixed(1)}%
+              </div>
+              <div className="eyebrow" style={{ marginTop: 2 }}>
+                Word error rate
+              </div>
+              <div className="sid">
+                <span className="s">Substitutions: {outcome.werResult.substitutions}</span>
+                <span className="s">Insertions: {outcome.werResult.insertions}</span>
+                <span className="s">Deletions: {outcome.werResult.deletions}</span>
+              </div>
+              <div className="sid">
+                <span className="s">Reference words: {outcome.werResult.referenceWordCount}</span>
+              </div>
+              <p aria-label="hypothesis" className="bl-sm" style={{ marginTop: 8 }}>
+                {outcome.hypothesis}
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="rec-hint" style={{ marginTop: 14 }}>
+        <Info size={13} aria-hidden /> {WER_EXPLANATION}
+      </div>
     </section>
   )
 }
