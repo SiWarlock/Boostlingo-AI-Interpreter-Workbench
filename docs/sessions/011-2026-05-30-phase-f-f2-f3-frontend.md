@@ -3,7 +3,7 @@
 - **Date:** 2026-05-30
 - **Phase:** F (Evaluation, Summary & Comparison) — the frontend closing slices
 - **Predecessor:** [010-2026-05-30-phase-f-f1-evaluation-endpoints.md](010-2026-05-30-phase-f-f1-evaluation-endpoints.md)
-- **Successor:** _(next session)_
+- **Successor:** [012-2026-05-30-phase-f-f4-eval-turn-exclusion.md](012-2026-05-30-phase-f-f4-eval-turn-exclusion.md)
 - **Area:** `web/` (frontend implementer)
 - **Slice commits:** F.2 `f1697bc` · F.3 `f7daae1`
 - **Web suite:** 157 → **193 green** (+36: F.2 +17, F.3 +19); `format:check` + ESLint + `tsc --noEmit` clean at close.
