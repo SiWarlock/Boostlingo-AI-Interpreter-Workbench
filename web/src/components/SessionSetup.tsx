@@ -2,7 +2,7 @@ import { Headphones, Play, Power } from 'lucide-react'
 import { sessionsApi } from '../api/sessionsApi'
 import { realtimeConnectionManager } from '../realtime/realtimeConnectionManager'
 import { endSession, startSession } from '../state/sessionActions'
-import { availableModels } from '../state/selectors'
+import { availableModels, canToggleMode } from '../state/selectors'
 import { sessionStore, useSessionState } from '../state/sessionStore'
 import type { LanguageDirection, RealtimeModel, TranslationModel } from '../types/domain'
 
@@ -103,6 +103,26 @@ export default function SessionSetup() {
           ))}
         </select>
       </label>
+
+      {/* Turn control (Phase I) — Manual (click Start/Stop) | Auto-VAD (server segments speech). KEEPS
+          Manual (default); gated mid-turn (canToggleMode) like the ModeToggle. Session-level config. */}
+      <fieldset className="field" aria-label="turn-control">
+        <span className="field-lab">Turn control</span>
+        <div className={`seg${canToggleMode(state.turnStatus) ? '' : ' locked'}`}>
+          {(['manual', 'auto'] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              className={`seg-opt${state.turnControlMode === m ? ' active' : ''}`}
+              aria-pressed={state.turnControlMode === m}
+              disabled={!canToggleMode(state.turnStatus)}
+              onClick={() => sessionStore.setTurnControlMode(m)}
+            >
+              {m === 'manual' ? 'Manual' : 'Auto-VAD'}
+            </button>
+          ))}
+        </div>
+      </fieldset>
 
       <div className="session-actions">
         <button

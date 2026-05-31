@@ -12,6 +12,7 @@ function baseState(overrides: Partial<UiSessionState> = {}): UiSessionState {
     translationModel: 'gpt-5-nano',
     sessionStatus: 'active',
     turnStatus: 'ready',
+    turnControlMode: 'manual',
     turns: [],
     errors: [],
     ...overrides,

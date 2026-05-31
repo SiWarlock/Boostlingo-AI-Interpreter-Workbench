@@ -24,6 +24,12 @@ type Clock = () => string
 // default RealtimeOptions.TranscriptionModel ("gpt-4o-transcribe", ARCH-010); keep the two in sync.
 const REALTIME_INPUT_TRANSCRIPTION_MODEL = 'gpt-4o-transcribe'
 
+// Server-VAD config for Phase-I auto mode (ARCH-010 §7) — GA defaults, surfaced as named constants for
+// tuning. In auto mode the OpenAI server auto-detects speech start/end + auto-creates responses.
+const SERVER_VAD_THRESHOLD = 0.5
+const SERVER_VAD_PREFIX_PADDING_MS = 300
+const SERVER_VAD_SILENCE_DURATION_MS = 500
+
 export type RealtimeTurnDeps = {
   store: Pick<
     SessionStore,
@@ -176,9 +182,29 @@ export function createRealtimeTurnController(deps: RealtimeTurnDeps): RealtimeTu
       // A fresh per-turn sink (E.4a) wired to the client's server-event stream: raw frame → parse → normalize
       // → sink; on responseDone the turn is finalized, so report its events to the backend.
       const sink = createRealtimeEventSink({ store, clock })
+      // Per-turn latch (reset on each startTurn → a fresh turn after a settled one works). In Phase-I AUTO
+      // mode the turn is single-utterance (slice 1): after the first auto response.done we go IDLE so a 2nd
+      // server-VAD'd utterance can't re-finalize (re-POST /complete+/events) or garble turn 1 against a gone
+      // currentTurn. Multi-segment (a turn per server-detected segment) is slice 2.
+      let settled = false
+      let warnedPostSettled = false
       // Replaces any prior turn's delegate — sinks are per-turn (the old closure is GC'd); only the active
       // controller writes onServerEvent (the inFlight guard prevents a concurrent rebind).
       client.onServerEvent = (raw) => {
+        if (settled) {
+          // DEV-only observability (manual-smoke-exempt, like the 053-B DC logger): make the documented
+          // single-utterance boundary visible — a 2nd server-VAD'd utterance is dropped here (its audio
+          // still plays via the media track, but no transcript/cost/events) until slice 2 handles
+          // multi-segment. Warn ONCE per turn so a live auto-VAD smoke catches it instead of reading "broken".
+          if (import.meta.env.DEV && !warnedPostSettled) {
+            warnedPostSettled = true
+            console.warn(
+              '[realtime auto-VAD] ignoring server events after the first auto turn — slice 1 is ' +
+                'single-utterance per Start; continuous multi-utterance is Phase-I slice 2.',
+            )
+          }
+          return
+        }
         const event = normalizeRealtimeEvent(parseRealtimeEvent(raw))
         if (event === null) {
           return
@@ -187,6 +213,9 @@ export function createRealtimeTurnController(deps: RealtimeTurnDeps): RealtimeTu
         if (event.kind === 'responseDone') {
           reportTurnEvents(sessionId, turnId)
           finalizeTurn(sessionId, turnId, event.usage)
+          if (store.getState().turnControlMode === 'auto') {
+            settled = true
+          }
         }
       }
 
@@ -194,12 +223,24 @@ export function createRealtimeTurnController(deps: RealtimeTurnDeps): RealtimeTu
       // the turn start. The mic track is already streaming (E.3 addTrack) — no per-turn mic toggle.
       // Re-assert input transcription in the SAME frame (Finding 053): this partial audio.input would
       // otherwise clobber the broker mint's input.transcription → no SOURCE transcript.
+      // Phase I: in AUTO mode the server VADs (auto-detects speech start/end + auto-creates responses) via
+      // `turn_detection: server_vad`; in MANUAL mode the turn is buffer-delimited (`turn_detection: null` +
+      // Stop commits). 053-B: re-assert `transcription` in the SAME frame regardless (else the source
+      // transcript regresses). The mode is gated mid-turn (canToggleMode), so it's stable across the turn.
       client.sendClientEvent({
         type: 'session.update',
         session: {
           audio: {
             input: {
-              turn_detection: null,
+              turn_detection:
+                store.getState().turnControlMode === 'auto'
+                  ? {
+                      type: 'server_vad',
+                      threshold: SERVER_VAD_THRESHOLD,
+                      prefix_padding_ms: SERVER_VAD_PREFIX_PADDING_MS,
+                      silence_duration_ms: SERVER_VAD_SILENCE_DURATION_MS,
+                    }
+                  : null,
               transcription: { model: REALTIME_INPUT_TRANSCRIPTION_MODEL },
             },
           },
@@ -218,7 +259,15 @@ export function createRealtimeTurnController(deps: RealtimeTurnDeps): RealtimeTu
     if (store.getState().currentTurn === undefined) {
       return
     }
-    // Commit the buffered audio + ask for a response (ARCH-010 §7); stamp the speech-end marker.
+    if (store.getState().turnControlMode === 'auto') {
+      // Auto-VAD (Phase I, slice 1): the SERVER owns segmentation (speech-stop → auto-commit → auto-response),
+      // so Stop is a no-op — sending commit/response.create here would RACE the server's auto-commit → a
+      // double response. The turn finalizes on the server's auto response.done. A guarded early-end override
+      // (only if no `committed` seen) is slice 2. The realtime metrics speech-end anchor in auto mode is a
+      // slice-2 concern (the user's Stop is not the speech-end here).
+      return
+    }
+    // Manual: commit the buffered audio + ask for a response (ARCH-010 §7); stamp the speech-end marker.
     client.sendClientEvent({ type: 'input_audio_buffer.commit' })
     client.sendClientEvent({ type: 'response.create' })
     store.appendLatencyEvent(marker('turn.recording.stopped'))

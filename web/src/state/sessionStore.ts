@@ -11,6 +11,7 @@ import type {
   SessionSummary,
   TranscriptSegment,
   TranslationModel,
+  TurnControlMode,
   TurnStatus,
   TurnViewModel,
   UiError,
@@ -40,6 +41,7 @@ export type SessionStore = {
   sessionStarted(session: InterpretationSession): void
   setSessionStatus(status: SessionStatus): void
   setTurnStatus(status: TurnStatus): void
+  setTurnControlMode(mode: TurnControlMode): void
   addError(error: UiError): void
   clearErrors(): void
   setSummary(summary: SessionSummary): void
@@ -81,6 +83,7 @@ function createInitialState(): UiSessionState {
     translationModel: 'gpt-5-nano',
     sessionStatus: 'idle',
     turnStatus: 'ready',
+    turnControlMode: 'manual', // Phase I — default preserves the current manual click-Start/Stop flow
     turns: [],
     errors: [],
   }
@@ -131,6 +134,7 @@ export function createSessionStore(): SessionStore {
       }),
     setSessionStatus: (status) => set({ ...state, sessionStatus: status }),
     setTurnStatus: (status) => set({ ...state, turnStatus: status }),
+    setTurnControlMode: (mode) => set({ ...state, turnControlMode: mode }),
     addError: (error) => set({ ...state, errors: [...state.errors, error] }),
     clearErrors: () => set({ ...state, errors: [] }),
     // The backend-canonical session aggregate (GET /summary) — the MetricsPanel session-averages

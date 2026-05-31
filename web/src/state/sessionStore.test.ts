@@ -59,9 +59,21 @@ describe('sessionStore', () => {
       translationModel: 'gpt-5-nano',
       sessionStatus: 'idle',
       turnStatus: 'ready',
+      turnControlMode: 'manual', // I.2 slice 1 — default preserves the current manual flow
       turns: [],
       errors: [],
     })
+  })
+
+  it('setTurnControlMode flips the session turn-control mode (manual default → auto), immutably', () => {
+    const store = createSessionStore()
+    expect(store.getState().turnControlMode).toBe('manual')
+    const before = store.getState()
+
+    store.setTurnControlMode('auto')
+
+    expect(store.getState().turnControlMode).toBe('auto')
+    expect(store.getState()).not.toBe(before) // new ref (immutable)
   })
 
   it('loadConfig sets providerHealth from the config response (Flow A bootstrap)', () => {

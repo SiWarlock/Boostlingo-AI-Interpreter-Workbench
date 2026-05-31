@@ -61,6 +61,37 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
+describe('SessionSetup — turn-control toggle (Manual | Auto-VAD) (I.2 slice 1)', () => {
+  it('renders Manual|Auto, KEEPS Manual, and dispatches setTurnControlMode on Auto', () => {
+    sessionStore.reset()
+    sessionStore.loadConfig(config)
+    render(<SessionSetup />)
+
+    // both options present (Manual kept — §22 adjust-a-query-never-an-assertion); default is manual
+    expect(screen.getByRole('button', { name: /manual/i })).toBeInTheDocument()
+    const auto = screen.getByRole('button', { name: /auto/i })
+    expect(sessionStore.getState().turnControlMode).toBe('manual')
+
+    fireEvent.click(auto)
+
+    expect(sessionStore.getState().turnControlMode).toBe('auto')
+  })
+
+  it('disables the turn-control toggle while a turn is in flight (recording/processing/playing — canToggleMode)', () => {
+    for (const status of ['recording', 'processing', 'playing'] as const) {
+      sessionStore.reset()
+      sessionStore.loadConfig(config)
+      sessionStore.sessionStarted(session)
+      sessionStore.setTurnStatus(status) // mid-turn → gated (covers all TOGGLE_BLOCKED statuses)
+      const { unmount } = render(<SessionSetup />)
+
+      expect(screen.getByRole('button', { name: /manual/i })).toBeDisabled()
+      expect(screen.getByRole('button', { name: /auto/i })).toBeDisabled()
+      unmount()
+    }
+  })
+})
+
 describe('SessionSetup — End session teardown (E.5a)', () => {
   it('tears down the realtime connection when the session ends', () => {
     sessionStore.loadConfig(config)

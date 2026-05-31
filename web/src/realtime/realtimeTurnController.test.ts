@@ -220,6 +220,74 @@ describe('createRealtimeTurnController', () => {
     expect(added?.safeMessage).not.toContain('raw-complete-detail')
   })
 
+  it('auto mode: Start sends turn_detection server_vad (+ the 053-B transcription re-assert) (I.2 slice 1)', async () => {
+    const { store, client, controller } = setup()
+    store.setTurnControlMode('auto')
+
+    await controller.startTurn()
+
+    expect(eventTypes(client)).toEqual(['session.update', 'input_audio_buffer.clear'])
+    const sessionUpdate = client.sendClientEvent.mock.calls[0][0] as {
+      session: { audio: { input: { turn_detection: unknown; transcription: unknown } } }
+    }
+    // server-VAD config (GA defaults) — the server now auto-detects speech start/end + auto-creates responses
+    expect(sessionUpdate.session.audio.input.turn_detection).toEqual({
+      type: 'server_vad',
+      threshold: 0.5,
+      prefix_padding_ms: 300,
+      silence_duration_ms: 500,
+    })
+    // 053-B: STILL re-assert transcription in the same frame, else the source transcript regresses
+    expect(sessionUpdate.session.audio.input.transcription).toEqual({ model: 'gpt-4o-transcribe' })
+  })
+
+  it('auto mode: Stop is a NO-OP — no input_audio_buffer.commit / response.create (server owns segmentation)', async () => {
+    const { store, client, controller } = setup()
+    store.setTurnControlMode('auto')
+    await controller.startTurn()
+    client.sendClientEvent.mockClear()
+
+    controller.stopTurn()
+
+    // sending commit/response.create here would RACE the server's auto-commit → a double response
+    expect(eventTypes(client)).not.toContain('input_audio_buffer.commit')
+    expect(eventTypes(client)).not.toContain('response.create')
+  })
+
+  it('auto mode: goes idle after the first auto response.done — a 2nd utterance does NOT re-finalize or garble turn 1 (slice 1 single-utterance bound)', async () => {
+    const { store, client, api, controller } = setup()
+    store.setTurnControlMode('auto')
+    await controller.startTurn()
+
+    client.onServerEvent?.(JSON.stringify({ type: 'response.done', response: {} }))
+    // the server keeps VAD-ing — a 2nd utterance after turn 1 finalized MUST be ignored (slice 2 = multi-segment)
+    client.onServerEvent?.(
+      JSON.stringify({ type: 'response.output_audio_transcript.delta', delta: 'segunda' }),
+    )
+    client.onServerEvent?.(JSON.stringify({ type: 'response.done', response: {} }))
+
+    expect(api.completeTurn).toHaveBeenCalledTimes(1) // finalized ONCE (no re-POST of /complete)
+    expect(api.appendTurnEvents).toHaveBeenCalledTimes(1) // reported ONCE
+    expect(store.getState().turns).toHaveLength(1) // one turn, not double-processed
+  })
+
+  it('auto mode: the settled latch resets PER startTurn — a 2nd auto turn after a settled one finalizes', async () => {
+    const { store, client, api, controller } = setup()
+    store.setTurnControlMode('auto')
+    api.createTurn.mockReset()
+    api.createTurn
+      .mockResolvedValueOnce({ turnId: 'turn_1' })
+      .mockResolvedValueOnce({ turnId: 'turn_2' })
+
+    await controller.startTurn()
+    client.onServerEvent?.(JSON.stringify({ type: 'response.done', response: {} })) // settles turn 1
+    await controller.startTurn() // a fresh Start → fresh settled=false (latch is per-turn, not module-scoped)
+    client.onServerEvent?.(JSON.stringify({ type: 'response.done', response: {} })) // finalizes turn 2
+
+    expect(api.completeTurn).toHaveBeenCalledTimes(2) // BOTH turns finalized — the latch reset (not dead)
+    expect(store.getState().turns).toHaveLength(2)
+  })
+
   it('guards a concurrent double startTurn — only one turn is created', async () => {
     const { api, controller } = setup()
 

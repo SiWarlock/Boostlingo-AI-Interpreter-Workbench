@@ -7,6 +7,9 @@
 // --- Enums (camelCase string unions mirroring ARCH-005) ---
 
 export type InterpretationMode = 'realtime' | 'cascade'
+// Session-level turn control (Phase I — revises ARCH-003's locked manual-only decision; auto-VAD additive).
+// 'manual' = click Start/Stop (buffer-delimited); 'auto' = server-VAD (the OpenAI server segments speech).
+export type TurnControlMode = 'manual' | 'auto'
 export type LanguageCode = 'en' | 'es'
 export type SessionStatus =
   | 'idle'
@@ -92,6 +95,7 @@ export type UiSessionState = {
   // canonical names mirror ARCH-005 SessionStatus/TurnStatus:
   sessionStatus: SessionStatus
   turnStatus: TurnStatus
+  turnControlMode: TurnControlMode // Phase I — 'manual' (default) | 'auto' (server-VAD); UI-runtime state
   providerHealth?: ConfigResponse // from GET /api/config
   turns: TurnViewModel[]
   currentTurn?: TurnViewModel
