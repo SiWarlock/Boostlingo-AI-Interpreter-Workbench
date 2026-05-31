@@ -85,6 +85,15 @@ describe('buildStartFrame', () => {
       ttsVoice: 'alloy',
     })
   })
+
+  it('includes autoVad only when truthy (auto); omits it when false/undefined (manual — wire unchanged) — I.3', () => {
+    // Phase-I cascade auto-VAD (062 backend): the start frame carries `autoVad` so the backend
+    // auto-finalizes on Deepgram utterance-end. Omit-when-falsy keeps the MANUAL frame byte-identical to
+    // pre-062 (the exact-frame test above pins that — the manual key must be absent, not present-false).
+    expect(buildStartFrame({ ...params, autoVad: true })).toMatchObject({ autoVad: true })
+    expect('autoVad' in buildStartFrame({ ...params, autoVad: false })).toBe(false)
+    expect('autoVad' in buildStartFrame(params)).toBe(false)
+  })
 })
 
 describe('dispatchCascadeMessage', () => {
@@ -208,8 +217,15 @@ describe('cascadeStreamClient lifecycle', () => {
     }
     const store = makeMockStore()
     const onAudio = vi.fn()
-    const client = createCascadeStreamClient({ store, onAudio, wsFactory, location: fakeLocation })
-    return { client, store, onAudio, fakes, getFake: () => fakes[fakes.length - 1] }
+    const onTerminal = vi.fn()
+    const client = createCascadeStreamClient({
+      store,
+      onAudio,
+      onTerminal,
+      wsFactory,
+      location: fakeLocation,
+    })
+    return { client, store, onAudio, onTerminal, fakes, getFake: () => fakes[fakes.length - 1] }
   }
 
   it('opens with arraybuffer binaryType and sends the start frame on open', () => {
@@ -299,7 +315,7 @@ describe('cascadeStreamClient lifecycle', () => {
   })
 
   it('treats a server error frame as terminal — no spurious connection_lost on the following close', () => {
-    const { client, store, getFake } = setup()
+    const { client, store, onTerminal, getFake } = setup()
     client.start(params)
     getFake().onopen?.()
     getFake().onmessage?.({
@@ -321,6 +337,8 @@ describe('cascadeStreamClient lifecycle', () => {
     expect(store.failTurn).toHaveBeenCalledWith(
       expect.objectContaining({ code: 'translation.timeout' }),
     )
+    // the `terminal` latch also suppresses a 2nd capture-stop on the error-then-close path (I.3)
+    expect(onTerminal).toHaveBeenCalledTimes(1)
   })
 
   it('tears down the previous socket on a second start so its close cannot fail the new turn', () => {
@@ -365,5 +383,76 @@ describe('cascadeStreamClient lifecycle', () => {
 
     const stops = fake.sent.filter((s) => s === JSON.stringify({ type: 'stop' }))
     expect(stops).toHaveLength(1)
+  })
+
+  // --- I.3: the capture-stop hook on a terminal -------------------------------------------------
+  // In auto mode no frontend Stop fires (the backend auto-finalizes on Deepgram utterance-end), so the
+  // audio capture would keep running. The client invokes onTerminal on every turn-end path so
+  // recordingActions can stop the mic (mirrors the onAudio delegate; idempotent with a manual Stop).
+  it('invokes onTerminal on a done frame (the auto-finalize capture-stop hook)', () => {
+    const { client, onTerminal, getFake } = setup()
+    client.start(params)
+    getFake().onopen?.()
+    getFake().onmessage?.({
+      data: JSON.stringify({ type: 'done', turnId: 'turn_001', status: 'completed' }),
+    })
+    expect(onTerminal).toHaveBeenCalledTimes(1)
+  })
+
+  it('invokes onTerminal on the other turn-end paths too (error frame, abnormal close) — no mic leak on any auto turn-end', () => {
+    const a = setup()
+    a.client.start(params)
+    a.getFake().onopen?.()
+    a.getFake().onmessage?.({
+      data: JSON.stringify({
+        type: 'error',
+        error: {
+          provider: 'openai',
+          stage: 'translation',
+          code: 'translation.timeout',
+          safeMessage: 'x',
+          retryable: true,
+        },
+      }),
+    })
+    expect(a.onTerminal).toHaveBeenCalledTimes(1)
+
+    const b = setup()
+    b.client.start(params)
+    b.getFake().onopen?.()
+    b.getFake().onclose?.({ wasClean: false }) // abnormal disconnect before any terminal frame
+    expect(b.onTerminal).toHaveBeenCalledTimes(1)
+  })
+
+  it('does NOT invoke onTerminal on a non-terminal frame (transcript)', () => {
+    const { client, onTerminal, getFake } = setup()
+    client.start(params)
+    getFake().onopen?.()
+    getFake().onmessage?.({
+      data: JSON.stringify({
+        type: 'transcript',
+        segment: {
+          segmentId: 's',
+          role: 'source',
+          text: 'hola',
+          isFinal: false,
+          provider: 'deepgram',
+          timestamp: '2026-05-29T12:00:00+00:00',
+          clockSource: 'server',
+        },
+      }),
+    })
+    expect(onTerminal).not.toHaveBeenCalled()
+  })
+
+  it('fires onTerminal exactly once across done-then-close (the terminal guard — no double capture-stop)', () => {
+    const { client, onTerminal, getFake } = setup()
+    client.start(params)
+    getFake().onopen?.()
+    getFake().onmessage?.({
+      data: JSON.stringify({ type: 'done', turnId: 'turn_001', status: 'completed' }),
+    })
+    getFake().onclose?.({ wasClean: true }) // normal post-done close must NOT re-fire onTerminal
+    expect(onTerminal).toHaveBeenCalledTimes(1)
   })
 })

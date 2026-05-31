@@ -163,6 +163,64 @@ describe('stopRecording', () => {
   })
 })
 
+// --- I.3: cascade auto-VAD wiring (the realtime 063-s1 analogue) ------------------------------------
+// The turnControlMode toggle (063-s1) drives the cascade start frame's autoVad; in auto mode the backend
+// auto-finalizes on Deepgram utterance-end -> `done` -> completeTurn finalizes the TURN. But no frontend
+// Stop fires, so recordingActions must stop the CAPTURE on the auto-finalize (onCascadeTerminal), idempotent
+// with a manual Stop (the early-end). Single-utterance (062 finalizes the whole turn on the first end).
+describe('cascade auto-VAD (I.3)', () => {
+  it('auto mode: startRecording sends autoVad:true in the cascade start frame', async () => {
+    const { deps } = setup(baseState({ turnControlMode: 'auto' }))
+    const controller = createRecordingController(deps)
+
+    await controller.startRecording()
+
+    expect(deps.client.start).toHaveBeenCalledWith(expect.objectContaining({ autoVad: true }))
+  })
+
+  it('manual mode: startRecording OMITS autoVad entirely (manual wire byte-identical to pre-062)', async () => {
+    const { deps } = setup() // default turnControlMode 'manual'
+    const controller = createRecordingController(deps)
+
+    await controller.startRecording()
+
+    // the key is absent, not present-false → buildStartFrame's exact-frame contract stays intact
+    expect(deps.client.start.mock.calls[0][0]).not.toHaveProperty('autoVad')
+  })
+
+  it('onCascadeTerminal stops + clears the capture (the auto-finalize: no manual Stop fires) and is idempotent', async () => {
+    const { deps, captureStop } = setup(baseState({ turnControlMode: 'auto' }))
+    const controller = createRecordingController(deps)
+    await controller.startRecording() // sets the capture handle
+
+    controller.onCascadeTerminal()
+    expect(captureStop).toHaveBeenCalledTimes(1) // the mic stops on the backend auto-finalize
+    // a 2nd terminal (or a late manual Stop) does NOT re-stop the now-cleared handle
+    controller.onCascadeTerminal()
+    expect(captureStop).toHaveBeenCalledTimes(1)
+  })
+
+  it('idempotent with a manual Stop early-end: stopRecording then the backend done→onCascadeTerminal stops capture ONCE', async () => {
+    const { deps, captureStop } = setup(baseState({ turnControlMode: 'auto' }))
+    const controller = createRecordingController(deps)
+    await controller.startRecording()
+
+    controller.stopRecording() // early-end in auto: client.stop() + stops capture
+    controller.onCascadeTerminal() // the backend's `done` arrives afterward
+
+    expect(captureStop).toHaveBeenCalledTimes(1) // not double-stopped
+    expect(deps.client.stop).toHaveBeenCalledTimes(1) // the early-end stop
+  })
+
+  it('onCascadeTerminal is null-safe with no prior start (no throw)', () => {
+    const { deps, captureStop } = setup()
+    const controller = createRecordingController(deps)
+
+    expect(() => controller.onCascadeTerminal()).not.toThrow()
+    expect(captureStop).not.toHaveBeenCalled()
+  })
+})
+
 // --- D.6: the client-clock recording markers the top-level latency deltas need ----------------
 // turn.recording.started / turn.recording.stopped are browser-clock LatencyEvents stamped via the
 // store; deriveTurnMetrics reads their absolute timestamps to compute speechEnd→* + totalTurn.

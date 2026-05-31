@@ -25,6 +25,9 @@ export type RecordingDeps = {
 export type RecordingController = {
   startRecording: () => Promise<void>
   stopRecording: () => void
+  // The cascade auto-VAD capture-stop hook (I.3): the backend auto-finalizes the turn (no frontend Stop),
+  // so the cascade client invokes this on the turn-end to stop the mic. Idempotent with stopRecording.
+  onCascadeTerminal: () => void
 }
 
 // A browser-clock turn-lifecycle marker (relativeMs is a placeholder — the top-level latency deltas
@@ -97,10 +100,24 @@ export function createRecordingController(deps: RecordingDeps): RecordingControl
         sampleRate: captureHandle.sampleRate,
         translationModel: state.translationModel,
         ttsVoice: '', // blank -> the backend ResolveVoice picks the per-target-language voice
+        // Phase-I (I.3): only in auto mode → the backend auto-finalizes on Deepgram utterance-end. Omitted
+        // in manual (the key is absent, not present-false) so the manual frame is byte-identical to pre-062.
+        ...(state.turnControlMode === 'auto' ? { autoVad: true } : {}),
       })
     } finally {
       inFlight = false
     }
+  }
+
+  // The cascade auto-VAD turn-end hook (I.3): the backend auto-finalizes the turn (the `done` frame already
+  // ran completeTurn) without a frontend Stop, so the mic would keep running — stop + clear the capture
+  // here. Idempotent: the optional-chain + null-out makes a 2nd call (or a prior manual stopRecording, which
+  // already nulled the handle) a no-op. Stamps NO recording.stopped (that would be turn-complete time, not
+  // speech-end → a wrong delta; cascade responsiveness anchors on stt.final, web §25) + no setTurnStatus
+  // (completeTurn already moved the turn + set the status). Wired at the composition root (main.tsx).
+  function onCascadeTerminal(): void {
+    captureHandle?.stop()
+    captureHandle = null
   }
 
   function stopRecording(): void {
@@ -113,7 +130,7 @@ export function createRecordingController(deps: RecordingDeps): RecordingControl
     deps.store.setTurnStatus('processing') // awaiting trailing finals + the `done` -> completeTurn
   }
 
-  return { startRecording, stopRecording }
+  return { startRecording, stopRecording, onCascadeTerminal }
 }
 
 // Production singleton — wires the real collaborators (onAudio playback is wired at the

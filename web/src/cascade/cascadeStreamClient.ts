@@ -25,6 +25,10 @@ export type CascadeStartParams = {
   sampleRate: number
   translationModel: string
   ttsVoice: string
+  // Phase-I auto-VAD (I.3): when true the backend auto-finalizes the turn on Deepgram utterance-end (no
+  // client `stop`). Mirrors the backend CascadeStartParams.AutoVad (062). Omitted when falsy → the manual
+  // start frame stays byte-identical to pre-062 (backend defaults false).
+  autoVad?: boolean
 }
 
 export type CascadeAudioChunk = { contentType: string; seq: number; base64: string }
@@ -65,6 +69,8 @@ export function buildStartFrame(params: CascadeStartParams) {
     sampleRate: params.sampleRate,
     translationModel: params.translationModel,
     ttsVoice: params.ttsVoice,
+    // Include only when auto (I.3) — a falsy/absent autoVad keeps the manual frame byte-identical to pre-062.
+    ...(params.autoVad ? { autoVad: true } : {}),
   }
 }
 
@@ -139,6 +145,10 @@ const CONNECTION_LOST: UiError = {
 export function createCascadeStreamClient(deps: {
   store: CascadeStore
   onAudio: (chunk: CascadeAudioChunk) => void
+  // Invoked once on any turn-end path (done / error frame / abnormal close) — the capture-stop hook for
+  // auto-VAD (I.3): in auto mode no frontend Stop fires, so recordingActions stops the mic here. Guarded by
+  // the `terminal` latch → fires exactly once per turn; idempotent with a manual Stop. Default no-op.
+  onTerminal?: () => void
   wsFactory?: WsFactory
   location?: WsLocation
 }): CascadeStreamClient {
@@ -160,6 +170,7 @@ export function createCascadeStreamClient(deps: {
     if (!terminal) {
       terminal = true
       deps.store.failTurn(CONNECTION_LOST)
+      deps.onTerminal?.() // stop the capture too — an abnormal close in auto mode would leak the mic
     }
   }
 
@@ -202,9 +213,11 @@ export function createCascadeStreamClient(deps: {
       }
       const type = dispatchCascadeMessage(event.data, { store: deps.store, onAudio: deps.onAudio })
       // Both `done` (normal) and a server `error` frame are terminal — the server closes after either,
-      // so the following close must NOT surface a spurious cascade.connection_lost.
+      // so the following close must NOT surface a spurious cascade.connection_lost. Both also end the turn
+      // server-side without a frontend Stop → stop the capture (I.3 auto-VAD; idempotent with a manual Stop).
       if (type === 'done' || type === 'error') {
         terminal = true
+        deps.onTerminal?.()
       }
     }
     ws.onerror = () => failIfLive()
@@ -249,7 +262,20 @@ export function setAudioSink(sink: (chunk: CascadeAudioChunk) => void): void {
   audioSink = sink
 }
 
+// The capture-stop hook (I.3) — a settable delegate (default no-op), mirroring the audio sink. main.tsx
+// wires setOnTerminal(recordingController.onCascadeTerminal) at the composition root so the cascade client
+// stops the mic on a turn-end with no frontend Stop (auto-VAD). Settable to avoid the construction-order
+// cycle (the client is a dep of recordingActions).
+let terminalSink: () => void = () => {
+  /* no capture-stop hook wired yet */
+}
+
+export function setOnTerminal(sink: () => void): void {
+  terminalSink = sink
+}
+
 export const cascadeStreamClient = createCascadeStreamClient({
   store: sessionStore,
   onAudio: (chunk) => audioSink(chunk),
+  onTerminal: () => terminalSink(),
 })
