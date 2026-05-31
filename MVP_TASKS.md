@@ -510,13 +510,13 @@ The project is "done" (ARCH-025 + PRD success criteria) when:
 **Spec anchors:** `ARCH-021`, `ARCH-023`, `ARCH-007`, `ARCH-010`, `ARCH-013`, `ARCH-014`, `ARCH-015`, `ARCH-019`, `ARCH-020`, `ARCH-029`, `ARCH-022`.
 
 ### G.1 — README
-- [ ] Overview, architecture summary, local setup (clean clone → run), env vars (ARCH-028), run commands, demo script link, provider config, metric meanings, **cost-estimate disclaimer**, WER explanation, known limitations, secure-context note, "session JSON is sensitive — don't commit".
-- [ ] Files: NEW — `README.md`.
-- [ ] Anchors: `ARCH-023`, `ARCH-021`, `ARCH-029`, `ARCH-019`. Cross-doc invariant: none.
+- [x] Overview, architecture summary, local setup (clean clone → run), env vars (ARCH-028), run commands, demo script link, provider config, metric meanings, **cost-estimate disclaimer**, WER explanation, known limitations, secure-context note, "session JSON is sensitive — don't commit". _(Orchestrator-authored `README.md` — all 12 spec'd elements present; the demo-script link forward-points to `docs/DEMO_SCRIPT.md` (G.3, smoke-gated).)_
+- [x] Files: NEW — `README.md`.
+- [x] Anchors: `ARCH-023`, `ARCH-021`, `ARCH-029`, `ARCH-019`. Cross-doc invariant: none.
 
 ### G.2 — CLAUDE.md / AGENTS.md
-- [ ] How the agent was directed; architecture-first workflow; constraints (no secrets to frontend; no raw audio; preserve provider interfaces; scoped commits).
-- [ ] Files: NEW — `CLAUDE.md`, `AGENTS.md`.
+- [~] How the agent was directed; architecture-first workflow; constraints (no secrets to frontend; no raw audio; preserve provider interfaces; scoped commits). _(DRAFTED — the AI-collaboration NARRATIVE authored as `docs/AI_COLLABORATION.md` because the task's named files `CLAUDE.md`/`AGENTS.md` ALREADY EXIST as operational team-convention files (root + `server/` + `web/`), which encode the constraints/workflow; the narrative cross-references them. **Form pending lead/user confirm** — see the Step-9-style note below.)_
+- [~] Files: NEW — ~~`CLAUDE.md`, `AGENTS.md`~~ → `docs/AI_COLLABORATION.md` (the operational `CLAUDE.md`/`AGENTS.md` pre-exist; not clobbered). **Confirm the intended G.2 form.**
 - [ ] Anchors: `ARCH-023`. Cross-doc invariant: none.
 
 ### G.3 — Demo script
@@ -532,7 +532,7 @@ The project is "done" (ARCH-025 + PRD success criteria) when:
 - [ ] Anchors: `ARCH-020`, `ARCH-007`, `ARCH-010`. Cross-doc invariant: none.
 
 ### G.5 — Comparison write-up
-- [ ] `docs/COMPARISON_WRITEUP.md` (1–2 pp) using **real measured values** from session JSON: what was built; measurement method + limitations (cross-clock skew, backend-measured TTS timing, estimate-not-billing cost, English-leaning ES TTS voice); Realtime vs Cascade latency/cost/quality(WER)/controllability; **recommendation (when each fits)**; the **time-to-onboard a new language pair** (PRD impact metric — a config/provider-capability change in Cascade vs a model-capability question in Realtime); limitations + next steps.
+- [~] `docs/COMPARISON_WRITEUP.md` (1–2 pp) using **real measured values** from session JSON: what was built; measurement method + limitations (cross-clock skew, backend-measured TTS timing, estimate-not-billing cost, English-leaning ES TTS voice); Realtime vs Cascade latency/cost/quality(WER)/controllability; **recommendation (when each fits)**; the **time-to-onboard a new language pair** (PRD impact metric — a config/provider-capability change in Cascade vs a model-capability question in Realtime); limitations + next steps. _(SCAFFOLDED — replaced the A.1 placeholder; structure + methodology + the full limitations section + the recommendation/language-pair frameworks are written; every measured number is a `[SMOKE: …]` placeholder. **Real numbers HELD pending the real-key smoke run** (user gate); F.4 lands first so §3.3's turnCount is exact.)_
 - [ ] **Limitations to call out explicitly (accreted, route hot from F):** (a) **Cascade end-to-end latency (speechEnd→playback) is `n/a`** — the cascade WS has no client→server latency-report channel (realtime's `POST …/events` has no cascade analogue), so the comparison shows it `n/a` (honest degradation; the cascade per-stage backend latencies + realtime end-to-end ARE shown; origin D.5/D.6, last-consumer F.3). (b) the standing C/D real-key-smoke + realtime-GA-shape confirms (demo-checklist). _(NOTE — the per-mode `turnCount` eval-turn skew is **NOT a write-up limitation**: it is **FIXED by F.4** (user-requested must-do — `ModeSummary` excludes eval turns → exact counts), which lands before this write-up. The only residual is a rare computeWer-failure orphan, bounded. Do not list turnCount as a limitation once F.4 is in.)_
 - [ ] Files: NEW — `docs/COMPARISON_WRITEUP.md`.
 - [ ] Anchors: `ARCH-023`, `ARCH-013`, `ARCH-014`, `ARCH-015`. Cross-doc invariant: none.
