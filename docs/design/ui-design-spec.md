@@ -86,7 +86,7 @@ ready ──(Start recording)──▶ recording ──(Stop)──▶ processin
 ## 5. Data each panel renders (field-level — the design's data model)
 
 **`UiSessionState`** (the whole store):
-`sessionId`, `label?`, `mode` (`cascade`|`realtime`), `direction` ({source,target} of `en`/`es`), `realtimeModel` (`gpt-realtime`|`gpt-realtime-mini`), `translationModel` (`gpt-5.4-nano`|`gpt-5.4-mini`), `sessionStatus`, `turnStatus`, `providerHealth?`, `turns[]`, `currentTurn?`, `summary?`, `errors[]`.
+`sessionId`, `label?`, `mode` (`cascade`|`realtime`), `direction` ({source,target} of `en`/`es`), `realtimeModel` (`gpt-realtime`|`gpt-realtime-mini`), `translationModel` (`gpt-5-nano`|`gpt-5-mini`), `sessionStatus`, `turnStatus`, `providerHealth?`, `turns[]`, `currentTurn?`, `summary?`, `errors[]`.
 
 **`TurnViewModel`** (`currentTurn` + each in `turns[]`):
 `turnId`, `mode`, `direction`, `status`, `startedAt`, `completedAt?`, `audioDurationMs?`, `sourceTranscript[] {text,isFinal}`, `targetTranscript[] {text,isFinal}`, `latency { speechEndToFirstAudioMs?, speechEndToPlaybackMs?, totalTurnMs?, stages? }`, `latencyEvents[]`, `estimatedCostUsd?`, `estimatedCostPerMinuteUsd?`, `translationModelUsed?`, `cost? (full estimate w/ assumptions)`.

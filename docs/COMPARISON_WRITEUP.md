@@ -9,7 +9,7 @@
 An instrumented comparison workbench (not a production interpreter) that runs two interpretation modes behind one UI and captures normalized evidence for each turn:
 
 - **Realtime** — OpenAI `gpt-realtime`/`-mini` over browser WebRTC, authorized by a backend-minted ephemeral credential.
-- **Cascade** — a fully streaming Deepgram `nova-3` STT → OpenAI `gpt-5.4-nano`/`-mini` translation → OpenAI `gpt-4o-mini-tts` pipeline, each stage behind a swappable provider interface.
+- **Cascade** — a fully streaming Deepgram `nova-3` STT → OpenAI `gpt-5-nano`/`-mini` translation → OpenAI `gpt-4o-mini-tts` pipeline, each stage behind a swappable provider interface.
 
 Evidence captured per turn: a normalized `LatencyEvent` timeline (stamped on real provider-event arrival), a config-driven cost estimate, optional WER (STT quality vs scripted phrases), normalized errors — persisted to local JSON (no raw audio, no secrets). A Comparison view aggregates this **by mode and by model variant**.
 
@@ -22,7 +22,7 @@ Evidence captured per turn: a normalized `LatencyEvent` timeline (stamped on rea
 - **Cross-clock skew.** Some timings cross the browser↔server clock boundary; skew is *disclosed, not silently clamped*. Treat sub-~50ms differences as noise.
 - **Backend-measured TTS timing.** Cascade stage latencies are measured server-side at the provider stream; they exclude the final network hop to the browser's speaker.
 - **Cascade end-to-end latency (speechEnd→playback) is `n/a`.** The cascade transport has no client→server latency-report channel, so the cross-mode *end-to-end* latency comparison uses the realtime end-to-end timing + the cascade *per-stage* latencies (not a single cascade speechEnd→playback number). _(A documented architectural limitation, not a bug.)_
-- **Cost is an estimate, not a bill.** Figures come from a config-driven `pricing.json` × measured usage. They are valid for *relative* comparison; they are not provider invoices. Realtime currently prices **input audio**; the realtime *output*-audio duration is disclosed-but-not-yet-measured frontend-side (so realtime cost is a slight under-count, flagged in the estimate's assumptions). Translation `gpt-5.4-mini` rates may still be placeholder `0.0` pending a pricing re-verify.
+- **Cost is an estimate, not a bill.** Figures come from a config-driven `pricing.json` × measured usage. They are valid for *relative* comparison; they are not provider invoices. Realtime currently prices **input audio**; the realtime *output*-audio duration is disclosed-but-not-yet-measured frontend-side (so realtime cost is a slight under-count, flagged in the estimate's assumptions).
 - **English-leaning ES TTS voice.** The Spanish output uses an OpenAI voice that is English-leaning; quality is observed, not scored (WER measures STT, not TTS).
 - **Turn counts are exact** — standalone WER-evaluation turns are excluded from the per-mode comparison counts (F.4); the comparison reflects interpretation turns only.
 
@@ -45,8 +45,8 @@ Evidence captured per turn: a normalized `LatencyEvent` timeline (stamped on rea
 |---|---|---|
 | Realtime | `gpt-realtime` | `[SMOKE: $]` |
 | Realtime | `gpt-realtime-mini` | `[SMOKE: $]` |
-| Cascade | `gpt-5.4-nano` (translation) | `[SMOKE: $]` |
-| Cascade | `gpt-5.4-mini` (translation) | `[SMOKE: $]` |
+| Cascade | `gpt-5-nano` (translation) | `[SMOKE: $]` |
+| Cascade | `gpt-5-mini` (translation) | `[SMOKE: $]` |
 
 ### 3.3 Quality (WER, STT-only) + errors
 
@@ -79,4 +79,4 @@ The deciding operational metric for the Boostlingo use case — how much work is
 ## 6. Limitations + next steps
 
 - Real-provider numbers depend on the smoke run (this scaffold's `[SMOKE: …]` markers); the figures will shift with provider/model/pricing changes — re-run to refresh.
-- Next steps (tracked in `MVP_TASKS.md`): measure realtime output-audio duration (cost accuracy); add a cascade client→server latency channel (end-to-end cascade latency); re-verify `pricing.json` (esp. `gpt-5.4-mini` + realtime token factors); the deferred hardening items (auth gate, model allowlist, bounded growth).
+- Next steps (tracked in `MVP_TASKS.md`): measure realtime output-audio duration (cost accuracy); add a cascade client→server latency channel (end-to-end cascade latency); re-verify realtime token factors (translation rates confirmed 2026-05-31); the deferred hardening items (auth gate, model allowlist, bounded growth).

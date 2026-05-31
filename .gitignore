@@ -29,3 +29,4 @@ server/AiInterpreter.Api/log.txt
 
 # --- Tool caches (code-index daemon, etc.) ---
 .codegraph/
+.gstack/

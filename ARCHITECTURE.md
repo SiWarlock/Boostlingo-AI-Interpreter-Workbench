@@ -62,7 +62,7 @@ The AI Interpreter Workbench is a **browser-based architecture-evaluation tool**
 The system runs two mode-specific execution paths behind one mode-agnostic UI:
 
 - **Realtime mode** — direct voice-to-voice interpretation using the **OpenAI Realtime API** (`gpt-realtime` / `gpt-realtime-mini`, GA) over a **browser WebRTC** peer connection, authorized by a **backend-minted ephemeral credential** so the standard API key never reaches the browser.
-- **Cascade mode** — a **fully streaming** composable pipeline: live mic audio streams to the backend, **Deepgram** (`nova-3`, `language=multi`) transcribes with interim results, **OpenAI** (`gpt-5.4-nano` / `gpt-5.4-mini`, switchable) translates with streamed tokens, and **OpenAI TTS** synthesizes streamed audio — all behind swappable provider interfaces with fakes for tests.
+- **Cascade mode** — a **fully streaming** composable pipeline: live mic audio streams to the backend, **Deepgram** (`nova-3`, `language=multi`) transcribes with interim results, **OpenAI** (`gpt-5-nano` / `gpt-5-mini`, switchable) translates with streamed tokens, and **OpenAI TTS** synthesizes streamed audio — all behind swappable provider interfaces with fakes for tests.
 
 The posture in one line: **one UI, two transports, one normalized session + metrics model, one persisted evidence trail, one comparison write-up.** The major subsystems are: (1) a **TypeScript SPA** owning mic capture, playback, the two transports, and all rendering; (2) a **.NET/C# backend** owning secrets, the ephemeral-credential broker, the streaming cascade orchestrator, provider abstractions (+ real + fake implementations), metrics normalization, cost estimation, WER, and JSON persistence; (3) **provider interfaces** (`ISttProvider`, `ITranslationProvider`, `ITtsProvider`) emitting normalized streaming events; and (4) the **evidence layer** — a shared `LatencyEvent` schema, a config-driven cost estimator, a scripted WER utility, and local JSON session files (no raw audio, no secrets).
 
@@ -126,7 +126,7 @@ Cascade  = more moving parts, more observability/control, more provider flexibil
 | Realtime model | `gpt-realtime` default, `gpt-realtime-mini` selectable | Enables premium-vs-efficient cost comparison | Single model if needed |
 | Cascade transport | **Live streaming** (browser→backend WebSocket audio; backend→browser event stream) | PRD: streaming throughout, no full-utterance blocking, live transcripts | Blob upload + Deepgram pre-recorded |
 | Cascade STT | Deepgram `nova-3` + `language=multi`, **live WebSocket** | Streaming + interim results + endpointing; EN/ES code-switching | Deepgram pre-recorded; OpenAI STT |
-| Cascade translation | OpenAI `gpt-5.4-nano` default, `gpt-5.4-mini` switchable, **streamed** (Responses API) | Low latency; quality-vs-latency comparison | DeepL/Anthropic later |
+| Cascade translation | OpenAI `gpt-5-nano` default, `gpt-5-mini` switchable, **streamed** (Responses API) | Low latency; quality-vs-latency comparison | DeepL/Anthropic later |
 | Cascade TTS | OpenAI TTS (`gpt-4o-mini-tts` default), **streamed** | Low integration overhead; streaming-capable | Deepgram Aura / ElevenLabs |
 | Provider scope | One real provider per stage + interfaces + fakes (+ the two named model variants) | Meets PRD without overbuilding | Add providers later |
 | Backend | .NET/C# (ASP.NET Core) | PRD preferred | Node/Python only if blocker |
@@ -170,7 +170,7 @@ Browser SPA (React + Vite + TypeScript)
 External Providers
   ├─ OpenAI Realtime (gpt-realtime / gpt-realtime-mini)
   ├─ Deepgram STT (nova-3, language=multi)
-  ├─ OpenAI text model (gpt-5.4-nano / gpt-5.4-mini)
+  ├─ OpenAI text model (gpt-5-nano / gpt-5-mini)
   └─ OpenAI TTS (gpt-4o-mini-tts)
 ```
 
@@ -236,7 +236,7 @@ public sealed record ProviderProfile(
     string SttModel,              // "nova-3"
     string SttLanguage,           // "multi"
     string TranslationProvider,   // "openai"
-    string TranslationModel,      // "gpt-5.4-nano" | "gpt-5.4-mini"
+    string TranslationModel,      // "gpt-5-nano" | "gpt-5-mini"
     string TtsProvider,           // "openai"
     string TtsModel,              // "gpt-4o-mini-tts"
     string TtsVoice);             // e.g. "alloy"
@@ -391,6 +391,10 @@ The frontend must **not** own: standard provider API keys; authoritative persist
 
 React + Vite + TypeScript. Keep state minimal (a single store/hook is sufficient; no heavy state library required).
 
+### Styling (H.1)
+
+Visual styling is applied as a **vendored design-system layer** (Phase H). The Boostlingo design tokens live in `web/src/styles/tokens.css` (color / type / spacing / radius / shadow as CSS custom properties + the Google-Fonts `@import` for Plus Jakarta Sans + IBM Plex Mono) and the component styles in `web/src/styles/workbench.css` (class-based, consuming the tokens); both are imported once in `main.tsx`. **Plain CSS — no CSS Modules, no Tailwind** (matches the delivered design's class-based idiom). Components add `className`s + minimal semantic wrappers and still render only from the store (clean-separation preserved); styling is **manual-smoke-verified, not unit-TDD'd** (ARCH-020 tier), except a pure latency-vs-target display helper (ARCH-013 thresholds) which is unit-tested. **Mode identity is a load-bearing visual contract: Realtime = blue (`--bl-blue` `#2F6BFF`), Cascade = violet (`--bl-violet` `#6E56F0`)** — carried through the toggle, status accents, and the comparison; never swapped. The full design source (tokens, the workbench UI kit, per-component preview cards, brand caveats) is `docs/BoostlingoDesignSystem/`; its mock store is a visual reference only — components map to the real `UiSessionState`. (H.1)
+
 ### Frontend State Shape
 
 ```ts
@@ -400,7 +404,7 @@ export type UiSessionState = {
   mode: 'realtime' | 'cascade';
   direction: { source: 'en' | 'es'; target: 'en' | 'es' };
   realtimeModel: 'gpt-realtime' | 'gpt-realtime-mini';
-  translationModel: 'gpt-5.4-nano' | 'gpt-5.4-mini';
+  translationModel: 'gpt-5-nano' | 'gpt-5-mini';
   // canonical names mirror ARCH-005 SessionStatus/TurnStatus:
   sessionStatus: 'idle' | 'configured' | 'starting' | 'active' | 'readyForTurn' | 'ending' | 'ended';
   turnStatus: 'ready' | 'recording' | 'captured' | 'processing' | 'playing' | 'completed' | 'failed';
@@ -627,7 +631,7 @@ Request:
 ```json
 { "label": "Demo run 1", "mode": "realtime",
   "direction": { "source": "en", "target": "es" },
-  "realtimeModel": "gpt-realtime", "translationModel": "gpt-5.4-nano" }
+  "realtimeModel": "gpt-realtime", "translationModel": "gpt-5-nano" }
 ```
 Response:
 ```json
@@ -636,7 +640,7 @@ Response:
               "direction": { "source": "en", "target": "es" },
               "providerProfile": { "realtimeProvider": "openai", "realtimeModel": "gpt-realtime",
                 "sttProvider": "deepgram", "sttModel": "nova-3", "sttLanguage": "multi",
-                "translationProvider": "openai", "translationModel": "gpt-5.4-nano",
+                "translationProvider": "openai", "translationModel": "gpt-5-nano",
                 "ttsProvider": "openai", "ttsModel": "gpt-4o-mini-tts", "ttsVoice": "alloy" } } }
 ```
 
@@ -666,9 +670,9 @@ The **backend owns `turnId`** for every mode. A Realtime "turn" is an app-layer 
 ```json
 { "realtime": { "configured": true, "models": ["gpt-realtime","gpt-realtime-mini"] },
   "cascade": { "stt": { "configured": true, "provider": "deepgram", "model": "nova-3" },
-               "translation": { "configured": true, "provider": "openai", "models": ["gpt-5.4-nano","gpt-5.4-mini"] },
+               "translation": { "configured": true, "provider": "openai", "models": ["gpt-5-nano","gpt-5-mini"] },
                "tts": { "configured": true, "provider": "openai", "model": "gpt-4o-mini-tts" } },
-  "languages": ["en","es"], "pricingConfigVersion": "2026-05-28-payg-estimates" }
+  "languages": ["en","es"], "pricingConfigVersion": "2026-05-31-payg-estimates" }
 ```
 **`GET /api/health`** → `{ "status": "ok" }`.
 
@@ -684,7 +688,7 @@ Response: `{ "clientSecret": "ek_...", "expiresAt": "2026-05-28T15:40:00Z", "mod
 **`WS /api/cascade/stream`** — bidirectional WebSocket for one streaming turn.
 
 Client → server:
-1. First text frame: `{ "type": "start", "sessionId": "...", "turnId": "...", "direction": {"source":"en","target":"es"}, "encoding": "linear16", "sampleRate": 48000, "translationModel": "gpt-5.4-nano", "ttsVoice": "alloy" }`
+1. First text frame: `{ "type": "start", "sessionId": "...", "turnId": "...", "direction": {"source":"en","target":"es"}, "encoding": "linear16", "sampleRate": 48000, "translationModel": "gpt-5-nano", "ttsVoice": "alloy" }`
 2. Then **binary** frames: raw linear16 PCM audio.
 3. Final text frame: `{ "type": "stop" }` (end of speech for the turn).
 
@@ -805,7 +809,7 @@ Realtime has fewer internal stage metrics, less provider-level control, likely l
 
 ### Provider baseline
 
-`STT: Deepgram nova-3 (language=multi, live WebSocket)` → `Translation: OpenAI gpt-5.4-nano|mini (Responses API, streamed)` → `TTS: OpenAI gpt-4o-mini-tts (streamed)`.
+`STT: Deepgram nova-3 (language=multi, live WebSocket)` → `Translation: OpenAI gpt-5-nano|mini (Responses API, streamed)` → `TTS: OpenAI gpt-4o-mini-tts (streamed)`.
 
 ### Streaming pipeline (MUST)
 
@@ -835,6 +839,8 @@ The PRD requires **streaming throughout, no full-utterance blocking, live transc
 
 **Streaming contract (task-citable acceptance):** _"For a multi-word turn, the target transcript and the first TTS audio begin arriving at the browser before `tts.complete`, and the source transcript renders incrementally (partials before final)."_ A buffered single response does **not** satisfy this.
 
+> **G.4 realization (048/052, real-key smoke).** Two stop/STT hardening fixes the live cascade smoke surfaced (fake-provider tests structurally can't catch live-integration faults; ARCH-020-exempt). **(048 — stop-path fail-closed, ARCH-018):** any unexpected exception in `CascadeWebSocketEndpoint.HandleAsync` is caught (broadened from an OCE-only catch), logged server-side single-lined, and degraded to ONE sanitized terminal `error` frame (`cascade.unknown`, invariant #4) + best-effort close; the channel-writer-complete + pump-await are consolidated into one `try/finally` so the audio pump can't leak on any exit path; the Deepgram `Stop()` is routed through an `Interlocked`-guarded `StopOnceAsync` (idempotent, at-most-once). *(The alarming `[Error] Stop: NRE` in the log was Deepgram-SDK-INTERNAL caught-and-logged noise from a double-`Stop()`, never an escaping crash — a red herring; see `server/LESSONS.md` §30.)* **(052 — empty-final tolerance):** the orchestrator **skips an empty/whitespace `SttFinal`** (no `stt.final` stamp / source segment / translation) and fails `cascade.empty_transcript` **only at stream end** when `sawEmptyFinal && !sawNonEmptyFinal` (two-flag) — a trailing empty final must not fail an otherwise-correct turn; pure silence (no final at all) still Completes. Skipping the empty final's stamp also removes an inflated-latency symptom. See `server/LESSONS.md` §31. The inverse of §28's join-multiple-finals.
+
 ### STT path
 
 `DeepgramSttProvider` uses the **live WebSocket** client (`ClientFactory.CreateListenWebSocketClient`) with `model=nova-3`, `language=multi`, `smart_format=true`, `interim_results=true`, `encoding=linear16`, `sample_rate=<from start msg>`, `channels=1`, and `utterance_end_ms` for segment boundaries. Emits `SttStarted` → `SttPartial*` → `SttFinal` (per segment).
@@ -847,7 +853,7 @@ The PRD requires **streaming throughout, no full-utterance blocking, live transc
 
 `OpenAiTranslationProvider` calls the **Responses API `POST /v1/responses` with `stream=true`** (Chat Completions is the documented secondary fallback). Map `response.created → TranslationStarted`; first `response.output_text.delta → translation.first_token + TranslationPartial`; subsequent deltas → `TranslationPartial`; `response.completed → TranslationFinal` (aggregated). Set **nested** `reasoning: {effort: "minimal"}` and `text: {verbosity: "low"}` to protect first-token latency against the <2s target. Read usage tokens off `response.completed` (`response.usage.input_tokens`/`output_tokens`, snake_case) for cost (Chat Completions needs `stream_options.include_usage`). System instruction = the faithful-interpreter prompt (output ONLY the translation, no framing).
 
-> **C.2 API-shape note (Step-1 verified, 2026-05-29).** On `/v1/responses` the latency params are **nested objects** — `reasoning.effort` + `text.verbosity` — **not** the top-level `reasoning_effort` field (that form is Chat-Completions-only and is rejected by the Responses API). The Responses stream has **no `[DONE]` sentinel** (unlike Chat Completions) — it ends after `response.completed`; usage lives at `response.usage.{input_tokens,output_tokens}` (snake_case, not `prompt`/`completion_tokens`). GA endpoint — Bearer auth, no `OpenAI-Beta` header. **The translation stage must stream** — the final-only-wrap allowance (below) does not apply to it. `OPENAI_TRANSLATION_MODEL` selects `gpt-5.4-nano` (default) or `gpt-5.4-mini`; the model used is recorded per turn (`TranslationModelUsed`) for comparison.
+> **C.2 API-shape note (Step-1 verified, 2026-05-29).** On `/v1/responses` the latency params are **nested objects** — `reasoning.effort` + `text.verbosity` — **not** the top-level `reasoning_effort` field (that form is Chat-Completions-only and is rejected by the Responses API). The Responses stream has **no `[DONE]` sentinel** (unlike Chat Completions) — it ends after `response.completed`; usage lives at `response.usage.{input_tokens,output_tokens}` (snake_case, not `prompt`/`completion_tokens`). GA endpoint — Bearer auth, no `OpenAI-Beta` header. **The translation stage must stream** — the final-only-wrap allowance (below) does not apply to it. `OPENAI_TRANSLATION_MODEL` selects `gpt-5-nano` (default) or `gpt-5-mini`; the model used is recorded per turn (`TranslationModelUsed`) for comparison.
 
 ### TTS path
 
@@ -1043,6 +1049,8 @@ The first-* stage metrics above carry explicit origins; the **final/complete** s
 - **`speech_end_to_first_audio_ms`** selects the present output-audio event: `tts.first_audio` (cascade) ?? `realtime.first_audio_delta` (realtime) ?? `playback.started`, else `n/a`.
 - The aggregator computes every metric from **absolute `Timestamp` subtraction**, so cross-clock pairs are wall-clock-correct and a small disclosed skew is **not** clamped; a missing endpoint event yields `n/a` (null), never an error. `LatencyEvent.relativeMs` is a per-event display value (stamped by `LatencyEventFactory` relative to a documented origin, clamped ≥ 0) — **not** a cross-event math input. Per-turn metrics are surfaced as `TurnMetrics` (area-local computed type); B.7's `SessionSummaryService` averages them into `ModeSummary`.
 
+> **049 Fix A frontend realization (2026-05-31, real-key smoke).** The frontend `deriveTurnMetrics` (web §13/§16) now **fully implements** the `speech_end_to_first_audio_ms` selection chain above (`tts.first_audio ?? realtime.first_audio_delta ?? playback.started`) — it previously read only the first source, leaving the **realtime** headline a permanent `n/a` (a doc-vs-code drift, since a realtime turn has no `tts.first_audio`). Paired fix: `playback.started`/first-audio for the session-persistent realtime pc are stamped **per-turn in the event sink** (on the first post-stop `audioDelta`), not via a session-`<audio>` once-stamp — a session-level once-latch leaked a prior turn's stamp onto a later turn, producing a **negative** `speech_end_to_playback_ms` (a within-clock stamp leak, distinct from the disclosed-not-clamped cross-clock skew). See `web/LESSONS.md` §23.
+
 ### Metric tiers
 
 - **MUST (cascade):** `turn.recording.started/stopped`, `stt.final`, `translation.final`, `tts.first_audio`, `playback.started`, `turn.completed`.
@@ -1069,7 +1077,7 @@ Load `pricing.json`; accept usage units per turn/stage; estimate per-turn + per-
 
 ```json
 {
-  "version": "2026-05-28-payg-estimates",
+  "version": "2026-05-31-payg-estimates",
   "currency": "USD",
   "disclaimer": "Estimates from configured public pricing; NOT billing-grade. Re-verify before relying on numbers.",
   "providers": {
@@ -1087,8 +1095,8 @@ Load `pricing.json`; accept usage units per turn/stage; estimate per-turn + per-
         "estimatorNote": "Convert audio seconds → tokens before applying rates; conversion factors are estimates — CONFIRM at build."
       },
       "translation": {
-        "gpt-5.4-nano": { "inputUsdPerMillionTokens": 0.20, "outputUsdPerMillionTokens": 1.25 },
-        "gpt-5.4-mini": { "inputUsdPerMillionTokens": 0.0,  "outputUsdPerMillionTokens": 0.0, "note": "CONFIRM at build — mini tier > nano." }
+        "gpt-5-nano": { "inputUsdPerMillionTokens": 0.05, "outputUsdPerMillionTokens": 0.40 },
+        "gpt-5-mini": { "inputUsdPerMillionTokens": 0.25, "outputUsdPerMillionTokens": 2.00 }
       },
       "tts": {
         "gpt-4o-mini-tts": { "pricingBasis": "audio_output_tokens", "textInputUsdPerMillionTokens": 0.60, "audioOutputUsdPerMillionTokens": 12.0, "approxUsdPerAudioMinute": 0.015 },
@@ -1105,10 +1113,10 @@ Load `pricing.json`; accept usage units per turn/stage; estimate per-turn + per-
 ### Cost estimate output
 
 ```json
-{ "provider": "openai", "model": "gpt-5.4-nano", "pricingBasis": "tokens",
+{ "provider": "openai", "model": "gpt-5-nano", "pricingBasis": "tokens",
   "estimatedUsd": 0.00009, "estimatedUsdPerMinute": 0.011,
   "units": { "inputTokens": 14, "outputTokens": 18 },
-  "pricingConfigVersion": "2026-05-28-payg-estimates",
+  "pricingConfigVersion": "2026-05-31-payg-estimates",
   "assumptions": ["Estimate from configured public pricing, not provider invoice data."] }
 ```
 
@@ -1120,7 +1128,7 @@ Use **"Estimated cost/min"**. Never an unqualified "Cost".
 
 - **Cascade per-turn cost is one composite `CostEstimate`.** A cascade turn has three priced stages (STT/translation/TTS) but the turn model + the WS `cost` message carry a single `CostEstimate` — so the estimator aggregates: `Provider="cascade"`, `Model=<translation model used>` (the cascade comparison axis, so the summary groups cascade cost by translation-model variant), `PricingBasis="composite"`, `EstimatedUsd = Σ stages`, with the per-stage breakdown in `Units`. **`"composite"` is a fifth `PricingBasis` value** beyond the four basis names in the §3 `CostEstimate` comment (`usd_per_audio_minute`/`audio_output_tokens`/`characters`/`tokens`); `PricingBasis` is a `string`, so this is a documented value, not a model change. The composite degrades wholesale (any stage's pricing missing → estimate unavailable; never a partial-garbage number).
 - **Realtime audio-seconds→tokens factor is an explicit estimate.** `CostEstimator.RealtimeTokensPerAudioSecond = 50` is an **estimate pending build-time confirmation** (the `pricing.json` `estimatorNote` flags it) — it is surfaced in every realtime estimate's `Assumptions`, never presented as billing-grade. See §16 build-time-confirm items.
-- **`0.0` configured rate ≠ absent config.** A model present in `pricing.json` with a `0.0` rate (e.g. `gpt-5.4-mini`, pending confirmation) **estimates to `0.0`** (a real, if provisional, number); only genuinely-missing config / model / usage degrades to `Result.Failure` ("estimate unavailable"). All math is `decimal`, unrounded (the UI formats).
+- **`0.0` configured rate ≠ absent config.** A model present in `pricing.json` with a `0.0` rate (a deliberately-configured placeholder/zero rate) **estimates to `0.0`** (a real, if provisional, number); only genuinely-missing config / model / usage degrades to `Result.Failure` ("estimate unavailable"). All math is `decimal`, unrounded (the UI formats).
 - **Cascade cost-usage sourcing (C.4a).** The WS endpoint assembles `CostUsage` from observable signals because the orchestrator's `CascadeOutputEvent` stream carries no raw token counts: **STT** = audio-minutes from the recording duration (`turn.recording.started`→`.stopped`); **translation** = `inputTokens`/`outputTokens` read from the **`translation.final` `LatencyEvent.Metadata`** (the orchestrator stamps them there — an existing flexible field, no contract change; tokens accumulate **additively** across multi-segment turns, not overwritten); **TTS** = a **target-character proxy** (documented assumption — `/v1/audio/speech` in `stream_format:"audio"` returns **no usage block**, so precise TTS cost is unavailable without sse-mode, which would complicate the raw-byte reader). Missing any priced stage → the composite degrades wholesale to "unavailable" (never a partial-garbage number). The TTS char-proxy is a **G.5 write-up disclosure** (cost is an estimate, and the TTS component especially so).
 - **Blob fallback does NOT price the STT stage (C.5).** The `POST /api/cascade/turn` blob path has no recording wall-clock (it's pre-recorded), and the pre-recorded `SttEvent` contract carries **no in-band audio-duration signal** — so the blob path supplies STT audio-minutes as **unsupplied**, and the composite degrades wholesale to **unavailable** for blob turns. A processing-wall-clock proxy was **rejected** (it's processing time, not audio duration — a ~30× undercount for pre-recorded, i.e. a synthetic metric the streaming-honesty posture forbids; degrade honestly per §9). The **primary streaming WS path prices fully** (its recording wall-clock ≈ live audio duration). A **G.5 write-up disclosure**. _(Tracked future fix: surface Deepgram's pre-recorded `SyncResponse.Metadata.Duration` via an additive `SttFinal` duration → `stt.final` Metadata → the cost layer, FORK-1a-style — a cross-doc `SttFinal` change, deferred at Phase-C-close.)_
 
@@ -1182,10 +1190,10 @@ Local JSON under `data/sessions/`. Filename: `session_YYYYMMDDTHHMMSSZ_<short-id
     "direction": { "source": "en", "target": "es" },
     "providerProfile": { "realtimeProvider": "openai", "realtimeModel": "gpt-realtime",
       "sttProvider": "deepgram", "sttModel": "nova-3", "sttLanguage": "multi",
-      "translationProvider": "openai", "translationModel": "gpt-5.4-nano",
+      "translationProvider": "openai", "translationModel": "gpt-5-nano",
       "ttsProvider": "openai", "ttsModel": "gpt-4o-mini-tts", "ttsVoice": "alloy" } },
   "turns": [], "modeTransitions": [], "summary": null,
-  "pricingConfigVersion": "2026-05-28-payg-estimates" }
+  "pricingConfigVersion": "2026-05-31-payg-estimates" }
 ```
 
 ### Write strategy & tiers
@@ -1283,7 +1291,7 @@ OPENAI_API_KEY=                       # standard key — backend only, never to 
 OPENAI_REALTIME_MODEL=gpt-realtime    # or gpt-realtime-mini
 OPENAI_REALTIME_VOICE=alloy
 OPENAI_REALTIME_TRANSCRIPTION_MODEL=gpt-4o-transcribe
-OPENAI_TRANSLATION_MODEL=gpt-5.4-nano # or gpt-5.4-mini
+OPENAI_TRANSLATION_MODEL=gpt-5-nano # or gpt-5-mini
 OPENAI_TTS_MODEL=gpt-4o-mini-tts
 OPENAI_TTS_VOICE=alloy
 OPENAI_TTS_FORMAT=mp3
@@ -1350,7 +1358,7 @@ These do not block task generation; each resolves at build time against the cite
 | 1 | Is `gpt-realtime` (and `gpt-realtime-mini`) available in the target OpenAI account? | Project owner | ARCH-010 | Open — confirm with account/keys |
 | 2 | Are Realtime input-transcription deltas reliably available with the chosen session config? If not, mark `realtime.first_transcript_delta`/source transcript optional and degrade the UI gracefully. | Build | ARCH-010, ARCH-013 | Open — verify at integration |
 | 3 | Confirm browser capture format + that no transcoding is needed end-to-end (streaming PCM + pre-recorded fallback). | Build | ARCH-030, ARCH-011 | Mostly resolved — verify on target browsers |
-| 4 | Re-verify all `pricing.json` values (esp. `gpt-5.4-mini`, realtime audio-token conversion factors) at build time. | Build | ARCH-014 | Open — values are estimates |
+| 4 | Re-verify realtime audio-token conversion factors at build time; translation rates CONFIRMED real on the user's key 2026-05-31 (`gpt-5-nano` 0.05/0.40, `gpt-5-mini` 0.25/2.00). | Build | ARCH-014 | Partial — translation confirmed; realtime conversion factor still an estimate |
 | 5 | Deepgram live-WS vs pre-recorded: live-WS is the MUST path; pre-recorded is the documented fallback. | Resolved | ARCH-011 | Resolved |
 
 ---
@@ -1453,4 +1461,4 @@ Backend seams + tests before UI polish; the two highest-risk integrations (Realt
 
 ## Appendix C — Gap-Audit Record (provenance)
 
-This document is the finalized output of a gap audit against the PRD (handoff `CLAUDE_CODE_HANDOFF.md`). Current external-API facts (OpenAI Realtime GA `client_secrets` + `/v1/realtime/calls`, VAD-off manual turns, Responses-API streamed translation with `gpt-5.4` small tier, OpenAI TTS chunk streaming, Deepgram `nova-3`+`multi` .NET SDK + no-transcoding, browser MediaRecorder/AudioWorklet, May-2026 pricing) were verified against current provider documentation during the audit; all values remain configurable and are re-confirmed at build time per §16.
+This document is the finalized output of a gap audit against the PRD (handoff `CLAUDE_CODE_HANDOFF.md`). Current external-API facts (OpenAI Realtime GA `client_secrets` + `/v1/realtime/calls`, VAD-off manual turns, Responses-API streamed translation with `gpt-5` small tier, OpenAI TTS chunk streaming, Deepgram `nova-3`+`multi` .NET SDK + no-transcoding, browser MediaRecorder/AudioWorklet, May-2026 pricing) were verified against current provider documentation during the audit; all values remain configurable and are re-confirmed at build time per §16.

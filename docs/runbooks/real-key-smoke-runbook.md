@@ -15,7 +15,7 @@ Two **standard provider keys**, both **server-side only** (SAFETY invariant #1 �
 | Provider | Used for | Models exercised |
 |---|---|---|
 | **Deepgram** | Cascade STT | `nova-3` (`multi`) |
-| **OpenAI** | Cascade translation + TTS, Realtime | translation `gpt-5.4-nano` / `gpt-5.4-mini`; TTS `gpt-4o-mini-tts`; Realtime `gpt-realtime` / `gpt-realtime-mini` |
+| **OpenAI** | Cascade translation + TTS, Realtime | translation `gpt-5-nano` / `gpt-5-mini`; TTS `gpt-4o-mini-tts`; Realtime `gpt-realtime` / `gpt-realtime-mini` |
 
 ```bash
 # From the repo root — create your local .env (gitignored; NEVER commit it)
@@ -87,7 +87,7 @@ Run each test; record the numbers in the **§5 Capture Table**. The pass targets
 For every turn: **Start session** (a labelled session, e.g. `smoke-2026-05-31`), pick the mode + direction in Setup, then **Start recording → speak the phrase → Stop**. Watch the live transcript + the metrics/cost panels populate.
 
 ### T1 — Cascade, EN→ES
-- Setup: mode **Cascade**, direction **EN→ES**, translation model **gpt-5.4-nano** (default).
+- Setup: mode **Cascade**, direction **EN→ES**, translation model **gpt-5-nano** (default).
 - Action: record an EN phrase → Stop.
 - Capture: **stt.first_partial / stt.final**, **translation.first_token / final**, **tts.first_audio** (per-stage ms); the **end-to-end** speech-end→first-audio if shown; **estimated cost/min**; confirm **source + target transcripts streamed live** (not one-shot).
 - Pass target: end-to-end **< 3s** (< 2s ideal); audible ES playback; per-stage numbers all present.
@@ -116,7 +116,7 @@ For every turn: **Start session** (a labelled session, e.g. `smoke-2026-05-31`),
 ### T7 — Both model variants (the comparison's point)
 Re-run a short turn under each alternate variant so the comparison has both:
 - **Realtime mini:** set realtime model to **gpt-realtime-mini** (Setup selector, or `OPENAI_REALTIME_MODEL=gpt-realtime-mini` + restart) → 1 turn → capture cost/min + latency.
-- **Translation mini:** set translation model to **gpt-5.4-mini** (Setup selector, or `OPENAI_TRANSLATION_MODEL=gpt-5.4-mini` + restart) → 1 Cascade turn → capture cost/min + latency.
+- **Translation mini:** set translation model to **gpt-5-mini** (Setup selector, or `OPENAI_TRANSLATION_MODEL=gpt-5-mini` + restart) → 1 Cascade turn → capture cost/min + latency.
 - PASS = a cost/min number for each of the **4 variants** (realtime gpt-realtime / -mini; cascade nano / -mini).
 
 ---
@@ -151,8 +151,8 @@ Record PASS/FAIL + any observation per check in the §5 table. (If a leak/drift 
 |---|---|---|---|
 | Realtime | gpt-realtime | ____ | ▢ |
 | Realtime | gpt-realtime-mini | ____ | ▢ |
-| Cascade | gpt-5.4-nano | ____ | ▢ |
-| Cascade | gpt-5.4-mini | ____ | ▢ |
+| Cascade | gpt-5-nano | ____ | ▢ |
+| Cascade | gpt-5-mini | ____ | ▢ |
 
 ### Quality + counts
 | | Realtime | Cascade | → G.5 §3.3 |
@@ -202,7 +202,7 @@ grep -iE 'sk-|"apikey"|"clientsecret"|ek_|"audio"\s*:\s*"[A-Za-z0-9+/]{40,}|"byt
 | **Realtime won't connect** (WebRTC) | network/firewall blocks WebRTC, or the `ek_` mint failed | check `POST /api/realtime/client-secret` succeeded (Network tab); the documented fallback is to **use Cascade** for the demo (the UI advises this on a disconnect) |
 | **Cascade WS won't connect / no transcripts** | WS blocked, or STT key issue | check the `/api/cascade/stream` WS in the Network tab; the documented fallback is the **blob path** (`POST /api/cascade/turn`, MSE/Chromium) |
 | **TTS output feeds back into the mic** | speakers + open mic | use a headset |
-| `gpt-5.4-mini` cost shows **$0.00** | its `pricing.json` rate may still be a placeholder `0.0` | note it in the write-up (a real $0.00 from a 0-rate is disclosed, not a measurement) — re-verify `config/pricing.json` if the mini cost matters |
+| `gpt-5-mini` translation cost looks wrong | `pricing.json` version/rates out of sync | confirm `config/pricing.json` shows version `2026-05-31-payg-estimates`, `gpt-5-mini` 0.25/2.00 |
 
 ---
 

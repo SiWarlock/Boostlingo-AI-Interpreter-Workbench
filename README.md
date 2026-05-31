@@ -15,7 +15,7 @@ Two interpretation modes behind one mode-agnostic UI:
 | | **Realtime** | **Cascade** |
 |---|---|---|
 | Transport | Browser **WebRTC** to OpenAI, authorized by a backend-minted ephemeral credential (`ek_…`) | A fully **streaming** pipeline: live mic → STT → translation → TTS |
-| Models | `gpt-realtime` / `gpt-realtime-mini` | Deepgram `nova-3` (`multi`) STT → OpenAI `gpt-5.4-nano`/`-mini` translation → OpenAI `gpt-4o-mini-tts` |
+| Models | `gpt-realtime` / `gpt-realtime-mini` | Deepgram `nova-3` (`multi`) STT → OpenAI `gpt-5-nano`/`-mini` translation → OpenAI `gpt-4o-mini-tts` |
 | Latency profile | One end-to-end model hop | Per-stage (STT partial → translation token → TTS first-audio), each measured |
 
 The shared evidence layer: a normalized `LatencyEvent` schema, a config-driven cost estimator, a scripted **WER** utility, and local JSON session files (**no raw audio, no secrets**). A standalone **Evaluation panel** scores STT against scripted phrases; a **Comparison summary** aggregates latency/cost/WER **by mode and by model variant**.
@@ -62,7 +62,7 @@ The SPA calls `GET /api/config` on load and **disables any mode whose provider k
 | `OPENAI_API_KEY` | OpenAI standard key — backend only (Realtime mint, translation, TTS). Never sent to the browser. |
 | `DEEPGRAM_API_KEY` | Deepgram standard key — backend only (Cascade STT). |
 | `OPENAI_REALTIME_MODEL` | `gpt-realtime` or `gpt-realtime-mini` |
-| `OPENAI_TRANSLATION_MODEL` | `gpt-5.4-nano` or `gpt-5.4-mini` |
+| `OPENAI_TRANSLATION_MODEL` | `gpt-5-nano` or `gpt-5-mini` |
 | `OPENAI_TTS_MODEL` / `OPENAI_TTS_VOICE` / `OPENAI_TTS_FORMAT` | Cascade TTS config |
 | `DEEPGRAM_STT_MODEL` / `DEEPGRAM_STT_LANGUAGE` | Cascade STT config (`nova-3` / `multi`) |
 | `*_TIMEOUT_SECONDS` | Per-stage timeouts (STT / translation / TTS / realtime-token) |
@@ -72,6 +72,8 @@ The SPA calls `GET /api/config` on load and **disables any mode whose provider k
 | `EVALUATION_PHRASES_PATH` | Override for the scripted WER phrases (defaults to the shipped file) |
 
 The full list with defaults is in [`.env.example`](.env.example).
+
+> **Clean-clone gotcha:** the configured provider models must be available **on _your_ OpenAI key**. The defaults `gpt-5-nano` / `gpt-5-mini` are broadly available; if a request 400s on a model, that's an account-availability issue (the model name is valid), **not** a config bug — switch `OPENAI_TRANSLATION_MODEL` to a model your key can use.
 
 ---
 
