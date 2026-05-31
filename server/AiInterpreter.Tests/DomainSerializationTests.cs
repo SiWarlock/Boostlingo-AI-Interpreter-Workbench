@@ -95,6 +95,28 @@ public class DomainSerializationTests
         Assert.Equal(session.Turns[0].Errors[0].Code, back.Turns[0].Errors[0].Code);
     }
 
+    // F.4 — the new IsEvaluation marker serializes camelCase ("isEvaluation"), defaults false on a normal
+    // turn, and round-trips true through JsonDefaults (the persisted-JSON contract changed — ARCH-005/016).
+    [Fact]
+    public void is_evaluation_round_trips_through_json()
+    {
+        var normalTurn = BuildFullSession().Turns[0];              // constructed without the arg → default
+        var evalTurn = normalTurn with { IsEvaluation = true };
+
+        using var normalDoc = JsonDocument.Parse(JsonSerializer.Serialize(normalTurn, Json));
+        Assert.True(normalDoc.RootElement.TryGetProperty("isEvaluation", out var normalFlag)); // camelCase key
+        Assert.False(normalFlag.GetBoolean());                    // default false (interpretation turn)
+
+        var evalJson = JsonSerializer.Serialize(evalTurn, Json);
+        using var evalDoc = JsonDocument.Parse(evalJson);
+        Assert.True(evalDoc.RootElement.GetProperty("isEvaluation").GetBoolean());
+
+        var back = JsonSerializer.Deserialize<InterpretationTurn>(evalJson, Json);
+        Assert.NotNull(back);
+        Assert.True(back!.IsEvaluation);                          // round-trips true
+        Assert.Equal(evalJson, JsonSerializer.Serialize(back, Json));
+    }
+
     [Fact]
     public void nullable_fields_behave()
     {

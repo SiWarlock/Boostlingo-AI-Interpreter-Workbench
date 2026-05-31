@@ -220,6 +220,32 @@ public sealed class EvaluationServiceTests
         Assert.Equal(0.0, stored.WerResult!.Wer);
     }
 
+    // ---- F.4: the /wer attach marks the turn IsEvaluation atomically with the WerResult ----
+
+    // A turnId'd WER compute flips IsEvaluation=true on the SAME read-modify-write that attaches the
+    // WerResult — so a WER-scored turn is marked an evaluation turn at the defining moment (then
+    // SessionSummaryService excludes it from the per-mode comparison). The marker and the score are
+    // set in one transform — never one without the other.
+    [Fact]
+    public async Task wer_with_turn_id_marks_turn_is_evaluation()
+    {
+        var clock = new FixedClock();
+        var store = new SessionStore(clock);
+        var session = store.Create(SampleConfig(), "v-test");
+        var turn = store.CreateTurn(session.SessionId)!;
+        Assert.False(turn.IsEvaluation); // precondition: a freshly created turn is not an eval turn
+        var service = Service(PhraseStore(Phrase("en-001", "hello world")), store,
+            new SessionPersistenceWriter(NewTempDir()));
+
+        var outcome = await service.ComputeWerAsync(
+            new WerRequest(session.SessionId, turn.TurnId, "en-001", "hello world"), default);
+
+        Assert.Equal(EvaluationWerStatus.Computed, outcome.Status);
+        var stored = store.Get(session.SessionId)!.Turns.Single(t => t.TurnId == turn.TurnId);
+        Assert.True(stored.IsEvaluation);   // marked at the eval-defining moment...
+        Assert.NotNull(stored.WerResult);   // ...atomically with the score
+    }
+
     // ---- #8 unknown turnId -> not found ----
 
     [Fact]
@@ -276,7 +302,8 @@ public sealed class EvaluationServiceTests
         Assert.Equal(EvaluationWerStatus.Computed, outcome.Status);
         Assert.Null(outcome.Persist);
         var stored = store.Get(session.SessionId)!.Turns.Single(t => t.TurnId == turn.TurnId);
-        Assert.Null(stored.WerResult); // untouched
+        Assert.Null(stored.WerResult);       // untouched
+        Assert.False(stored.IsEvaluation);   // F.4: the marker is set ONLY on the turnId attach path, not on bare compute
     }
 
     // ---- Feature B: transcribe (STT-only) ----

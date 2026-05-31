@@ -427,4 +427,43 @@ public class SessionsControllerTests : IDisposable
 
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
     }
+
+    // ===== F.4 — eval-turn exclusion, end-to-end (Step 7.5 wiring) =====
+
+    // 18 — a real session with 2 interpretation turns + 1 WER-scored eval turn (created like F.2's panel
+    // does: POST /turns then POST /wer with that turnId) → GET /summary's per-mode turnCount EXCLUDES the
+    // eval turn (the comparison is exact), while the session-level WerSummary INCLUDES its score. Proves
+    // the IsEvaluation marker is set at /wer and observed by SummarizeMode on the real HTTP path.
+    [Fact]
+    public async Task summary_endpoint_excludes_eval_turn_e2e()
+    {
+        using var factory = Factory(TempDir());
+        var (client, sessionId) = await CreatedSession(factory); // cascade mode
+
+        await CreateTurn(client, sessionId);                     // interpretation turn 1
+        await CreateTurn(client, sessionId);                     // interpretation turn 2
+        var evalTurnId = await CreateTurn(client, sessionId);    // the to-be eval turn (cascade mode)
+
+        // Mark the third turn an evaluation turn by scoring WER against it (F.2's exact flow).
+        var phrases = await (await client.GetAsync("/api/evaluation/phrases"))
+            .Content.ReadFromJsonAsync<JsonElement>();
+        var phraseId = phrases[0].GetProperty("phraseId").GetString()!;
+        var reference = phrases[0].GetProperty("referenceText").GetString()!;
+        var wer = await client.PostAsJsonAsync("/api/evaluation/wer", new
+        {
+            sessionId,
+            turnId = evalTurnId,
+            phraseId,
+            hypothesis = reference,
+        });
+        wer.EnsureSuccessStatusCode();
+
+        using var doc = JsonDocument.Parse(
+            await (await client.GetAsync($"/api/sessions/{sessionId}/summary")).Content.ReadAsStringAsync());
+        var root = doc.RootElement;
+
+        Assert.Equal(3, root.GetProperty("turnCount").GetInt32());                  // top-level counts all turns
+        Assert.Equal(2, root.GetProperty("cascade").GetProperty("turnCount").GetInt32()); // per-mode excludes eval
+        Assert.Equal(1, root.GetProperty("wer").GetProperty("sampleCount").GetInt32());    // WER keeps it
+    }
 }

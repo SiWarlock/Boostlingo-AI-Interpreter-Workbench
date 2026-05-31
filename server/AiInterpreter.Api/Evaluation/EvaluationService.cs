@@ -101,8 +101,11 @@ public sealed class EvaluationService
 
         // Q1=(a): attach to the turn + best-effort persist so the WER reaches the session JSON for F.3.
         // UpdateTurn is unconditional (FinalizeTurn would refuse an already-terminal turn); null =>
-        // unknown session/turn (404 — don't silently drop a persist target).
-        var updated = _store.UpdateTurn(request.SessionId, request.TurnId, turn => turn with { WerResult = wer });
+        // unknown session/turn (404 — don't silently drop a persist target). F.4: mark IsEvaluation in the
+        // SAME transform — a WER-scored turn IS an evaluation turn (SessionSummaryService excludes it from
+        // the per-mode comparison). The marker and the score are set atomically, never one without the other.
+        var updated = _store.UpdateTurn(
+            request.SessionId, request.TurnId, turn => turn with { WerResult = wer, IsEvaluation = true });
         if (updated is null)
         {
             return EvaluationWerOutcome.TurnNotFound();

@@ -35,10 +35,13 @@ public sealed class SessionSummaryService
             ComputedAt: _clock.UtcNow,
             PricingConfigVersion: session.PricingConfigVersion);
 
-    // A ModeSummary exists iff the mode has >= 1 turn; an empty mode -> null (not a zero-filled record).
+    // A ModeSummary exists iff the mode has >= 1 INTERPRETATION turn; an empty mode -> null (not a
+    // zero-filled record). F.4: standalone WER-evaluation turns (IsEvaluation) are excluded here so the
+    // Realtime-vs-Cascade comparison's TurnCount, latency/cost averages, AND ErrorCount reflect real
+    // interpretation turns only — one filter covers every per-mode field. (SummarizeWer keeps them.)
     private ModeSummary? SummarizeMode(IReadOnlyList<InterpretationTurn> allTurns, InterpretationMode mode)
     {
-        var turns = allTurns.Where(t => t.Mode == mode).ToList();
+        var turns = allTurns.Where(t => t.Mode == mode && !t.IsEvaluation).ToList();
         if (turns.Count == 0)
         {
             return null;

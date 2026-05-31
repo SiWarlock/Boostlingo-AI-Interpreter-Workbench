@@ -256,6 +256,20 @@ public class SessionPersistenceTests : IDisposable
         Assert.Null(store.Get("session_missing"));
     }
 
+    // 8b — F.4: a freshly created turn is NOT an evaluation turn (IsEvaluation default false). Only the
+    // /wer attach flips it (EvaluationService); an interpretation turn never gets marked at creation.
+    [Fact]
+    public void created_turn_defaults_is_evaluation_false()
+    {
+        var store = new SessionStore(new FakeClock(T));
+        var session = store.Create(BuildFullSession().Config, "2026-05-28-payg-estimates");
+
+        var turn = store.CreateTurn(session.SessionId);
+
+        Assert.NotNull(turn);
+        Assert.False(turn!.IsEvaluation);
+    }
+
     // 9 — store: End stamps EndedAt from the clock; mode transitions are recorded. (acceptance: end
     // a session, record mode transitions)
     [Fact]

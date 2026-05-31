@@ -79,7 +79,12 @@ public sealed record InterpretationTurn(
     List<ProviderError> Errors,
     TurnStatus Status,
     string? TranslationModelUsed,
-    string? TtsVoiceUsed);
+    string? TtsVoiceUsed,
+    // F.4: true for a standalone WER-evaluation turn (set server-side at POST /api/evaluation/wer).
+    // SessionSummaryService EXCLUDES these from the per-mode ModeSummary (so the Realtime-vs-Cascade
+    // comparison counts only interpretation turns) but KEEPS them in WerSummary. Trailing + defaulted
+    // so existing construction/`with` sites stay green and old session JSON (no key) deserializes false.
+    bool IsEvaluation = false);
 
 public sealed record TranscriptSegment(
     string SegmentId,

@@ -287,4 +287,42 @@ public class SessionSummaryServiceTests
         Assert.Null(session.Summary);                        // ...without writing the snapshot (B.9 owns /end)
         Assert.Equal(turnCountBefore, session.Turns.Count);  // source turn list left untouched
     }
+
+    // F.4 — 11: a standalone WER-evaluation turn (IsEvaluation=true) is EXCLUDED from the per-mode
+    // ModeSummary across ALL its fields — TurnCount, the averages, AND ErrorCount — so F.3's
+    // Realtime-vs-Cascade comparison counts only real interpretation turns (the user-requested fix).
+    [Fact]
+    public void summarize_mode_excludes_evaluation_turns()
+    {
+        // 2 real cascade interpretation turns (stt 200/400, no errors) + 1 cascade eval turn whose
+        // skewing stt (9999ms) + 5 errors would corrupt every per-mode field if it were counted.
+        var evalTurn = CascadeTurn("eval1", sttFinalMs: 9999, errorCount: 5) with { IsEvaluation = true };
+        var summary = Service().Compute(Session(
+            CascadeTurn("t1", sttFinalMs: 200),
+            CascadeTurn("t2", sttFinalMs: 400),
+            evalTurn));
+
+        Assert.Equal(3, summary.TurnCount);    // top-level counts ALL turns incl. eval (Q1); only per-mode excludes
+        var c = summary.Cascade!;
+        Assert.Equal(2, c.TurnCount);          // the eval turn is not an interpretation turn → not 3
+        Assert.Equal(300, c.AvgSttFinalMs);    // (200+400)/2 — NOT (200+400+9999)/3
+        Assert.Equal(0, c.ErrorCount);         // the eval turn's 5 errors are excluded too
+    }
+
+    // F.4 — 12: the SAME eval turn that ModeSummary excludes is STILL included in the session-level
+    // WerSummary — eval turns are where the WER comes from, so the exclusion is per-mode ONLY.
+    [Fact]
+    public void summarize_wer_still_includes_evaluation_turns()
+    {
+        var evalTurn = CascadeTurn("eval1", wer: 0.3) with { IsEvaluation = true };
+        var summary = Service().Compute(Session(
+            CascadeTurn("t1", wer: null),
+            CascadeTurn("t2", wer: null),
+            evalTurn));
+
+        Assert.Equal(2, summary.Cascade!.TurnCount);  // eval turn excluded from the per-mode count...
+        Assert.NotNull(summary.Wer);
+        Assert.Equal(1, summary.Wer!.SampleCount);     // ...but its WER is the one WER sample
+        Assert.Equal(0.3, summary.Wer.AvgWer);
+    }
 }
