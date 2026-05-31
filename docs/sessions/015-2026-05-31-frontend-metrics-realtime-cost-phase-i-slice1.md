@@ -4,7 +4,7 @@
 - **Phase:** G.4 (real-key-smoke bug-fix arc) + 053-C (realtime metrics/cost) + Phase I (auto-VAD, realtime half)
 - **Area:** frontend (`web/`)
 - **Predecessor:** [014 — H.1 UI baseline + G.4 frontend bug-fixes](014-2026-05-31-h1-ui-baseline-and-g4-frontend-bugfixes.md)
-- **Successor:** _(next FE session — picks up 063 slice 2; TBD)_
+- **Successor:** [017 — Phase-I realtime/cascade auto-VAD, H.3 history, + the realtime DC-open P0](017-2026-05-31-frontend-phase-i-realtime-cascade-autovad-history.md)
 
 > Implementer session doc (technical close-out only). `MVP_TASKS.md` / `web/LESSONS.md` / `web/CLAUDE.md` / `ARCHITECTURE.md` are orchestrator-owned and untouched here. Cross-doc + lesson items are **surfaced** below for `/orchestrate-end` (the orchestrator is hot-routing them — `ARCHITECTURE.md`/`web/CLAUDE.md`/`web/LESSONS.md` show as modified in the working tree).
 
