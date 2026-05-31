@@ -78,6 +78,7 @@ describe('ComparisonSummary', () => {
     vi.mocked(loadComparison).mockResolvedValue({
       summary: summary(),
       byVariant: [],
+      models: null,
     } as ComparisonData)
     sessionStore.sessionStarted(activeSession())
 
@@ -92,10 +93,43 @@ describe('ComparisonSummary', () => {
     expect(screen.getByText(/Avg WER:\s*25\.0%/)).toBeInTheDocument()
   })
 
+  it('attributes the model per mode on the cards (from providerProfile — cost-independent, 056 bug 6)', async () => {
+    vi.mocked(loadComparison).mockResolvedValue({
+      summary: summary(),
+      byVariant: [],
+      models: { cascade: 'gpt-5-nano', realtime: 'gpt-realtime' },
+    } as ComparisonData)
+    sessionStore.sessionStarted(activeSession())
+
+    render(<ComparisonSummary />)
+
+    const realtime = await screen.findByLabelText('Realtime-summary')
+    const cascade = screen.getByLabelText('Cascade-summary')
+    // model identity surfaced on the mode cards (independent of the cost-by-variant table below)
+    expect(within(realtime).getByText(/Model:\s*gpt-realtime/i)).toBeInTheDocument()
+    expect(within(cascade).getByText(/Model:\s*gpt-5-nano/i)).toBeInTheDocument()
+  })
+
+  it('renders "Model: n/a" on the cards when models is null (getSession degraded — 056 bug 6)', async () => {
+    vi.mocked(loadComparison).mockResolvedValue({
+      summary: summary(),
+      byVariant: null,
+      models: null,
+    } as ComparisonData)
+    sessionStore.sessionStarted(activeSession())
+
+    render(<ComparisonSummary />)
+
+    const cascade = await screen.findByLabelText('Cascade-summary')
+    // the model line degrades to n/a (never blank/crash) when the session source failed
+    expect(within(cascade).getByText(/Model:\s*n\/a/i)).toBeInTheDocument()
+  })
+
   it('renders n/a (never 0) for a missing ModeSummary latency field', async () => {
     vi.mocked(loadComparison).mockResolvedValue({
       summary: summary(),
       byVariant: [],
+      models: null,
     } as ComparisonData)
     sessionStore.sessionStarted(activeSession())
 
@@ -112,7 +146,7 @@ describe('ComparisonSummary', () => {
       { mode: 'cascade', model: 'gpt-5-nano', avgCostPerMinuteUsd: 0.3, turnCount: 2 },
       { mode: 'realtime', model: 'gpt-realtime', avgCostPerMinuteUsd: 0.5, turnCount: 1 },
     ]
-    vi.mocked(loadComparison).mockResolvedValue({ summary: summary(), byVariant })
+    vi.mocked(loadComparison).mockResolvedValue({ summary: summary(), byVariant, models: null })
     sessionStore.sessionStarted(activeSession())
 
     render(<ComparisonSummary />)
@@ -124,7 +158,11 @@ describe('ComparisonSummary', () => {
   })
 
   it('renders "Per-variant cost unavailable." when the per-variant source failed (byVariant null)', async () => {
-    vi.mocked(loadComparison).mockResolvedValue({ summary: summary(), byVariant: null })
+    vi.mocked(loadComparison).mockResolvedValue({
+      summary: summary(),
+      byVariant: null,
+      models: null,
+    })
     sessionStore.sessionStarted(activeSession())
 
     render(<ComparisonSummary />)
@@ -136,6 +174,7 @@ describe('ComparisonSummary', () => {
     vi.mocked(loadComparison).mockResolvedValue({
       summary: summary(),
       byVariant: [],
+      models: null,
     } as ComparisonData)
     sessionStore.sessionStarted(activeSession())
 
@@ -156,6 +195,7 @@ describe('ComparisonSummary', () => {
     vi.mocked(loadComparison).mockResolvedValue({
       summary: { ...summary(), turnCount: 0 },
       byVariant: [],
+      models: null,
     } as ComparisonData)
     sessionStore.sessionStarted(activeSession())
 
@@ -171,6 +211,7 @@ describe('ComparisonSummary', () => {
     vi.mocked(loadComparison).mockResolvedValue({
       summary: { ...summary(), realtime: null },
       byVariant: [],
+      models: null,
     } as ComparisonData)
     sessionStore.sessionStarted(activeSession())
 

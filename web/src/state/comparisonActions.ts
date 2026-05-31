@@ -21,8 +21,14 @@ export type ComparisonDeps = {
 }
 
 // byVariant === null signals the per-variant source (GET /session) failed/unavailable; [] means it ran
-// but no turn was priced. The two are rendered distinctly (degraded vs empty).
-export type ComparisonData = { summary: SessionSummary; byVariant: VariantCost[] | null }
+// but no turn was priced. The two are rendered distinctly (degraded vs empty). `models` attributes the
+// model per mode (056 bug 6) from the session providerProfile — INDEPENDENT of cost (which may be absent,
+// bug 5) so the comparison can name models regardless; null when GET /session failed (shares its source).
+export type ComparisonData = {
+  summary: SessionSummary
+  byVariant: VariantCost[] | null
+  models: { cascade: string; realtime: string } | null
+}
 
 function toUiError(error: unknown, fallback: UiError): UiError {
   return error instanceof ApiError ? error.uiError : fallback
@@ -49,12 +55,19 @@ export async function loadComparison(deps: ComparisonDeps): Promise<ComparisonDa
     return null
   }
 
-  // The per-variant cost split, derived from the canonical persisted turns. Degrades INDEPENDENTLY —
-  // a session fetch failure leaves byVariant null but the per-mode comparison above still renders.
+  // The per-variant cost split + the per-mode model attribution, both from the canonical persisted session.
+  // Degrades INDEPENDENTLY — a session fetch failure leaves byVariant + models null but the per-mode
+  // comparison above still renders.
   let byVariant: VariantCost[] | null
+  let models: ComparisonData['models']
   try {
     const session = await deps.api.getSession(sessionId)
     byVariant = aggregateCostByVariant(session.turns.map(toComparisonTurn))
+    // Model identity per mode, independent of cost (bug 6): cascade = translation model, realtime = realtime model.
+    models = {
+      cascade: session.config.providerProfile.translationModel,
+      realtime: session.config.providerProfile.realtimeModel,
+    }
   } catch (error) {
     deps.store.addError(
       toUiError(error, {
@@ -64,7 +77,8 @@ export async function loadComparison(deps: ComparisonDeps): Promise<ComparisonDa
       }),
     )
     byVariant = null
+    models = null
   }
 
-  return { summary, byVariant }
+  return { summary, byVariant, models }
 }

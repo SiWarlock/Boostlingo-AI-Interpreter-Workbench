@@ -27,10 +27,12 @@ function ModeColumn({
   label,
   color,
   mode,
+  model,
 }: {
   label: string
   color: 'blue' | 'violet'
   mode: ModeSummary | null | undefined
+  model: string | null | undefined
 }) {
   return (
     <div className={`cmp-mode-card ${color}`} aria-label={`${label}-summary`}>
@@ -43,6 +45,8 @@ function ModeColumn({
       ) : (
         <>
           <p className="cmp-line">{`Turns: ${mode.turnCount}`}</p>
+          {/* Model attribution (056 bug 6) — from providerProfile, cost-independent; n/a when degraded. */}
+          <p className="cmp-line">{`Model: ${model ?? 'n/a'}`}</p>
           <p className="cmp-line">{`Errors: ${mode.errorCount}`}</p>
           <p className="cmp-line">{`Cost/min: ${formatUsdPerMinute(mode.estimatedCostPerMinuteUsd)}`}</p>
           <p className="cmp-line">{`Speech→first audio: ${formatMs(mode.avgSpeechEndToFirstAudioMs)}`}</p>
@@ -92,7 +96,7 @@ export default function ComparisonSummary() {
     )
   }
 
-  const { summary, byVariant } = data
+  const { summary, byVariant, models } = data
 
   return (
     <section className="cmp-card card-pad" aria-label="comparison-summary">
@@ -105,8 +109,13 @@ export default function ComparisonSummary() {
       </div>
 
       <div className="cmp-grid">
-        <ModeColumn label="Realtime" color="blue" mode={summary.realtime} />
-        <ModeColumn label="Cascade" color="violet" mode={summary.cascade} />
+        <ModeColumn
+          label="Realtime"
+          color="blue"
+          mode={summary.realtime}
+          model={models?.realtime}
+        />
+        <ModeColumn label="Cascade" color="violet" mode={summary.cascade} model={models?.cascade} />
       </div>
 
       <div aria-label="wer-summary" style={{ marginTop: 14 }}>

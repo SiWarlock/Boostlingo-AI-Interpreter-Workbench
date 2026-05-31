@@ -114,6 +114,21 @@ describe('loadComparison', () => {
     expect(store.getState().errors).toEqual([])
   })
 
+  it('extracts the per-mode models from the session providerProfile (cost-independent attribution)', async () => {
+    // bug 6 (056): attribute the model per mode INDEPENDENT of cost (cost is absent — bug 5), so the
+    // comparison cards + write-up can name models. cascade=translationModel, realtime=realtimeModel.
+    const store = createSessionStore()
+    store.sessionStarted(wireSession())
+    const api = {
+      getSummary: vi.fn().mockResolvedValue(summary()),
+      getSession: vi.fn().mockResolvedValue(wireSession()),
+    }
+
+    const result = await loadComparison({ store, api })
+
+    expect(result?.models).toEqual({ cascade: 'gpt-5-nano', realtime: 'gpt-realtime' })
+  })
+
   it('routes a summary fetch error to the store and returns null (no headline → no comparison)', async () => {
     const store = createSessionStore()
     store.sessionStarted(wireSession())
@@ -151,6 +166,7 @@ describe('loadComparison', () => {
 
     expect(result?.summary.turnCount).toBe(2) // per-mode headline still renders
     expect(result?.byVariant).toBeNull() // the variant source degraded independently
+    expect(result?.models).toBeNull() // models share the getSession source → also null on its failure
     expect(store.getState().errors).toContainEqual(uiError)
   })
 
