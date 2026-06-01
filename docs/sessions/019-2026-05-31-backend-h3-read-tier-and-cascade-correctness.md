@@ -4,7 +4,7 @@
 - **Phase:** H.3-backend (session-history read tier) + G.4 cascade-correctness (metrics/cost) + a history-UX enhancement
 - **Area:** backend (`server/`)
 - **Predecessor:** [016 — Backend: mode-switch / .env loader / cost-correctness arc / Phase-I cascade auto-VAD](016-2026-05-31-backend-cost-arc-and-phase-i-cascade-autovad.md)
-- **Successor:** _(next BE session — picks up the bidirectional EN↔ES backend half; the orchestrator is designing its load-bearing sub-decision: two realtime sessions vs in-session per-turn direction switch)_
+- **Successor:** [021-2026-06-01-backend-bidirectional-and-autovad-empty-fix.md](021-2026-06-01-backend-bidirectional-and-autovad-empty-fix.md) (Phase-J bidirectional BE half — cascade detect+flip, realtime instruction — + the auto-VAD empty-silence smoke fix)
 
 > Implementer session doc (technical close-out only). `MVP_TASKS.md` / `server/LESSONS.md` / `server/CLAUDE.md` / `ARCHITECTURE.md` are orchestrator-owned; the Step-9 items below are **surfaced** for `/orchestrate-end` (hot-routed during the session; the round-seal commits already landed — working tree clean). Cycling at a clean round boundary (fresh implementer pair for the bidirectional build).
 
