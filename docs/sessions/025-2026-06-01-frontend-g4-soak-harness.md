@@ -1,4 +1,4 @@
-# Session 024 — Frontend: G.4 Synthetic Soak-Harness (087–093)
+# Session 025 — Frontend: G.4 Synthetic Soak-Harness (087–093)
 
 - **Date:** 2026-06-01
 - **Phase:** G.4 (5-minute synthetic soak-harness, frontend)

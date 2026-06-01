@@ -4,7 +4,7 @@
 **Phase:** Phase J (Bidirectional) — FE half + the Phase-J live-smoke fix cluster (Finding 1 + Finding 2 FE halves).
 **Role:** frontend implementer (`web/`).
 **Predecessor:** [018-2026-05-31-frontend-realtime-revival-h3-drillin-cost-polish.md](018-2026-05-31-frontend-realtime-revival-h3-drillin-cost-polish.md)
-**Successor:** [024 — frontend G.4 synthetic soak-harness (087–093)](024-2026-06-01-frontend-g4-soak-harness.md)
+**Successor:** [025 — frontend G.4 synthetic soak-harness (087–093)](025-2026-06-01-frontend-g4-soak-harness.md)
 
 ---
 
