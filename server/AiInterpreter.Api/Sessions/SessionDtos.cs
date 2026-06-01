@@ -65,9 +65,11 @@ public sealed record AppendEventsRequest(
 /// price the output side of the turn's realtime cost (E.4 reports it); absent → output cost is disclosed-
 /// unavailable in the estimate's <c>Assumptions</c>, never silently 0 (ARCH-014 / streaming-honesty).
 /// The <c>*AudioTokens</c> fields (053-C2a) carry the realtime turn's EXACT audio-token counts from the
-/// DC's <c>response.done.usage</c> (input/output <c>token_details.audio_tokens</c> + input
-/// <c>cached_tokens</c>); present ⇒ the realtime cost prices from them exactly (no audio-seconds × factor
-/// estimate), absent ⇒ the seconds estimate. Trailing-optional → existing positional callers unaffected.
+/// DC's <c>response.done.usage</c> (input/output <c>token_details.audio_tokens</c>); <c>CachedAudioInputTokens</c>
+/// is the cached input-AUDIO count (<c>cached_tokens_details.audio_tokens</c>, a subset of input audio — 094),
+/// NOT the total <c>cached_tokens</c> (which would include text). Present ⇒ the realtime cost prices from them
+/// exactly (no audio-seconds × factor estimate), absent ⇒ the seconds estimate. Trailing-optional → existing
+/// positional callers unaffected.
 /// Text tokens are deliberately not carried (disclosed-unpriced — no text rates configured). TS mirror = 053-C2b.
 /// </summary>
 public sealed record CompleteTurnRequest(

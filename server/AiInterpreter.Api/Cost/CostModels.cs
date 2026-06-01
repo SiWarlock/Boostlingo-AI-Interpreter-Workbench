@@ -40,5 +40,8 @@ public sealed record CostUsage
     /// </summary>
     public int? AudioInputTokens { get; init; }
 
+    /// <summary>Cached input-AUDIO tokens (<c>cached_tokens_details.audio_tokens</c>) — a SUBSET of
+    /// <see cref="AudioInputTokens"/>, priced at the cached rate and removed from the full-rate base (094).
+    /// NOT the total <c>cached_tokens</c> (which would include text).</summary>
     public int? CachedAudioInputTokens { get; init; }
 }

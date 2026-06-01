@@ -208,18 +208,26 @@ public sealed class CostEstimator(Result<PricingOptions> pricing)
         return Build("openai", model, "tokens", usd, audioDurationMs, units, [.. assumptions]);
     }
 
-    // 053-C2a — exact-count realtime pricing from the DC's response.done.usage audio-token counts. Same basis
-    // ("tokens" at audio rates), exact counting (no seconds × factor). Text tokens are disclosed-unpriced (no
-    // text rates configured). Cached tokens use the cached rate when configured, else the full input rate
-    // (over-estimates slightly — the honest direction, never under-counts).
+    // 053-C2a / 094 — exact-count realtime pricing from the DC's response.done.usage audio-token counts. Same basis
+    // ("tokens" at audio rates), exact counting (no seconds × factor). Text tokens are disclosed-unpriced (no text
+    // rates configured). Cached AUDIO (cached_tokens_details.audio_tokens) is a SUBSET of the input audio total —
+    // REMOVED from the full-rate base and priced at the cached rate (else, for a model with no cached rate, billed at
+    // the full input rate so its total is unchanged from a no-cache world).
     private Result<CostEstimate> EstimateRealtimeFromTokens(
         string model, CostUsage usage, RealtimeModelRates rates, decimal inputRate, decimal outputRate, long audioDurationMs)
     {
         var inputTokens = usage.AudioInputTokens ?? 0;
         var outputTokens = usage.AudioOutputTokens ?? 0;
-        var cachedTokens = usage.CachedAudioInputTokens ?? 0;
 
-        var usd = inputTokens / Million * inputRate + outputTokens / Million * outputRate;
+        // Cached audio is a SUBSET of the total input audio, not a separate bucket. Clamp defensively (it can't
+        // exceed total input — guards a too-large value during the FE-lands-after gap), then REMOVE it from the
+        // full-rate base and price it at the cached rate. The prior formula priced ALL input audio at the full
+        // rate and added cached on top (094: ~80× over-charge on the cached portion — $32/M instead of $0.40/M —
+        // a ~1.5× per-turn over-count on cached-heavy realtime turns, surfaced by the 2026-06-01 live soak).
+        var cachedTokens = Math.Min(usage.CachedAudioInputTokens ?? 0, inputTokens);
+        var nonCachedInputTokens = inputTokens - cachedTokens;
+
+        var usd = nonCachedInputTokens / Million * inputRate + outputTokens / Million * outputRate;
 
         var assumptions = new List<string>
         {

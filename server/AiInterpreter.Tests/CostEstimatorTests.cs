@@ -138,6 +138,7 @@ public class CostEstimatorTests
     {
         // 053-C2a — exact DC audio-token counts (response.done.usage) priced directly at the per-million
         // audio rates, NO seconds×50 estimate. Fixture: in 31 audio / out 54 audio / cached 0.
+        // Also guards: the cached=0 path is unchanged by the 094 cached-audio base-exclusion fix.
         var r = Estimator().EstimateRealtime(
             "gpt-realtime",
             new CostUsage { AudioInputTokens = 31, AudioOutputTokens = 54, CachedAudioInputTokens = 0 });
@@ -154,14 +155,52 @@ public class CostEstimatorTests
     [Fact]
     public void estimate_realtime_exact_tokens_honors_cached_rate()
     {
-        // Cached audio-input tokens priced at the configured cached rate (gpt-realtime: 0.40/M).
+        // CONTRACT CHANGE (094, §39 re-assert-in-place): cached audio is a SUBSET of total input audio
+        // (response.done.usage cached_tokens_details.audio_tokens), so it must be REMOVED from the full-rate
+        // base and priced at the cached rate — NOT priced at full AND added on top (the prior formula, the
+        // ~1.5x over-count the 2026-06-01 live soak surfaced). in 31 audio (10 of them cached) / out 54:
+        //   (31-10) at $32/M  +  10 at $0.40/M  +  54 at $64/M.
         var r = Estimator().EstimateRealtime(
             "gpt-realtime",
             new CostUsage { AudioInputTokens = 31, AudioOutputTokens = 54, CachedAudioInputTokens = 10 });
 
         Assert.Equal(
-            31m / Million * 32.0m + 54m / Million * 64.0m + 10m / Million * 0.40m,
+            (31m - 10m) / Million * 32.0m + 10m / Million * 0.40m + 54m / Million * 64.0m,
             r.Value.EstimatedUsd);
+    }
+
+    [Fact]
+    public void estimate_realtime_cached_audio_clamped_to_input()
+    {
+        // Defensive clamp (094): a pathological cachedAudio > input audio (possible during the FE-lands-after
+        // gap) is clamped to the input total so cachedEff = input and the full-rate base is 0, never negative.
+        // in 20 audio / cachedAudio 50 / out 54 -> cachedEff 20: 0 at $32/M + 20 at $0.40/M + 54 at $64/M.
+        var r = Estimator().EstimateRealtime(
+            "gpt-realtime",
+            new CostUsage { AudioInputTokens = 20, AudioOutputTokens = 54, CachedAudioInputTokens = 50 });
+
+        Assert.True(r.IsSuccess, r.Error);
+        Assert.Equal(
+            0m / Million * 32.0m + 20m / Million * 0.40m + 54m / Million * 64.0m,
+            r.Value.EstimatedUsd);
+    }
+
+    [Fact]
+    public void estimate_realtime_mini_cached_audio_full_rate()
+    {
+        // gpt-realtime-mini has NO cached audio-input rate -> cached audio billed at the FULL input rate.
+        // The base-exclusion + full-rate re-add nets to the whole input at full rate (mini has no cache
+        // discount), so the 094 rename must NOT change mini's number. in 31 (10 cached) / out 54.
+        var r = Estimator().EstimateRealtime(
+            "gpt-realtime-mini",
+            new CostUsage { AudioInputTokens = 31, AudioOutputTokens = 54, CachedAudioInputTokens = 10 });
+
+        Assert.True(r.IsSuccess, r.Error);
+        Assert.Equal(
+            (31m - 10m) / Million * 10.0m + 10m / Million * 10.0m + 54m / Million * 20.0m,
+            r.Value.EstimatedUsd);
+        Assert.Equal(31m / Million * 10.0m + 54m / Million * 20.0m, r.Value.EstimatedUsd); // == whole input at full rate
+        Assert.Contains(r.Value.Assumptions, a => a.Contains("cached", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
