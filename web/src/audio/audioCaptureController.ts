@@ -29,7 +29,17 @@ export type AudioCaptureController = {
   recordBlob: (durationMs?: number) => Promise<BlobCapture | null>
 }
 
-export function createAudioCaptureController(): AudioCaptureController {
+// Injectable browser seam for the G.4 soak harness (decision 1A) — the synthetic MediaStream is supplied
+// via `getUserMedia`. Defaults to the browser global, so the production singleton
+// (`createAudioCaptureController()`, no args) is byte-identical. Mirrors the realtime client's
+// `RealtimeWebRtcDeps.getUserMedia` seam. Streaming-path only; the blob (eval) path stays on the default.
+export type AudioCaptureDeps = {
+  getUserMedia?: (constraints: MediaStreamConstraints) => Promise<MediaStream>
+}
+
+export function createAudioCaptureController(deps: AudioCaptureDeps = {}): AudioCaptureController {
+  const getUserMedia =
+    deps.getUserMedia ?? ((constraints) => navigator.mediaDevices.getUserMedia(constraints))
   let context: AudioContext | null = null
   let stream: MediaStream | null = null
 
@@ -50,7 +60,7 @@ export function createAudioCaptureController(): AudioCaptureController {
       return null
     }
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      stream = await getUserMedia({ audio: true })
       context = new AudioContext()
       await context.audioWorklet.addModule(new URL('./pcmWorklet.ts', import.meta.url))
       const source = context.createMediaStreamSource(stream)
