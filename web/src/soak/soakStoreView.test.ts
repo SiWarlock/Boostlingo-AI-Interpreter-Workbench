@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createSoakStoreView } from './soakStoreView'
+import { createSoakStoreView, resolveSoakOutputDurationMs } from './soakStoreView'
 import type { LatencyEvent, TurnViewModel } from '../types/domain'
 
 // The store→SoakTurnObservation adapter (089b) — the production side of the 089a `SoakStoreView` seam.
@@ -81,5 +81,50 @@ describe('createSoakStoreView', () => {
       resolveOutputDurationMs: () => null,
     })
     expect(noDuration.getCompletedTurns()[0].playbackEndMs).toBeNull()
+  })
+})
+
+// The per-mode output-audio duration the resolver feeds into playbackEndMs (093 — completes decision-2A
+// overlap). Realtime is DERIVED from the REPORTED tokens (output-tokens ÷ RealtimeTokensPerAudioSecond);
+// cascade is the DISCLOSED §36 char→minutes estimate (target chars ÷ TtsApproxCharsPerMinute) — neither
+// fabricated; null when the signal is absent.
+describe('resolveSoakOutputDurationMs', () => {
+  it('realtime: output-audio duration from the REPORTED output tokens (÷ tokens-per-second)', () => {
+    // 1500 output tokens ÷ 50 tokens/s = 30 s = 30000 ms (mirrors BE CostEstimator.RealtimeTokensPerAudioSecond).
+    expect(resolveSoakOutputDurationMs(turn({ mode: 'realtime', outputAudioTokens: 1500 }))).toBe(
+      30000,
+    )
+    // No reported tokens → null (honest; overlap skips this pair).
+    expect(resolveSoakOutputDurationMs(turn({ mode: 'realtime' }))).toBeNull()
+  })
+
+  it('cascade: output-audio duration from the disclosed char→minutes TTS estimate over the target transcript', () => {
+    // 900 target chars ÷ 900 chars/min = 1 min = 60000 ms (mirrors BE CascadeWsMapping.TtsApproxCharsPerMinute).
+    const cascade = turn({
+      mode: 'cascade',
+      targetTranscript: [{ text: 'x'.repeat(900), isFinal: true }],
+    })
+    expect(resolveSoakOutputDurationMs(cascade)).toBe(60000)
+    // No target text → null (no TTS audio → nothing to estimate).
+    expect(resolveSoakOutputDurationMs(turn({ mode: 'cascade', targetTranscript: [] }))).toBeNull()
+  })
+
+  it('feeds playbackEndMs so detectOverlaps can run (overlapMeasured flips true)', () => {
+    const runStartMs = Date.parse('2026-01-01T00:00:00.000Z')
+    // Realtime turn: playback.started at +5000ms run-relative + 1500 tokens (→ 30000ms) → END 35000.
+    const turns = [
+      turn({
+        mode: 'realtime',
+        outputAudioTokens: 1500,
+        latencyEvents: [ev('playback.started', '2026-01-01T00:00:05.000Z')],
+      }),
+    ]
+    const view = createSoakStoreView({
+      getTurns: () => turns,
+      runStartMs,
+      resolveOutputDurationMs: resolveSoakOutputDurationMs,
+    })
+    // A finite playbackEndMs (not null) → detectOverlaps has a real stamp → overlapMeasured can be true.
+    expect(view.getCompletedTurns()[0].playbackEndMs).toBe(35000)
   })
 })

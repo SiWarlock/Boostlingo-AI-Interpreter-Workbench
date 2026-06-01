@@ -1,4 +1,4 @@
-import type { InterpretationMode } from '../types/domain'
+import type { InterpretationMode, TurnViewModel } from '../types/domain'
 import { computeSchedule } from './soakSchedule'
 import type { SoakSchedule } from './soakSchedule'
 import type { SoakDrive } from './soakRunner'
@@ -7,7 +7,7 @@ import type { SoakReport } from './soakReport'
 import { createSyntheticAudioStream } from './syntheticAudioStream'
 import { createSoakAudioCache } from './soakAudioCache'
 import { createHeapSampler } from './soakHeapSampler'
-import { createSoakStoreView } from './soakStoreView'
+import { createSoakStoreView, resolveSoakOutputDurationMs } from './soakStoreView'
 import { createSoakWer } from './soakWerClient'
 import { CANONICAL_SOAK_SCRIPT } from './soakScript'
 import { createAudioCaptureController } from '../audio/audioCaptureController'
@@ -32,6 +32,24 @@ export function buildSoakScheduleFromBuffers(buffers: AudioBuffer[], gapMs: numb
     buffers.map((buffer) => buffer.duration * 1000),
     gapMs,
   )
+}
+
+// The PRECISE transport-disconnect codes (093 — replaces the 089b failed-turn proxy). cascade
+// `cascade.connection_lost` (cascadeStreamClient `failIfLive`, suppressed on normal reconnect/teardown
+// closes → fires only on a real unexpected disconnect) + realtime `realtime.session.disconnected` (the
+// connection manager's pc-disconnected/failed stamp). A provider-error failure (e.g. stt.timeout) is NOT a
+// transport disconnect — the proxy over-counted it.
+const TRANSPORT_DISCONNECT_CODES = new Set([
+  'cascade.connection_lost',
+  'realtime.session.disconnected',
+])
+
+export function isTransportDisconnect(code: string): boolean {
+  return TRANSPORT_DISCONNECT_CODES.has(code)
+}
+
+export function countTransportDisconnects(turns: TurnViewModel[]): number {
+  return turns.filter((turn) => turn.errors.some((e) => isTransportDisconnect(e.code))).length
 }
 
 // ─── Smoke below this line (manual-run validated) ────────────────────────────────────────────────────
@@ -112,10 +130,11 @@ export function composeSoakDrive(deps: ComposeSoakDriveDeps): SoakDrive {
     stopFn = null
   }
 
-  // Smoke proxy: a transport disconnect manifests as a failed turn (the precise WS-close / pc-failed hook is
-  // a manual-run observation). Counts failed turns in the store.
+  // PRECISE transport-disconnect count (093): only turns carrying a transport-close code
+  // (cascade.connection_lost / realtime.session.disconnected) — NOT every failed turn (a provider-error
+  // failure isn't a transport disconnect). Reads the soak's own drive turns in the store.
   function disconnectCount(): number {
-    return sessionStore.getState().turns.filter((turn) => turn.status === 'failed').length
+    return countTransportDisconnects(sessionStore.getState().turns)
   }
 
   return { start, stop, disconnectCount }
@@ -164,9 +183,9 @@ export async function runSoakHarness(mode: InterpretationMode): Promise<SoakRepo
     store: createSoakStoreView({
       getTurns: () => sessionStore.getState().turns,
       runStartMs,
-      // No reliable per-turn output-audio duration in the store → playbackEndMs null → overlap is
-      // disclosed-unmeasured (honest; the latency-slope drift is the primary signal).
-      resolveOutputDurationMs: () => null,
+      // 093: per-mode output-audio duration (realtime token-derived; cascade char-estimate) → real
+      // playbackEndMs → overlap detection runs (overlapBasis discloses the per-mode derivation).
+      resolveOutputDurationMs: resolveSoakOutputDurationMs,
     }),
     heapSampler: createHeapSampler({ readHeap: readJsHeap, intervalMs: HEAP_INTERVAL_MS }),
     computeWer: createSoakWer(sessionId),

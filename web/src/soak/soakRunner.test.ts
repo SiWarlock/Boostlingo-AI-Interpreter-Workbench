@@ -140,6 +140,24 @@ describe('createSoakRunner', () => {
     expect(report.overlapMeasured).toBe(false)
   })
 
+  it('discloses the per-mode overlapBasis (realtime token-derived / cascade char-estimate / none unmeasured)', async () => {
+    vi.useFakeTimers()
+    const measured: SoakTurnObservation[] = [
+      { index: 0, endToEndLatencyMs: 500, playbackEndMs: 900, sourceTranscript: 'a' },
+    ]
+
+    const rt = makeDeps()
+    rt.store.getCompletedTurns.mockReturnValue(measured)
+    expect((await runWithTimers(rt, 'realtime')).overlapBasis).toBe('token-derived')
+
+    const cas = makeDeps()
+    cas.store.getCompletedTurns.mockReturnValue(measured)
+    expect((await runWithTimers(cas, 'cascade')).overlapBasis).toBe('char-estimate')
+
+    // No measured overlap → basis 'none' (not a mode-claim of measurement).
+    expect((await runWithTimers(makeDeps(), 'cascade')).overlapBasis).toBe('none')
+  })
+
   it('tears down cleanly at the end of the run (stream, drive, sampler, session)', async () => {
     vi.useFakeTimers()
     const deps = makeDeps()

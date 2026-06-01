@@ -9,7 +9,7 @@ import { leakVerdict } from './soakLeak'
 import { aggregateWer } from './soakWer'
 import type { SoakWerTurn } from './soakWer'
 import { assembleSoakReport } from './soakReport'
-import type { SoakReport } from './soakReport'
+import type { OverlapBasis, SoakReport } from './soakReport'
 
 // The soak RUNNER orchestration (G.4 / ARCH-020). All side-effects are injected SEAMS so the orchestration
 // is TDD'd with fake deps + fake timers; the LIVE composition of those seams (synthetic getUserMedia → the
@@ -94,6 +94,14 @@ export function createSoakRunner(deps: SoakRunnerDeps): SoakRunner {
     const overlapMeasured = turns.some(
       (t) => t.playbackEndMs !== null && Number.isFinite(t.playbackEndMs),
     )
+    // Disclose HOW the overlap duration was derived for this mode: realtime is token-derived (precise),
+    // cascade is the rougher char-estimate; 'none' when nothing was measured (so a cascade
+    // overlapMeasured:true isn't mistaken for an exact measurement — 093).
+    const overlapBasis: OverlapBasis = !overlapMeasured
+      ? 'none'
+      : mode === 'realtime'
+        ? 'token-derived'
+        : 'char-estimate'
 
     // WER-via-script: pair each turn's source transcript (hypothesis) with its script utterance
     // (reference) by index — the hypothesis is the REAL pipeline STT (Finding-3 sidestep).
@@ -118,6 +126,7 @@ export function createSoakRunner(deps: SoakRunnerDeps): SoakRunner {
       latency: driftVerdict(latencySeries, deps.config.driftThresholdMsPerTurn),
       overlaps: detectOverlaps(deps.schedule, playbackEndsMs),
       overlapMeasured,
+      overlapBasis,
       skewSlope: playbackSkewSlope(skewSamples),
       heapLeak: leakVerdict(
         deps.heapSampler.samples(),

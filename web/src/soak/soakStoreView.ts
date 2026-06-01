@@ -6,6 +6,29 @@ import type { SoakStoreView, SoakTurnObservation } from './soakRunner'
 // Reads the real store `turns[]` (no bypass, ARCH-007) and projects each turn to the soak's observation.
 // Pure over its injected reads, so it's TDD'd against a fake store state.
 
+// Mirror the BE pricing constants — the disclosed bases the soak reuses for the per-turn output-audio
+// duration (093). Realtime is DERIVED from the REPORTED tokens; cascade is the rougher §36 char→minutes
+// estimate (disclosed via the report's overlapBasis). If the BE rates drift, a config-sync is the fix.
+const REALTIME_TOKENS_PER_AUDIO_SECOND = 50 // server CostEstimator.cs RealtimeTokensPerAudioSecond
+const TTS_APPROX_CHARS_PER_MINUTE = 900 // server CascadeWsMapping.cs TtsApproxCharsPerMinute
+
+// Per-mode output-audio duration (ms) for the soak's overlap detection — or null when no signal exists.
+// Realtime: output tokens ÷ tokens-per-second (the 092 reported count). Cascade: target-transcript chars
+// (the TTS input text) ÷ chars-per-minute — the disclosed cost-grade estimate (overlapBasis discloses it).
+export function resolveSoakOutputDurationMs(turn: TurnViewModel): number | null {
+  if (turn.mode === 'realtime') {
+    if (turn.outputAudioTokens === undefined || !Number.isFinite(turn.outputAudioTokens)) {
+      return null // no reported tokens → honest null (overlap skips this pair)
+    }
+    return (turn.outputAudioTokens / REALTIME_TOKENS_PER_AUDIO_SECOND) * 1000
+  }
+  const targetChars = turn.targetTranscript.map((segment) => segment.text).join('').length
+  if (targetChars === 0) {
+    return null // no TTS text → nothing to estimate
+  }
+  return (targetChars / TTS_APPROX_CHARS_PER_MINUTE) * 60000
+}
+
 export type SoakStoreViewDeps = {
   getTurns: () => TurnViewModel[]
   // Absolute browser-clock ms at run start — the origin the schedule offsets + playback-end are relative to.

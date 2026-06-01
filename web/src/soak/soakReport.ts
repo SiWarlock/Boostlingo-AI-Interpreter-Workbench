@@ -14,6 +14,12 @@ export type Arch020Checks = {
   noLeak: boolean
 }
 
+// How the overlap output-duration was derived for this (per-mode) run: realtime is 'token-derived' (precise,
+// reported response.done.usage) while cascade is 'char-estimate' (the rougher disclosed §36 char→minutes cost
+// basis); 'none' when no duration signal existed (overlap unmeasured). Discloses that a cascade
+// overlapMeasured:true is an ESTIMATE-based check, not an exact measurement (093). (093)
+export type OverlapBasis = 'token-derived' | 'char-estimate' | 'none'
+
 export type SoakReportInputs = {
   mode: InterpretationMode
   durationSec: number
@@ -25,6 +31,7 @@ export type SoakReportInputs = {
   // output-audio duration every playbackEndMs is null and detectOverlaps returns [] — so this discloses
   // "unmeasured" rather than letting noDriftOverlap read as a silent "checked, none found" (honest-degrade).
   overlapMeasured: boolean
+  overlapBasis: OverlapBasis
   skewSlope: number
   heapLeak: LeakVerdict
   werSummary: SoakWerSummary
@@ -38,6 +45,7 @@ export type SoakReport = {
   latency: DriftVerdict
   overlaps: Overlap[]
   overlapMeasured: boolean
+  overlapBasis: OverlapBasis
   skewSlope: number
   heapLeak: LeakVerdict
   werSummary: SoakWerSummary

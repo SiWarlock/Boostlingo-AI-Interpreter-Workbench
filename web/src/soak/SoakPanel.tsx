@@ -62,6 +62,13 @@ export default function SoakPanel() {
               latency-slope only.
             </p>
           )}
+          {report.overlapMeasured && (
+            <p>
+              overlap basis: <strong>{report.overlapBasis}</strong>
+              {report.overlapBasis === 'char-estimate' &&
+                ' (cascade char→minutes estimate — rougher than realtime reported tokens)'}
+            </p>
+          )}
           <ul>
             <li>turns: {report.turnCount}</li>
             <li>duration: {report.durationSec}s</li>

@@ -20,6 +20,7 @@ function baseInputs(): SoakReportInputs {
     heapLeak: { slopeBytesPerSample: 2, thresholdBytesPerSample: 5, sampleCount: 60, pass: true },
     werSummary: { meanWer: 0.1, medianWer: 0.08, count: 24 },
     overlapMeasured: true,
+    overlapBasis: 'token-derived',
   }
 }
 
@@ -72,5 +73,15 @@ describe('assembleSoakReport', () => {
     expect(assembleSoakReport({ ...baseInputs(), overlapMeasured: false }).overlapMeasured).toBe(
       false,
     )
+  })
+
+  // overlapBasis discloses HOW the overlap duration was derived per mode — realtime is token-derived
+  // (precise, reported usage) vs cascade char-estimate (rougher, the disclosed §36 cost basis) — so a
+  // cascade overlapMeasured:true isn't read as an exact measurement (093 TWEAK).
+  it('carries the per-mode overlapBasis disclosure through', () => {
+    expect(assembleSoakReport(baseInputs()).overlapBasis).toBe('token-derived')
+    expect(
+      assembleSoakReport({ ...baseInputs(), overlapBasis: 'char-estimate' }).overlapBasis,
+    ).toBe('char-estimate')
   })
 })
