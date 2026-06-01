@@ -9,8 +9,13 @@ namespace AiInterpreter.Api.Realtime;
 /// direction (drives the interpreter instructions), and an optional model override; it NEVER sees the
 /// standard key (invariant #1). <see cref="Model"/> is allow-listed against
 /// <see cref="RealtimeModelCatalog"/> at the broker (E.6 sends a catalog model here).
+///
+/// <para>J.2 (Phase J) — <see cref="Bidirectional"/> (trailing-defaulted false): when true the broker
+/// renders the bidirectional interpreter instruction (detect EN/ES → render the OTHER) instead of the
+/// one-direction <c>{source}→{target}</c> template. <see cref="Direction"/> is still supplied (the turn's
+/// initial/fallback direction the FE heuristic refines); absent in JSON ⇒ false (back-compat).</para>
 /// </summary>
-public sealed record RealtimeTokenRequest(string SessionId, LanguageDirection Direction, string? Model);
+public sealed record RealtimeTokenRequest(string SessionId, LanguageDirection Direction, string? Model, bool Bidirectional = false);
 
 /// <summary>
 /// Broker → browser response (ARCH-009 §6). Carries ONLY the short-lived ephemeral client secret

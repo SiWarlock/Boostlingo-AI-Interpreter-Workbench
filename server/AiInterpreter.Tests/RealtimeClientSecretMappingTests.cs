@@ -122,4 +122,72 @@ public class RealtimeClientSecretMappingTests
         Assert.Null(RealtimeClientSecretMapping.ParseResponse("{\"session\":{\"id\":\"sess_1\"}}"));
         Assert.Null(RealtimeClientSecretMapping.ParseResponse("not json at all"));
     }
+
+    // === Group 4 — J.2 bidirectional interpreter instruction (Phase J) ===
+
+    // The exact one-direction En→Es render (the byte-identical regression baseline).
+    private const string OneDirectionEnToEs =
+        "You are a faithful realtime interpreter. Render the speaker's words from English to Spanish. " +
+        "Speak only the translation — no commentary, no preamble.";
+
+    [Fact]
+    public void renders_bidirectional_detect_both_render_other()
+    {
+        // bidirectional:true ⇒ a detect-EN-or-ES → render-the-OTHER instruction: names BOTH languages, carries
+        // the "other" intent, and has NO one-direction placeholders / no hardcoded single direction.
+        var bidir = RealtimeClientSecretMapping.RenderInstructions(null, EnToEs, bidirectional: true);
+
+        Assert.Contains("English", bidir, StringComparison.Ordinal);
+        Assert.Contains("Spanish", bidir, StringComparison.Ordinal);
+        Assert.Contains("other", bidir, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("{source}", bidir, StringComparison.Ordinal);
+        Assert.DoesNotContain("{target}", bidir, StringComparison.Ordinal);
+        Assert.DoesNotContain("from English to Spanish", bidir, StringComparison.Ordinal); // not hardcoded one-way
+        Assert.NotEqual(RealtimeClientSecretMapping.RenderInstructions(null, EnToEs, bidirectional: false), bidir);
+    }
+
+    [Fact]
+    public void renders_one_direction_byte_identical_regression()
+    {
+        // bidirectional:false (and the default 2-arg overload path) ⇒ EXACTLY today's one-direction render —
+        // additive, no regression.
+        var viaFalse = RealtimeClientSecretMapping.RenderInstructions(null, EnToEs, bidirectional: false);
+        var viaDefault = RealtimeClientSecretMapping.RenderInstructions(null, EnToEs);
+
+        Assert.Equal(OneDirectionEnToEs, viaFalse);
+        Assert.Equal(viaDefault, viaFalse); // the new param defaults to the existing behavior
+    }
+
+    [Fact]
+    public void build_request_body_threads_bidirectional_into_instructions()
+    {
+        // The flag threads end-to-end: BuildRequestBody(bidirectional:true) ⇒ session.instructions == the bidir render.
+        var options = new RealtimeOptions { Voice = "marin", TranscriptionModel = "gpt-4o-transcribe" };
+
+        var json = JsonSerializer.Serialize(
+            RealtimeClientSecretMapping.BuildRequestBody(EnToEs, "gpt-realtime", options, bidirectional: true), JsonDefaults.Options);
+        using var doc = JsonDocument.Parse(json);
+        var instructions = doc.RootElement.GetProperty("session").GetProperty("instructions").GetString();
+
+        Assert.Equal(
+            RealtimeClientSecretMapping.RenderInstructions(options.InstructionsTemplate, EnToEs, bidirectional: true),
+            instructions);
+        Assert.Contains("other", instructions!, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("from English to Spanish", instructions!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void token_request_absent_bidirectional_defaults_false()
+    {
+        // A mint body WITHOUT `bidirectional` deserializes to false (trailing default — back-compat with today's
+        // FE); an explicit `bidirectional:true` is honored.
+        var off = JsonSerializer.Deserialize<RealtimeTokenRequest>(
+            "{\"sessionId\":\"s1\",\"direction\":{\"source\":\"en\",\"target\":\"es\"}}", JsonDefaults.Options);
+        Assert.NotNull(off);
+        Assert.False(off!.Bidirectional);
+
+        var on = JsonSerializer.Deserialize<RealtimeTokenRequest>(
+            "{\"sessionId\":\"s1\",\"direction\":{\"source\":\"en\",\"target\":\"es\"},\"bidirectional\":true}", JsonDefaults.Options);
+        Assert.True(on!.Bidirectional);
+    }
 }

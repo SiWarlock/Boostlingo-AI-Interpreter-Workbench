@@ -70,7 +70,7 @@ public sealed class RealtimeClientSecretService
 
         try
         {
-            using var response = await SendWithRetryAsync(request.Direction, model, linked.Token);
+            using var response = await SendWithRetryAsync(request.Direction, model, request.Bidirectional, linked.Token);
             if (!response.IsSuccessStatusCode)
             {
                 return RealtimeMintOutcome.Fail(ProviderErrorMapper.MapStatus((int)response.StatusCode, Provider, Stage));
@@ -107,12 +107,12 @@ public sealed class RealtimeClientSecretService
     // Sends the mint request; on a 429 performs exactly ONE bounded retry honoring Retry-After (Q3). A fresh
     // HttpRequestMessage per send (a message can't be reused). 5xx/network/other statuses are NOT retried —
     // they fall through to the status mapper / generic catch.
-    private async Task<HttpResponseMessage> SendWithRetryAsync(LanguageDirection direction, string model, CancellationToken linkedCt)
+    private async Task<HttpResponseMessage> SendWithRetryAsync(LanguageDirection direction, string model, bool bidirectional, CancellationToken linkedCt)
     {
         // The caller (MintAsync) owns disposal of the RETURNED response via its `using`; on the 429 branch we
         // dispose the first response here before issuing the single retry. `linkedCt` is the LINKED token
         // (caller-ct + timeout), not the raw caller ct — don't inspect it to split cancel-vs-timeout here.
-        var response = await _http.SendAsync(BuildMessage(direction, model), linkedCt);
+        var response = await _http.SendAsync(BuildMessage(direction, model, bidirectional), linkedCt);
         if (response.StatusCode != HttpStatusCode.TooManyRequests)
         {
             return response;
@@ -121,7 +121,7 @@ public sealed class RealtimeClientSecretService
         var wait = ResolveRetryDelay(response);
         response.Dispose();
         await _delay(wait, linkedCt);
-        return await _http.SendAsync(BuildMessage(direction, model), linkedCt);
+        return await _http.SendAsync(BuildMessage(direction, model, bidirectional), linkedCt);
     }
 
     // Retry-After as integer seconds (the form OpenAI sends), capped at the token timeout so a hostile/huge
@@ -141,10 +141,10 @@ public sealed class RealtimeClientSecretService
         return fallback < cap ? fallback : cap;
     }
 
-    private HttpRequestMessage BuildMessage(LanguageDirection direction, string model)
+    private HttpRequestMessage BuildMessage(LanguageDirection direction, string model, bool bidirectional)
     {
         var json = JsonSerializer.Serialize(
-            RealtimeClientSecretMapping.BuildRequestBody(direction, model, _options), JsonDefaults.Options);
+            RealtimeClientSecretMapping.BuildRequestBody(direction, model, _options, bidirectional), JsonDefaults.Options);
         var message = new HttpRequestMessage(HttpMethod.Post, ClientSecretsPath)
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json"),

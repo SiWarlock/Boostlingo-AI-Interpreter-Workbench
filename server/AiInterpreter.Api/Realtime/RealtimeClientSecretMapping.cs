@@ -22,6 +22,14 @@ internal static class RealtimeClientSecretMapping
         "You are a faithful realtime interpreter. Render the speaker's words from {source} to {target}. " +
         "Speak only the translation — no commentary, no preamble.";
 
+    // J.2 (Phase J) — the bidirectional interpreter prompt (detect EN/ES → render the OTHER). No {source}/
+    // {target} placeholders: gpt-realtime detects the spoken language itself. Const-only (no RealtimeOptions
+    // override yet — YAGNI; the one-direction InstructionsTemplate override exists but nothing sets it).
+    private const string DefaultBidirectionalInstructionsTemplate =
+        "You are a faithful realtime interpreter. The speaker may talk in English or Spanish. Detect which " +
+        "language they are speaking and render their words in the OTHER language. Speak only the translation — " +
+        "no commentary, no preamble.";
+
     /// <summary>The minted ephemeral secret + its expiry, parsed from the GA response.</summary>
     internal readonly record struct RealtimeSecret(string Value, long ExpiresAtEpoch);
 
@@ -31,14 +39,14 @@ internal static class RealtimeClientSecretMapping
     /// which only lowercases the first char — leaves them intact. <c>turn_detection</c> is an EXPLICIT null
     /// (VAD off, manual turns) — <see cref="JsonDefaults"/> writes nulls explicitly (no WhenWritingNull).
     /// </summary>
-    public static object BuildRequestBody(LanguageDirection direction, string resolvedModel, RealtimeOptions options) => new
+    public static object BuildRequestBody(LanguageDirection direction, string resolvedModel, RealtimeOptions options, bool bidirectional = false) => new
     {
         expires_after = new { anchor = "created_at", seconds = options.ExpirySeconds },
         session = new
         {
             type = "realtime",
             model = resolvedModel,
-            instructions = RenderInstructions(options.InstructionsTemplate, direction),
+            instructions = RenderInstructions(options.InstructionsTemplate, direction, bidirectional),
             output_modalities = new[] { "audio" },
             audio = new
             {
@@ -52,11 +60,23 @@ internal static class RealtimeClientSecretMapping
         },
     };
 
-    /// <summary>Renders the interpreter instructions for the direction (default prompt when template null/blank).</summary>
-    public static string RenderInstructions(string? template, LanguageDirection direction) =>
-        (string.IsNullOrWhiteSpace(template) ? DefaultInstructionsTemplate : template)
+    /// <summary>
+    /// Renders the interpreter instructions. J.2: <paramref name="bidirectional"/> true ⇒ the detect-EN/ES →
+    /// render-the-OTHER prompt (const; <paramref name="template"/>/<paramref name="direction"/> unused — the
+    /// model self-detects). False ⇒ the one-direction render ({source}/{target} filled from the direction;
+    /// default prompt when the template is null/blank), byte-identical to before this slice.
+    /// </summary>
+    public static string RenderInstructions(string? template, LanguageDirection direction, bool bidirectional = false)
+    {
+        if (bidirectional)
+        {
+            return DefaultBidirectionalInstructionsTemplate;
+        }
+
+        return (string.IsNullOrWhiteSpace(template) ? DefaultInstructionsTemplate : template)
             .Replace("{source}", Name(direction.Source), StringComparison.Ordinal)
             .Replace("{target}", Name(direction.Target), StringComparison.Ordinal);
+    }
 
     /// <summary>
     /// Parses the GA <c>client_secrets</c> 200 body. Tolerant of BOTH the GA top-level shape
