@@ -206,6 +206,77 @@ public class CascadeOrchestratorTests
         Assert.Equal("alloy", tts.LastRequest!.Voice); // frame voice preserved (not emptied)
     }
 
+    // === J.6 — auto-VAD empty turn = silence (Completed), not failed (Phase-J smoke Finding 1) ===
+
+    [Theory]
+    [InlineData(true)]   // exercise the auto-VAD utterance-end terminal path
+    [InlineData(false)]  // exercise the stream-end terminal path (the shared TerminalFailure() covers both)
+    public async Task autovad_empty_only_finals_completes_not_failed(bool useUtteranceEnd)
+    {
+        // auto-VAD: an empty-only final (a silent gap / ended-while-waiting in the VAD-delimited continuous
+        // loop) → Completed-silence, NO cascade.empty_transcript error. Both terminal paths honor the scoping.
+        var ts = DateTimeOffset.UtcNow;
+        var script = useUtteranceEnd
+            ? new SttEvent[] { new SttFinal(string.Empty, ts), new SttUtteranceEnd(ts) }
+            : new SttEvent[] { new SttFinal(string.Empty, ts) };
+
+        var events = await Run(
+            new ScriptedSttProvider(script), new FakeTranslationProvider(), new FakeTtsProvider(), Params(autoVad: true));
+
+        Assert.Equal(TurnStatus.Completed, Assert.IsType<Done>(events[^1]).Status);
+        Assert.DoesNotContain(events, e => e is Error);
+    }
+
+    [Fact]
+    public async Task manual_empty_only_finals_still_fails()
+    {
+        // Manual mode: an empty-only final is deliberately-recorded silence → STILL cascade.empty_transcript +
+        // Failed (regression preserved — the user's silence is a real signal).
+        var events = await Run(
+            new ScriptedSttProvider(new SttFinal(string.Empty, DateTimeOffset.UtcNow)),
+            new FakeTranslationProvider(), new FakeTtsProvider(), Params(autoVad: false));
+
+        Assert.Equal(TurnStatus.Failed, Assert.IsType<Done>(events[^1]).Status);
+        Assert.Equal("cascade.empty_transcript", Assert.IsType<Error>(events.First(e => e is Error)).ProviderError.Code);
+    }
+
+    [Fact]
+    public async Task autovad_pure_silence_completes()
+    {
+        // auto-VAD, NO finals at all (pure silence) → Completed (unchanged §31 Q4; sawEmptyFinal never set).
+        var events = await Run(
+            new ScriptedSttProvider(), new FakeTranslationProvider(), new FakeTtsProvider(), Params(autoVad: true));
+
+        Assert.Equal(TurnStatus.Completed, Assert.IsType<Done>(events[^1]).Status);
+        Assert.DoesNotContain(events, e => e is Error);
+    }
+
+    [Fact]
+    public async Task autovad_has_content_completes()
+    {
+        // auto-VAD, a non-empty final → the loop's normal turn: Completed with content (translation + TTS ran).
+        var events = await Run(
+            new ScriptedSttProvider(new SttFinal("hola mundo", DateTimeOffset.UtcNow)),
+            new FakeTranslationProvider(), new FakeTtsProvider(), Params(autoVad: true));
+
+        Assert.Equal(TurnStatus.Completed, Assert.IsType<Done>(events[^1]).Status);
+        Assert.Contains(events, e => e is Transcript t && t.Segment.Role == "target"); // content flowed downstream
+    }
+
+    [Fact]
+    public async Task autovad_dangling_partial_still_unknown()
+    {
+        // auto-VAD, a non-empty PARTIAL then no final (a LOST final) → still stt.unknown + Failed. A lost final
+        // is a real failure, NOT silenced by the auto-VAD empty scoping (don't over-broaden — pendingPartial arm
+        // is untouched).
+        var events = await Run(
+            new ScriptedSttProvider(new SttPartial("hel", DateTimeOffset.UtcNow)),
+            new FakeTranslationProvider(), new FakeTtsProvider(), Params(autoVad: true));
+
+        Assert.Equal(TurnStatus.Failed, Assert.IsType<Done>(events[^1]).Status);
+        Assert.Equal("stt.unknown", Assert.IsType<Error>(events.First(e => e is Error)).ProviderError.Code);
+    }
+
     [Fact]
     public async Task success_path_streams_segments_and_audio_in_order()
     {
@@ -682,18 +753,20 @@ public class CascadeOrchestratorTests
     }
 
     [Fact]
-    public async Task auto_vad_utterance_end_after_only_empty_finals_fails_empty_transcript()
+    public async Task auto_vad_utterance_end_after_only_empty_finals_completes_silence()
     {
-        // §31 composes: an utterance-end after ONLY empty/whitespace finals → cascade.empty_transcript (the
-        // two-flag), NOT a fabricated Completed turn.
+        // J.6 (SUPERSEDES the old §31-composed empty_transcript-on-auto-VAD): an utterance-end after ONLY
+        // empty/whitespace finals in auto-VAD is a silence/gap (the VAD-delimited continuous loop) → Completed-
+        // silence, NOT a cascade.empty_transcript failure (a false error would pollute the comparison errorCount).
+        // Manual mode still fails (manual_empty_only_finals_still_fails); a lost final still → stt.unknown.
         var events = await Run(
             new ScriptedSttProvider(new SttFinal("   ", Base), UttEnd),
             new FakeTranslationProvider(),
             new FakeTtsProvider(),
             Params(autoVad: true));
 
-        Assert.Equal(TurnStatus.Failed, Assert.IsType<Done>(events[^1]).Status);
-        Assert.Equal("cascade.empty_transcript", events.OfType<Error>().Single().ProviderError.Code);
+        Assert.Equal(TurnStatus.Completed, Assert.IsType<Done>(events[^1]).Status);
+        Assert.DoesNotContain(events, e => e is Error);
     }
 
     [Fact]

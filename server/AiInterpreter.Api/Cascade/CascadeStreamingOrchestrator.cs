@@ -98,7 +98,11 @@ public sealed class CascadeStreamingOrchestrator(
         // (≥1 empty, none with content) → cascade.empty_transcript; otherwise null (clean → Completed).
         ProviderError? TerminalFailure() =>
             pendingPartial ? ProviderErrorMapper.Unknown(SttProviderLabel, "stt")
-            : sawEmptyFinal && !sawNonEmptyFinal ? ProviderErrorMapper.EmptyTranscript(SttProviderLabel)
+            // J.6: empty-only finals are a real failure ONLY in MANUAL mode (deliberately-recorded silence). In
+            // auto-VAD (the VAD-delimited continuous loop) an empty turn is a silent gap / ended-while-waiting →
+            // Completed-silence, NOT failed (a false cascade.empty_transcript pollutes the comparison errorCount).
+            // The dangling-partial → stt.unknown arm above stays for BOTH modes (a lost final is a real failure).
+            : sawEmptyFinal && !sawNonEmptyFinal && !p.AutoVad ? ProviderErrorMapper.EmptyTranscript(SttProviderLabel)
             : null;
 
         while (true)
