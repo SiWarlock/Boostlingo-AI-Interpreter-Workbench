@@ -51,9 +51,19 @@ function ModeColumn({
           <p className="cmp-line">{`Cost/min: ${formatUsdPerMinute(mode.estimatedCostPerMinuteUsd)}`}</p>
           <p className="cmp-line">{`Speech→first audio: ${formatMs(mode.avgSpeechEndToFirstAudioMs)}`}</p>
           <p className="cmp-line">{`Speech→playback: ${formatMs(mode.avgSpeechEndToPlaybackMs)}`}</p>
-          <p className="cmp-line">{`STT final: ${formatMs(mode.avgSttFinalMs)}`}</p>
-          <p className="cmp-line">{`Translation final: ${formatMs(mode.avgTranslationFinalMs)}`}</p>
-          <p className="cmp-line">{`TTS first audio: ${formatMs(mode.avgTtsFirstAudioMs)}`}</p>
+          {/* Realtime is a SINGLE model — no discrete STT/Translation/TTS stages, so those three averages are
+              always n/a for it. Render ONE explanatory note in their place (mirroring 074's MetricsPanel)
+              instead of three bare n/a rows, which mis-read as "missing data" rather than "doesn't apply"
+              (ARCH-013). Cascade keeps its per-stage averages. */}
+          {label.toLowerCase() === 'realtime' ? (
+            <p className="cmp-line na">Single model — no discrete stages</p>
+          ) : (
+            <>
+              <p className="cmp-line">{`STT final: ${formatMs(mode.avgSttFinalMs)}`}</p>
+              <p className="cmp-line">{`Translation final: ${formatMs(mode.avgTranslationFinalMs)}`}</p>
+              <p className="cmp-line">{`TTS first audio: ${formatMs(mode.avgTtsFirstAudioMs)}`}</p>
+            </>
+          )}
         </>
       )}
     </div>

@@ -96,6 +96,13 @@ export default function SessionDetail({ session }: { session: InterpretationSess
             const stages = stagesOf(v.latencyEvents)
             const source = joinRole(v.transcripts, 'source')
             const target = joinRole(v.transcripts, 'target')
+            // J.7/2a Model: read per mode from the authoritative session config (like ComparisonSummary) —
+            // realtime → providerProfile.realtimeModel; cascade → the per-turn translationModelUsed, falling
+            // back to providerProfile.translationModel (translationModelUsed is cascade-only → null on realtime).
+            const model =
+              v.mode === 'realtime'
+                ? session.config?.providerProfile?.realtimeModel
+                : (v.translationModelUsed ?? session.config?.providerProfile?.translationModel)
             return (
               <li className="hist-turn" key={v.turnId || `turn-${i}`}>
                 <div className="hist-turn-hd">
@@ -124,7 +131,7 @@ export default function SessionDetail({ session }: { session: InterpretationSess
                 )}
                 <div className="kv">
                   <span className="k">Model</span>
-                  <span className="v">{v.translationModelUsed ?? 'n/a'}</span>
+                  <span className="v">{model ?? 'n/a'}</span>
                 </div>
                 <div className="kv">
                   <span className="k">Cost</span>

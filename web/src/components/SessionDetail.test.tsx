@@ -70,6 +70,22 @@ function sessionWith(overrides: Partial<InterpretationSession>): InterpretationS
     label: 'Recent run',
     startedAt: '2026-05-31T10:00:00+00:00',
     endedAt: '2026-05-31T10:05:00+00:00',
+    config: {
+      currentMode: 'cascade',
+      direction: { source: 'en', target: 'es' },
+      providerProfile: {
+        realtimeProvider: 'openai',
+        realtimeModel: 'gpt-realtime',
+        sttProvider: 'deepgram',
+        sttModel: 'nova-3',
+        sttLanguage: 'multi',
+        translationProvider: 'openai',
+        translationModel: 'gpt-5-nano',
+        ttsProvider: 'openai',
+        ttsModel: 'gpt-4o-mini-tts',
+        ttsVoice: 'alloy',
+      },
+    },
     summary: {
       turnCount: 2,
       cascade: {
@@ -129,9 +145,11 @@ describe('SessionDetail', () => {
     // a derived per-stage duration renders (deriveTurnMetrics over the markers — §25)
     expect(within(rows[0]).getByText(/120/)).toBeInTheDocument() // STT stage duration
 
-    // turn 2 (realtime, failed): its transcript + the failed status
+    // turn 2 (realtime, failed): its transcript + the failed status. NOTE: exact 'realtime' for the mode chip
+    // (the realtime turn now also surfaces the Model "gpt-realtime" from config — J.7/2a — so the substring
+    // /realtime/i would match two elements; the assertion that row 1 is the realtime mode is unchanged).
     expect(within(rows[1]).getByText('segunda')).toBeInTheDocument()
-    expect(within(rows[1]).getByText(/realtime/i)).toBeInTheDocument()
+    expect(within(rows[1]).getByText('realtime')).toBeInTheDocument()
     expect(within(rows[1]).getByText(/failed/i)).toBeInTheDocument()
   })
 
@@ -147,5 +165,47 @@ describe('SessionDetail', () => {
     render(<SessionDetail session={sessionWith({ turns: [] })} />)
 
     expect(screen.getByText(/no turns/i)).toBeInTheDocument()
+  })
+})
+
+describe('SessionDetail — Phase-J display fixes (J.7 / 2a)', () => {
+  function rows(session: InterpretationSession) {
+    render(<SessionDetail session={session} />)
+    return within(screen.getByLabelText('session-turns')).getAllByRole('listitem')
+  }
+
+  it('shows the realtime model from session config for a realtime turn (not n/a)', () => {
+    // The realtime turn carries translationModelUsed:null (cascade-only field) → today it shows Model n/a.
+    // The model IS knowable from config.providerProfile.realtimeModel ('gpt-realtime'), independent of the turn.
+    const r = rows(sessionWith({}))
+    expect(within(r[1]).getByText(/gpt-realtime/)).toBeInTheDocument() // row 1 = the realtime turn
+  })
+
+  it('shows the cascade translation model (per-turn) and falls back to config when the turn omits it', () => {
+    // per-turn translationModelUsed present → shows it
+    expect(within(rows(sessionWith({}))[0]).getByText(/gpt-5-nano/)).toBeInTheDocument()
+    // per-turn absent → falls back to config.providerProfile.translationModel
+    cleanup()
+    const turn = { ...cascadeTurn, translationModelUsed: null }
+    expect(
+      within(rows(sessionWith({ turns: [turn] }))[0]).getByText(/gpt-5-nano/),
+    ).toBeInTheDocument()
+  })
+
+  it('shows a completed cascade turn its PER-TURN $/min (not the session-average) — verify', () => {
+    // The real session JSON corrected the premise: completed cascade turns DO carry a per-turn
+    // estimatedUsdPerMinute → display it directly, NOT the session-summary rate. The fixture pins the
+    // distinction: per-turn 0.6 vs summary.cascade 0.42. (No completed-turn cost bug → no session fallback.)
+    const costKv = within(rows(sessionWith({}))[0]).getByText('Cost').closest('.kv')
+    expect(costKv).toHaveTextContent(/0\.60/) // the PER-TURN value
+    expect(costKv).not.toHaveTextContent(/0\.42/) // NOT the session-average
+  })
+
+  it('keeps an honest n/a for a FAILED cascade turn with null cost (the lead-observed n/a)', () => {
+    // turns[3] in the real session = a FAILED cascade turn with costEstimate:null → honest n/a (correct).
+    // The cascade Cost=n/a the lead saw was THIS failed turn, not a completed-turn display bug.
+    const turn = { ...cascadeTurn, status: 'failed', costEstimate: null }
+    const costKv = within(rows(sessionWith({ turns: [turn] }))[0]).getByText('Cost').closest('.kv')
+    expect(costKv).toHaveTextContent(/n\/a/i)
   })
 })

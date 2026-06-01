@@ -221,6 +221,27 @@ describe('ComparisonSummary', () => {
     expect(within(realtime).getByText(/No turns in this mode\./i)).toBeInTheDocument()
   })
 
+  it('relabels the realtime stage rows to a single-model note (not three n/a rows) — J.7 / 2b', async () => {
+    vi.mocked(loadComparison).mockResolvedValue({
+      summary: summary(), // realtime stage avgs are all null
+      byVariant: [],
+      models: null,
+    } as ComparisonData)
+    sessionStore.sessionStarted(activeSession())
+
+    render(<ComparisonSummary />)
+
+    const realtime = await screen.findByLabelText('Realtime-summary')
+    // realtime has no discrete stages → ONE explanatory note, NOT three bare "n/a" stage rows (mirrors 074).
+    expect(within(realtime).getByText(/single model — no discrete stages/i)).toBeInTheDocument()
+    expect(within(realtime).queryByText(/STT final:/i)).toBeNull()
+    expect(within(realtime).queryByText(/Translation final:/i)).toBeNull()
+    expect(within(realtime).queryByText(/TTS first audio:/i)).toBeNull()
+    // cascade KEEPS its per-stage rows (it genuinely has STT/Translation/TTS stages).
+    const cascade = screen.getByLabelText('Cascade-summary')
+    expect(within(cascade).getByText(/STT final:\s*120 ms/i)).toBeInTheDocument()
+  })
+
   // 076: the comparison's apples-to-apples cost claim depends on BOTH modes dividing cost by source-speech
   // minutes — disclose that basis at the cost axis (rendered when the summary view is shown).
   it('discloses the $/min source-speech-minute basis (same for both modes) — 076', async () => {
