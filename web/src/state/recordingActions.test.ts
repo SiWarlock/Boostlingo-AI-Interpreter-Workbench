@@ -40,7 +40,15 @@ function setup(state: UiSessionState = baseState()) {
         .mockResolvedValue({ sampleRate: 48000, encoding: 'linear16' as const, stop: captureStop }),
     },
   }
-  return { deps, store, captureStop }
+  // `state` is returned so a test can mutate it to simulate store transitions the controller reads (the
+  // mock getState returns this same object) — e.g. set turnStatus:'completed' to model a finalized turn.
+  return { deps, store, captureStop, state }
+}
+
+// Settle the async re-arm chain (createTurn().then(...)) — two ticks cover the resolve + the .then body.
+async function flush(): Promise<void> {
+  await Promise.resolve()
+  await Promise.resolve()
 }
 
 describe('startRecording', () => {
@@ -205,13 +213,20 @@ describe('cascade auto-VAD (I.3)', () => {
     expect(deps.client.start.mock.calls[0][0]).not.toHaveProperty('autoVad')
   })
 
-  it('onCascadeTerminal stops + clears the capture (the auto-finalize: no manual Stop fires) and is idempotent', async () => {
-    const { deps, captureStop } = setup(baseState({ turnControlMode: 'auto' }))
+  it('onCascadeTerminal on a NON-rearmable terminal (failed) stops + clears the capture; idempotent + no re-arm', async () => {
+    // J.5: a completed auto-VAD terminal now RE-ARMS (continuous); only a non-completed terminal
+    // (failed/error — store.turnStatus is 'failed' by the time onCascadeTerminal fires) takes the
+    // end path → stop the mic, no re-arm. (The re-arm path is covered by the J.5 block below.)
+    const { deps, captureStop } = setup(
+      baseState({ turnControlMode: 'auto', turnStatus: 'failed' }),
+    )
     const controller = createRecordingController(deps)
-    await controller.startRecording() // sets the capture handle
+    await controller.startRecording() // sets the capture handle (createTurn #1)
 
     controller.onCascadeTerminal()
-    expect(captureStop).toHaveBeenCalledTimes(1) // the mic stops on the backend auto-finalize
+    await flush()
+    expect(captureStop).toHaveBeenCalledTimes(1) // the mic stops on a failed terminal
+    expect(deps.createTurn).toHaveBeenCalledTimes(1) // NO re-arm on a non-completed terminal
     // a 2nd terminal (or a late manual Stop) does NOT re-stop the now-cleared handle
     controller.onCascadeTerminal()
     expect(captureStop).toHaveBeenCalledTimes(1)
@@ -235,6 +250,125 @@ describe('cascade auto-VAD (I.3)', () => {
 
     expect(() => controller.onCascadeTerminal()).not.toThrow()
     expect(captureStop).not.toHaveBeenCalled()
+  })
+})
+
+// --- J.5: cascade continuous-listening (auto-VAD hands-free loop) ------------------------------------
+// In auto-VAD mode, on a COMPLETED auto-finalized turn the FE auto-begins the NEXT turn (a new turnId +
+// new WS via client.start) instead of stopping — looping until the user explicitly ends. The mic stream
+// stays ALIVE across turns (no re-acquire). Manual mode is unchanged (single-turn-per-Start). The store's
+// turnStatus (set by completeTurn/failTurn before onCascadeTerminal fires) distinguishes a re-armable
+// 'completed' terminal from a 'failed' one; a controller-internal userEnded flag breaks the loop.
+describe('cascade continuous-listening (J.5)', () => {
+  // An auto, live session whose just-finalized turn COMPLETED (the re-armable terminal state).
+  function autoLiveCompleted() {
+    return baseState({ turnControlMode: 'auto', sessionStatus: 'active', turnStatus: 'completed' })
+  }
+
+  it('auto-VAD completed terminal re-arms the next turn (new WS) keeping the mic alive — the continuous loop', async () => {
+    const { deps, store, captureStop } = setup(autoLiveCompleted())
+    let n = 0
+    deps.createTurn.mockImplementation(async () => ({ turnId: `turn_${++n}` }))
+    const controller = createRecordingController(deps)
+
+    await controller.startRecording() // turn_1: acquires the mic + opens the first WS
+    expect(deps.capture.startStreaming).toHaveBeenCalledTimes(1)
+    expect(deps.client.start).toHaveBeenCalledTimes(1)
+
+    controller.onCascadeTerminal() // the backend auto-finalize → re-arm
+    await flush()
+
+    expect(deps.createTurn).toHaveBeenCalledTimes(2) // a 2nd turn was created
+    expect(deps.client.start).toHaveBeenCalledTimes(2) // a 2nd WS opened
+    expect(deps.capture.startStreaming).toHaveBeenCalledTimes(1) // mic NOT re-acquired (stays alive)
+    expect(captureStop).not.toHaveBeenCalled() // mic NOT stopped on a re-arm
+    // synchronously hold 'recording' so the Start button can't re-enable in the re-arm gap (no double-arm)
+    expect(store.setTurnStatus).toHaveBeenCalledWith('recording')
+  })
+
+  it('the re-armed turn is a fresh independent turn (a NEW turnId, not the prior)', async () => {
+    const { deps } = setup(autoLiveCompleted())
+    let n = 0
+    deps.createTurn.mockImplementation(async () => ({ turnId: `turn_${++n}` }))
+    const controller = createRecordingController(deps)
+
+    await controller.startRecording()
+    controller.onCascadeTerminal()
+    await flush()
+
+    const firstTurnId = (deps.client.start.mock.calls[0][0] as { turnId: string }).turnId
+    const secondTurnId = (deps.client.start.mock.calls[1][0] as { turnId: string }).turnId
+    expect(firstTurnId).toBe('turn_1')
+    expect(secondTurnId).toBe('turn_2')
+    expect(secondTurnId).not.toBe(firstTurnId)
+  })
+
+  it('manual mode: a completed terminal does NOT re-arm (single-turn-per-Start preserved)', async () => {
+    const { deps, captureStop } = setup(
+      baseState({ turnControlMode: 'manual', sessionStatus: 'active', turnStatus: 'completed' }),
+    )
+    const controller = createRecordingController(deps)
+
+    await controller.startRecording()
+    controller.onCascadeTerminal()
+    await flush()
+
+    expect(deps.createTurn).toHaveBeenCalledTimes(1) // no re-arm in manual mode
+    expect(deps.client.start).toHaveBeenCalledTimes(1)
+    expect(captureStop).toHaveBeenCalledTimes(1) // end path stops the mic
+  })
+
+  it('user-end (stopRecording in auto) stops the loop: a later completed terminal does NOT re-arm + the mic is stopped', async () => {
+    const { deps, captureStop, state } = setup(
+      baseState({ turnControlMode: 'auto', sessionStatus: 'active', turnStatus: 'recording' }),
+    )
+    const controller = createRecordingController(deps)
+    await controller.startRecording()
+
+    controller.stopRecording() // the user ends the conversation (auto mode = end-conversation control)
+    expect(captureStop).toHaveBeenCalledTimes(1) // mic stopped
+    expect(deps.client.stop).toHaveBeenCalledTimes(1) // finalize the in-flight turn
+
+    state.turnStatus = 'completed' // the in-flight turn's done arrives afterward
+    controller.onCascadeTerminal()
+    await flush()
+
+    expect(deps.createTurn).toHaveBeenCalledTimes(1) // still 1 — no re-arm after the user ended
+  })
+
+  it('does NOT re-arm when the session is no longer live (ended mid-loop)', async () => {
+    const { deps, captureStop, state } = setup(autoLiveCompleted())
+    const controller = createRecordingController(deps)
+    await controller.startRecording()
+
+    state.sessionStatus = 'ended' // session ended (End clicked) before the terminal fires
+    controller.onCascadeTerminal()
+    await flush()
+
+    expect(deps.createTurn).toHaveBeenCalledTimes(1) // no re-arm on a dead session
+    expect(captureStop).toHaveBeenCalledTimes(1) // mic stopped (end path)
+  })
+
+  it('re-arm createTurn failure degrades gracefully — no stuck recording, mic stopped, error surfaced', async () => {
+    // The re-arm sets turnStatus('recording') SYNCHRONOUSLY (the double-arm fix) before the async
+    // createTurn resolves — so a createTurn failure must UNSTICK it (else the UI hangs in a fake
+    // "recording" with nothing happening) + stop the mic (no orphan) + surface the error + not spin.
+    const { deps, store, captureStop } = setup(autoLiveCompleted())
+    deps.createTurn
+      .mockResolvedValueOnce({ turnId: 'turn_1' }) // startRecording's turn
+      .mockRejectedValueOnce(
+        new ApiError({ code: 'rate_limited', safeMessage: 'Too many requests.', retryable: true }),
+      ) // the re-arm fails
+    const controller = createRecordingController(deps)
+    await controller.startRecording()
+
+    controller.onCascadeTerminal()
+    await flush()
+
+    expect(store.addError).toHaveBeenCalledWith(expect.objectContaining({ code: 'rate_limited' }))
+    expect(captureStop).toHaveBeenCalledTimes(1) // mic stopped (don't orphan / spin)
+    expect(store.setTurnStatus).toHaveBeenCalledWith('failed') // unstuck from the synchronous 'recording'
+    expect(deps.client.start).toHaveBeenCalledTimes(1) // no 2nd WS — the re-arm aborted
   })
 })
 

@@ -47,8 +47,34 @@ function recordingMarker(name: string): LatencyEvent {
 export function createRecordingController(deps: RecordingDeps): RecordingController {
   let captureHandle: StreamingHandle | null = null
   // Guards against a re-entrant start (e.g. a Start double-click) racing in the window before beginTurn
-  // flips turnStatus to 'recording' — a second turn would otherwise orphan a server turn.
+  // flips turnStatus to 'recording' — a second turn would otherwise orphan a server turn. Also held across
+  // the async J.5 re-arm so a concurrent Start can't acquire a 2nd mic over the still-live one.
   let inFlight = false
+  // J.5 continuous-listening: set true by the user's end-conversation Stop (auto mode) — breaks the re-arm
+  // loop so the next auto-finalized `done` cleans up instead of beginning another turn. Reset on each Start.
+  let userEnded = false
+
+  const sessionLive = (state: { sessionId: string | null; sessionStatus: string }): boolean =>
+    state.sessionId !== null &&
+    (state.sessionStatus === 'active' || state.sessionStatus === 'readyForTurn')
+
+  // Stamp the browser-clock recording.started origin (D.6) + open a fresh WS for `turnId` over the (already
+  // live) capture. Shared by the first turn (startRecording) and each continuous re-arm (J.5) so the start
+  // frame is byte-identical: autoVad only in auto (I.3), bidirectional only when on (J.3).
+  function startTurnFrame(sessionId: string, turnId: string, sampleRate: number): void {
+    const state = deps.store.getState()
+    deps.store.appendLatencyEvent(recordingMarker('turn.recording.started'))
+    deps.client.start({
+      sessionId,
+      turnId,
+      direction: state.direction,
+      sampleRate,
+      translationModel: state.translationModel,
+      ttsVoice: '', // blank -> the backend ResolveVoice picks the per-target-language voice
+      ...(state.turnControlMode === 'auto' ? { autoVad: true } : {}),
+      ...(state.bidirectional ? { bidirectional: true } : {}),
+    })
+  }
 
   async function startRecording(): Promise<void> {
     if (inFlight) {
@@ -60,6 +86,7 @@ export function createRecordingController(deps: RecordingDeps): RecordingControl
       return // no active session — Start is also gated by canStartRecording
     }
     inFlight = true
+    userEnded = false // a fresh Start begins a new conversation — clear any prior end flag
     try {
       let turnId: string
       try {
@@ -81,7 +108,8 @@ export function createRecordingController(deps: RecordingDeps): RecordingControl
       deps.store.beginTurn({ turnId, mode: state.mode, direction: state.direction })
 
       // Start capture first to learn the actual sampleRate; frames begin flowing to sendFrame, which the
-      // client queues until the socket opens (the start frame carries the rate; no resample).
+      // client queues until the socket opens (the start frame carries the rate; no resample). The mic stream
+      // then stays alive across continuous turns (J.5) — each re-arm opens only a new WS, no re-acquire.
       captureHandle = await deps.capture.startStreaming({
         onFrame: (frame) => deps.client.sendFrame(frame),
         onError: (uiError) => deps.store.failTurn(uiError),
@@ -90,40 +118,94 @@ export function createRecordingController(deps: RecordingDeps): RecordingControl
         return // mic denied / capture failed — onError already surfaced; do not open the WS
       }
 
-      // Capture is live → stamp recording.started (browser clock) as the totalTurn origin (D.6).
-      deps.store.appendLatencyEvent(recordingMarker('turn.recording.started'))
-
-      deps.client.start({
-        sessionId,
-        turnId,
-        direction: state.direction,
-        sampleRate: captureHandle.sampleRate,
-        translationModel: state.translationModel,
-        ttsVoice: '', // blank -> the backend ResolveVoice picks the per-target-language voice
-        // Phase-I (I.3): only in auto mode → the backend auto-finalizes on Deepgram utterance-end. Omitted
-        // in manual (the key is absent, not present-false) so the manual frame is byte-identical to pre-062.
-        ...(state.turnControlMode === 'auto' ? { autoVad: true } : {}),
-        // Phase J (J.3): only when bidirectional → the backend auto-detects the source language per utterance
-        // + flips direction. Omitted otherwise so the one-direction start frame stays byte-identical (078).
-        ...(state.bidirectional ? { bidirectional: true } : {}),
-      })
+      startTurnFrame(sessionId, turnId, captureHandle.sampleRate)
     } finally {
       inFlight = false
     }
   }
 
-  // The cascade auto-VAD turn-end hook (I.3): the backend auto-finalizes the turn (the `done` frame already
-  // ran completeTurn) without a frontend Stop, so the mic would keep running — stop + clear the capture
-  // here. Idempotent: the optional-chain + null-out makes a 2nd call (or a prior manual stopRecording, which
-  // already nulled the handle) a no-op. Stamps NO recording.stopped (that would be turn-complete time, not
-  // speech-end → a wrong delta; cascade responsiveness anchors on stt.final, web §25) + no setTurnStatus
-  // (completeTurn already moved the turn + set the status). Wired at the composition root (main.tsx).
+  // The cascade auto-VAD turn-end hook (I.3 → J.5). The backend auto-finalizes the turn (the `done` frame
+  // already ran completeTurn) with no frontend Stop. In auto mode, on a COMPLETED terminal of a live session
+  // the user hasn't ended, AUTO-BEGIN the next turn (a new WS over the still-live mic) — the hands-free
+  // continuous loop. Otherwise (manual / a failed terminal / not-live / user-ended) take the END path: stop
+  // + clear the mic (idempotent — optional-chain + null-out). The store's turnStatus, set by
+  // completeTurn/failTurn BEFORE this hook fires, is the completed-vs-failed outcome seam (no new signal).
   function onCascadeTerminal(): void {
+    const state = deps.store.getState()
+    const handle = captureHandle // snapshot (a const TS can narrow; captureHandle is closure-reassigned)
+    const rearmable =
+      handle !== null &&
+      state.turnStatus === 'completed' &&
+      state.turnControlMode === 'auto' &&
+      sessionLive(state) &&
+      !userEnded
+    if (rearmable && handle) {
+      // Hold 'recording' SYNCHRONOUSLY so the Start button can't re-enable in the async re-arm gap (a
+      // concurrent Start would startStreaming over the live mic → null handle → orphaned mic). Mic stays alive.
+      deps.store.setTurnStatus('recording')
+      void rearmCascadeTurn(state.sessionId as string, handle.sampleRate)
+      return
+    }
     captureHandle?.stop()
     captureHandle = null
   }
 
+  // Begin the next continuous turn (J.5): a fresh turnId + a new WS over the already-live mic. inFlight-guarded
+  // (a concurrent Start is dropped). A createTurn failure DEGRADES GRACEFULLY — surface the error, stop the
+  // mic (don't spin/orphan), and UNSTICK the synchronous 'recording' to a recoverable 'failed' (the user can
+  // Start a new conversation). A user-end / session-end that lands during the async createTurn aborts cleanly.
+  async function rearmCascadeTurn(sessionId: string, sampleRate: number): Promise<void> {
+    if (inFlight) {
+      return
+    }
+    inFlight = true
+    try {
+      let turnId: string
+      try {
+        const created = await deps.createTurn(sessionId)
+        turnId = created.turnId
+      } catch (error) {
+        deps.store.addError(
+          error instanceof ApiError
+            ? error.uiError
+            : {
+                code: 'turn.create_failed',
+                safeMessage: 'Could not start the turn.',
+                retryable: true,
+              },
+        )
+        captureHandle?.stop()
+        captureHandle = null
+        deps.store.setTurnStatus('failed') // unstick the synchronous 'recording' → recoverable
+        return
+      }
+      // A user-end / session-end (or lost mic) during the async createTurn → drop the re-armed turn cleanly.
+      const state = deps.store.getState()
+      if (userEnded || !sessionLive(state) || captureHandle === null) {
+        captureHandle?.stop()
+        captureHandle = null
+        return
+      }
+      deps.store.beginTurn({ turnId, mode: state.mode, direction: state.direction })
+      startTurnFrame(sessionId, turnId, sampleRate)
+    } finally {
+      inFlight = false
+    }
+  }
+
   function stopRecording(): void {
+    // J.5: in auto (continuous) mode the Stop button is the "end conversation" control — set the user-end
+    // flag so the in-flight turn's `done` won't re-arm, finalize that turn (client.stop, idempotent with the
+    // §34 utterance-end terminal), and stop the mic. NO recording.stopped marker (the auto speech-end anchor
+    // is backend-stamped; web §25). Manual mode is unchanged (single-turn stop).
+    if (deps.store.getState().turnControlMode === 'auto') {
+      userEnded = true
+      deps.client.stop()
+      captureHandle?.stop()
+      captureHandle = null
+      deps.store.setTurnStatus('processing')
+      return
+    }
     captureHandle?.stop()
     captureHandle = null
     // Stamp recording.stopped — the speechEnd marker every speechEnd->* delta measures from (browser
