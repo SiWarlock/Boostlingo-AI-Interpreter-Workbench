@@ -92,6 +92,50 @@ describe('SessionSetup — turn-control toggle (Manual | Auto-VAD) (I.2 slice 1)
   })
 })
 
+describe('SessionSetup — bidirectional toggle (Phase J)', () => {
+  it('renders the Bidirectional toggle (default off) and enables it on click', () => {
+    sessionStore.reset()
+    sessionStore.loadConfig(config)
+    render(<SessionSetup />)
+
+    const toggle = screen.getByRole('button', { name: /bidirectional/i })
+    expect(sessionStore.getState().bidirectional).toBe(false)
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+
+    fireEvent.click(toggle)
+
+    expect(sessionStore.getState().bidirectional).toBe(true)
+  })
+
+  it('defaults turn-control to Auto-VAD when bidirectional is enabled (hands-free default; flags stay independent)', () => {
+    sessionStore.reset()
+    sessionStore.loadConfig(config)
+    render(<SessionSetup />)
+
+    expect(sessionStore.getState().turnControlMode).toBe('manual')
+    fireEvent.click(screen.getByRole('button', { name: /bidirectional/i }))
+
+    // Enabling bidirectional defaults to Auto-VAD (hands-free back-and-forth); the flags remain independent
+    // (the user can still switch turn-control back to Manual). Design flag (b) default vote.
+    expect(sessionStore.getState().turnControlMode).toBe('auto')
+  })
+
+  it('does NOT flip turn-control to Auto mid-turn — the coupling respects canToggleMode', () => {
+    sessionStore.reset()
+    sessionStore.loadConfig(config)
+    sessionStore.sessionStarted(session)
+    sessionStore.setTurnStatus('recording') // mid-turn → canToggleMode false
+    render(<SessionSetup />)
+
+    fireEvent.click(screen.getByRole('button', { name: /bidirectional/i }))
+
+    // The flag still sets (it's pre-session-consumed, like Direction)…
+    expect(sessionStore.getState().bidirectional).toBe(true)
+    // …but the coupling must NOT flip turn-control mid-turn (it would bypass the turn-control gate).
+    expect(sessionStore.getState().turnControlMode).toBe('manual')
+  })
+})
+
 describe('SessionSetup — End session teardown (E.5a)', () => {
   it('tears down the realtime connection when the session ends', () => {
     sessionStore.loadConfig(config)

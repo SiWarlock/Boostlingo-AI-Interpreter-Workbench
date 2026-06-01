@@ -46,6 +46,7 @@ function makeMockStore() {
     setTurnCost: vi.fn(),
     failTurn: vi.fn(),
     completeTurn: vi.fn(),
+    setTurnDirection: vi.fn(),
   }
 }
 
@@ -93,6 +94,15 @@ describe('buildStartFrame', () => {
     expect(buildStartFrame({ ...params, autoVad: true })).toMatchObject({ autoVad: true })
     expect('autoVad' in buildStartFrame({ ...params, autoVad: false })).toBe(false)
     expect('autoVad' in buildStartFrame(params)).toBe(false)
+  })
+
+  it('includes bidirectional only when truthy; omits it when false/undefined (back-compat with cascade-078) — J.3', () => {
+    // Phase J: when the bidirectional toggle is on the backend auto-detects the source language per
+    // utterance + flips direction. Omit-when-falsy keeps the one-direction frame byte-identical (the
+    // exact-frame test above pins that — the key must be absent, not present-false; mirrors autoVad).
+    expect(buildStartFrame({ ...params, bidirectional: true })).toMatchObject({ bidirectional: true })
+    expect('bidirectional' in buildStartFrame({ ...params, bidirectional: false })).toBe(false)
+    expect('bidirectional' in buildStartFrame(params)).toBe(false)
   })
 })
 
@@ -165,6 +175,20 @@ describe('dispatchCascadeMessage', () => {
       },
     )
     expect(store.completeTurn).toHaveBeenCalledWith('turn_001', 'completed')
+  })
+
+  it('routes a direction message to setTurnDirection (bidirectional per-utterance direction, J.3)', () => {
+    const store = makeMockStore()
+    const onAudio = vi.fn()
+
+    // Backend (cascade-078) emits {type:"direction"} once per utterance when it resolves the detected
+    // source language → the FE stamps the live turn's direction (the measured-signal path; realtime is
+    // the best-effort heuristic). The detected source is Spanish here → es→en.
+    dispatchCascadeMessage(
+      JSON.stringify({ type: 'direction', direction: { source: 'es', target: 'en' } }),
+      { store, onAudio },
+    )
+    expect(store.setTurnDirection).toHaveBeenCalledWith({ source: 'es', target: 'en' })
   })
 
   it('routes audio to onAudio and NEVER to the store (raw audio off the store, invariant #3)', () => {

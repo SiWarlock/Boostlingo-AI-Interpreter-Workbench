@@ -17,6 +17,11 @@ export const realtimeApi = {
     if (req.model !== undefined) {
       body.model = req.model
     }
+    // Phase J (J.3): include only when bidirectional — omit-when-false keeps the one-direction body
+    // byte-identical (the broker defaults false). Mirrors the `model` omit pattern above.
+    if (req.bidirectional) {
+      body.bidirectional = true
+    }
 
     return request<RealtimeTokenResponse>('/api/realtime/client-secret', {
       method: 'POST',

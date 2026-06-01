@@ -96,6 +96,11 @@ export type UiSessionState = {
   sessionStatus: SessionStatus
   turnStatus: TurnStatus
   turnControlMode: TurnControlMode // Phase I — 'manual' (default) | 'auto' (server-VAD); UI-runtime state
+  // Phase J (Bidirectional) — when true, per utterance the source language is auto-detected + direction
+  // flips to the OTHER language (cascade: backend Deepgram detection → `{type:"direction"}` message;
+  // realtime: a best-effort client EN/ES heuristic on the source transcript). Additive; default false
+  // preserves the one-direction flow. Consumed at session/turn start (cascade start frame + realtime mint).
+  bidirectional: boolean
   providerHealth?: ConfigResponse // from GET /api/config
   turns: TurnViewModel[]
   currentTurn?: TurnViewModel
@@ -275,6 +280,10 @@ export type RealtimeTokenRequest = {
   sessionId: string
   direction: LanguageDirection
   model?: string
+  // Phase J (Bidirectional) — when true the broker (realtime-079) renders the bidirectional instruction
+  // template ("detect EN vs ES → render in the OTHER"). Optional; omitted-when-false keeps the
+  // one-direction mint body unchanged (backend defaults false). (J.3)
+  bidirectional?: boolean
 }
 
 export type RealtimeTokenResponse = {

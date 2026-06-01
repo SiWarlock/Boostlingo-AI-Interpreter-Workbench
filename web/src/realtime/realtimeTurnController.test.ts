@@ -108,6 +108,57 @@ describe('createRealtimeTurnController', () => {
     })
   })
 
+  it('bidirectional: stamps the turn direction from the source-transcript heuristic (es source → es→en) — J.3', async () => {
+    const { store, client, controller } = setup()
+    store.updateSessionConfig({ bidirectional: true }) // enable the bidirectional path (config direction stays en→es)
+
+    await controller.startTurn() // manual turn wires client.onServerEvent
+    // The authoritative full source transcript arrives via input_audio_transcription.completed. Realtime has
+    // no provider language tag → the controller runs the deterministic detectLanguage heuristic on it and
+    // re-stamps the turn direction (best-effort display badge). Spanish source ⇒ es→en.
+    client.onServerEvent?.(
+      JSON.stringify({
+        type: 'conversation.item.input_audio_transcription.completed',
+        transcript: '¿Cómo está usted?',
+      }),
+    )
+
+    expect(store.getState().currentTurn?.direction).toEqual({ source: 'es', target: 'en' })
+  })
+
+  it('one-direction (bidirectional off): a Spanish source transcript does NOT change the turn direction', async () => {
+    const { store, client, controller } = setup() // bidirectional defaults false
+
+    await controller.startTurn()
+    client.onServerEvent?.(
+      JSON.stringify({
+        type: 'conversation.item.input_audio_transcription.completed',
+        transcript: '¿Cómo está usted?',
+      }),
+    )
+
+    // One-direction mode keeps the configured direction (en→es) — the heuristic is gated on bidirectional.
+    expect(store.getState().currentTurn?.direction).toEqual({ source: 'en', target: 'es' })
+  })
+
+  it('bidirectional: an ambiguous source transcript falls back to the configured source direction (J.3 AC)', async () => {
+    const { store, client, controller } = setup()
+    store.updateSessionConfig({ bidirectional: true })
+
+    await controller.startTurn()
+    // Signal-less text → detectLanguage returns null → the call-site policy falls back to the CONFIGURED
+    // source (en→es), NOT undefined and NOT a stale stamp. Pins the brief AC "fall back to the configured
+    // source on ambiguity" at the wiring layer where the policy lives.
+    client.onServerEvent?.(
+      JSON.stringify({
+        type: 'conversation.item.input_audio_transcription.completed',
+        transcript: '12345',
+      }),
+    )
+
+    expect(store.getState().currentTurn?.direction).toEqual({ source: 'en', target: 'es' })
+  })
+
   it('startTurn sends session.update(turn_detection:null + input transcription re-asserted) then input_audio_buffer.clear and stamps recording.started', async () => {
     const { store, client, controller } = setup()
 

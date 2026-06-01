@@ -6,11 +6,12 @@ import type { CompleteTurnRequest, LanguageDirection, LatencyEvent, UiError } fr
 import { createRealtimeEventSink } from './realtimeEventSink'
 import type { RealtimeEventSink } from './realtimeEventSink'
 import { normalizeRealtimeEvent, parseRealtimeEvent } from './realtimeEvents'
-import type { RealtimeUsageTokens } from './realtimeEvents'
+import type { NormalizedRealtimeEvent, RealtimeUsageTokens } from './realtimeEvents'
 import { realtimeConnectionManager } from './realtimeConnectionManager'
 import type { RealtimeConnectionManager } from './realtimeConnectionManager'
 import { realtimeWebRtcClient } from './realtimeWebRtcClient'
 import type { RealtimeWebRtcClient } from './realtimeWebRtcClient'
+import { detectLanguage } from '../util/detectLanguage'
 
 // The realtime turn controller (ARCH-010 §7 manual VAD-off) — the §11 cascade-recording analogue. DI'd +
 // unit-tested vs the real store + mocked client/api; the production singleton wires the real collaborators.
@@ -50,6 +51,7 @@ export type RealtimeTurnDeps = {
     | 'completeTurn'
     | 'addError'
     | 'setTurnStatus'
+    | 'setTurnDirection'
   >
   client: Pick<RealtimeWebRtcClient, 'sendClientEvent' | 'onServerEvent'>
   // Persistent connect is delegated here (E.5a) — the manager holds one pc across turns (idempotent).
@@ -105,6 +107,24 @@ export function createRealtimeTurnController(deps: RealtimeTurnDeps): RealtimeTu
       clockSource: 'browser',
       metadata: {},
     }
+  }
+
+  // Phase J (J.3) — realtime emits no provider language tag, so when bidirectional is on we stamp the turn's
+  // direction from a best-effort EN/ES heuristic on the AUTHORITATIVE full source transcript (the
+  // `sourceTranscriptCompleted` event — not partial deltas, so the badge resolves when the utterance
+  // finalizes). A signal-less transcript (detectLanguage → null) falls back to the configured source. Gated
+  // on the flag → one-direction turns keep their config direction. Best-effort display only (vs cascade's
+  // measured backend `direction` message). Called from BOTH the manual + auto server-event routes.
+  function maybeResolveRealtimeDirection(event: NormalizedRealtimeEvent): void {
+    if (event.kind !== 'sourceTranscriptCompleted') {
+      return
+    }
+    const { bidirectional, direction } = store.getState() // one read — coherent snapshot
+    if (!bidirectional) {
+      return
+    }
+    const source = detectLanguage(event.text) ?? direction.source
+    store.setTurnDirection({ source, target: source === 'en' ? 'es' : 'en' })
   }
 
   // On responseDone the turn is finalized (moved into turns[]) — report its accumulated client events to the
@@ -276,6 +296,7 @@ export function createRealtimeTurnController(deps: RealtimeTurnDeps): RealtimeTu
         return
       }
       sink.handle(event)
+      maybeResolveRealtimeDirection(event) // J.3: stamp the bidirectional direction from the source transcript
       if (event.kind === 'responseDone') {
         reportTurnEvents(sessionId, turnId)
         finalizeTurn(sessionId, turnId, event.usage)
@@ -406,6 +427,7 @@ export function createRealtimeTurnController(deps: RealtimeTurnDeps): RealtimeTu
         // transcript deltas / audio / response.done / error → the current segment's sink.
         if (currentSink !== null) {
           currentSink.handle(event)
+          maybeResolveRealtimeDirection(event) // J.3: bidirectional direction from the segment's source transcript
         }
         if (event.kind === 'responseDone' && currentSegmentTurnId !== null) {
           // The sink's completeTurn (above) moved the turn into turns[]; report + finalize it (§26 /complete

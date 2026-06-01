@@ -13,6 +13,7 @@ function baseState(overrides: Partial<UiSessionState> = {}): UiSessionState {
     sessionStatus: 'active',
     turnStatus: 'ready',
     turnControlMode: 'manual',
+    bidirectional: false,
     turns: [],
     errors: [],
     ...overrides,
@@ -43,6 +44,22 @@ function setup(state: UiSessionState = baseState()) {
 }
 
 describe('startRecording', () => {
+  it('passes bidirectional: true to the cascade start frame when enabled (J.3); omits it when off', async () => {
+    // Phase J: the store-level bidirectional flag flows into the cascade WS start frame so the backend
+    // (cascade-078) auto-detects + flips direction per utterance. Omit-when-off keeps the one-direction
+    // start frame byte-identical (buildStartFrame drops an absent key).
+    const on = setup(baseState({ bidirectional: true }))
+    await createRecordingController(on.deps).startRecording()
+    expect(on.deps.client.start).toHaveBeenCalledWith(
+      expect.objectContaining({ bidirectional: true }),
+    )
+
+    const off = setup() // bidirectional: false
+    await createRecordingController(off.deps).startRecording()
+    const startArg = off.deps.client.start.mock.calls[0][0] as Record<string, unknown>
+    expect('bidirectional' in startArg).toBe(false)
+  })
+
   it('creates the turn, begins it, starts capture, opens the WS, and pipes frames', async () => {
     const { deps, store } = setup()
     const controller = createRecordingController(deps)

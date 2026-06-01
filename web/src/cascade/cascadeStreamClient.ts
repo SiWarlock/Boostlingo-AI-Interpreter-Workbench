@@ -29,6 +29,10 @@ export type CascadeStartParams = {
   // client `stop`). Mirrors the backend CascadeStartParams.AutoVad (062). Omitted when falsy → the manual
   // start frame stays byte-identical to pre-062 (backend defaults false).
   autoVad?: boolean
+  // Phase J (Bidirectional): when true the backend auto-detects the source language per utterance (Deepgram
+  // streaming detection) + flips direction. Mirrors the backend CascadeStartParams.Bidirectional (078).
+  // Omitted when falsy → the one-direction start frame stays byte-identical (backend defaults false).
+  bidirectional?: boolean
 }
 
 export type CascadeAudioChunk = { contentType: string; seq: number; base64: string }
@@ -36,7 +40,12 @@ export type CascadeAudioChunk = { contentType: string; seq: number; base64: stri
 // The subset of the store the cascade client + dispatch drive (the streaming actions).
 export type CascadeStore = Pick<
   SessionStore,
-  'appendTranscriptSegment' | 'appendLatencyEvent' | 'setTurnCost' | 'failTurn' | 'completeTurn'
+  | 'appendTranscriptSegment'
+  | 'appendLatencyEvent'
+  | 'setTurnCost'
+  | 'failTurn'
+  | 'completeTurn'
+  | 'setTurnDirection'
 >
 
 export type CascadeStreamClient = {
@@ -71,6 +80,8 @@ export function buildStartFrame(params: CascadeStartParams) {
     ttsVoice: params.ttsVoice,
     // Include only when auto (I.3) — a falsy/absent autoVad keeps the manual frame byte-identical to pre-062.
     ...(params.autoVad ? { autoVad: true } : {}),
+    // Include only when bidirectional (J.3) — falsy/absent keeps the one-direction frame byte-identical (078).
+    ...(params.bidirectional ? { bidirectional: true } : {}),
   }
 }
 
@@ -108,6 +119,12 @@ export function dispatchCascadeMessage(
       case 'transcript':
         deps.store.appendTranscriptSegment(msg.segment as TranscriptSegment)
         return 'transcript'
+      case 'direction':
+        // Phase J (078): the backend resolved the per-utterance direction from Deepgram's source-language
+        // detection → stamp the live turn's direction (a measured signal; emitted once per utterance, only
+        // in bidirectional mode). One-direction turns never receive this frame (back-compat).
+        deps.store.setTurnDirection(msg.direction as LanguageDirection)
+        return 'direction'
       case 'latency':
         deps.store.appendLatencyEvent(msg.event as LatencyEvent)
         return 'latency'

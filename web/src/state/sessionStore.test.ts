@@ -60,9 +60,32 @@ describe('sessionStore', () => {
       sessionStatus: 'idle',
       turnStatus: 'ready',
       turnControlMode: 'manual', // I.2 slice 1 — default preserves the current manual flow
+      bidirectional: false, // Phase J — default one-direction (additive; mirrors turnControlMode)
       turns: [],
       errors: [],
     })
+  })
+
+  it('updateSessionConfig sets the bidirectional flag (J.3 — pre-session togglable, additive)', () => {
+    const store = createSessionStore()
+    expect(store.getState().bidirectional).toBe(false)
+
+    store.updateSessionConfig({ bidirectional: true })
+
+    expect(store.getState().bidirectional).toBe(true)
+  })
+
+  it('setTurnDirection updates the current turn direction (bidirectional per-utterance), immutably; no-op without a turn', () => {
+    const store = createSessionStore()
+    // No current turn → no-op, never throws (defensive — direction frames arrive only between begin/complete).
+    expect(() => store.setTurnDirection({ source: 'es', target: 'en' })).not.toThrow()
+
+    store.beginTurn({ turnId: 't1', mode: 'cascade', direction: { source: 'en', target: 'es' } })
+    const before = store.getState()
+    store.setTurnDirection({ source: 'es', target: 'en' })
+
+    expect(store.getState().currentTurn?.direction).toEqual({ source: 'es', target: 'en' })
+    expect(store.getState()).not.toBe(before) // new ref (immutable)
   })
 
   it('setTurnControlMode flips the session turn-control mode (manual default → auto), immutably', () => {

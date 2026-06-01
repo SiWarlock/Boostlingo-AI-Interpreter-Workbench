@@ -124,6 +124,35 @@ export default function SessionSetup() {
         </div>
       </fieldset>
 
+      {/* Bidirectional / auto-detect (Phase J) — when on, the source language is auto-detected per utterance
+          and direction flips to the other language (both modes). Additive; default off (one-direction).
+          Pre-session-oriented (value consumed at session/turn start, like Direction). Enabling it defaults
+          turn-control to Auto-VAD (hands-free back-and-forth); the flags stay independent (the user can
+          switch turn-control back to Manual). The button's accessible name is "Bidirectional" only. */}
+      <fieldset className="field" aria-label="bidirectional">
+        <span className="field-lab">Auto-detect language</span>
+        <div className="seg">
+          <button
+            type="button"
+            className={`seg-opt${state.bidirectional ? ' active' : ''}`}
+            aria-pressed={state.bidirectional}
+            onClick={() => {
+              const next = !state.bidirectional
+              sessionStore.updateSessionConfig({ bidirectional: next })
+              // Hands-free default on enable (reversible) — but only when turn-control is itself togglable
+              // (canToggleMode), so the coupling can't flip the mode mid-turn (the turn-control toggle is
+              // gated the same way). The bidirectional flag itself is pre-session-consumed, so it's safe to
+              // set anytime (like the Direction selector).
+              if (next && canToggleMode(state.turnStatus)) {
+                sessionStore.setTurnControlMode('auto')
+              }
+            }}
+          >
+            Bidirectional
+          </button>
+        </div>
+      </fieldset>
+
       <div className="session-actions">
         <button
           type="button"

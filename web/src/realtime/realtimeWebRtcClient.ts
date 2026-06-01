@@ -232,6 +232,9 @@ export const realtimeWebRtcClient = createRealtimeWebRtcClient({
       sessionId: state.sessionId ?? '',
       direction: state.direction,
       model: state.realtimeModel,
+      // Phase J (J.3): forward the bidirectional flag so the broker renders the bidirectional instruction
+      // template (realtime-079). Composition-root wiring, like the `direction` above (manual-smoke-exempt).
+      bidirectional: state.bidirectional,
     })
   },
   onRemoteTrack: (stream) => attachRemoteAudio(stream),

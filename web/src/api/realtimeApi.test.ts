@@ -72,6 +72,33 @@ describe('realtimeApi.mintClientSecret', () => {
     expect(body).toEqual({ sessionId: 'session_abc', direction: { source: 'en', target: 'es' } })
   })
 
+  it('includes bidirectional in the body when set; omits it when false/undefined (back-compat) — J.3', async () => {
+    // Fresh Response per call — a body is single-read (web §4); two mints would share one consumed body.
+    const fetchMock = vi.fn().mockImplementation(() => jsonResponse(tokenResponse))
+    vi.stubGlobal('fetch', fetchMock)
+
+    // Phase J: the mint carries `bidirectional` so the broker (realtime-079) renders the bidirectional
+    // instruction template. Present-when-true, omitted-when-false (mirrors the `model` omit pattern — the
+    // exact-body test above stays green because the one-direction body is unchanged).
+    await realtimeApi.mintClientSecret({
+      sessionId: 'session_abc',
+      direction: { source: 'en', target: 'es' },
+      bidirectional: true,
+    })
+    const onBody = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)
+    expect(onBody).toMatchObject({ bidirectional: true })
+
+    await realtimeApi.mintClientSecret({
+      sessionId: 'session_abc',
+      direction: { source: 'en', target: 'es' },
+      bidirectional: false,
+    })
+    const offBody = JSON.parse(
+      (fetchMock.mock.calls[1][1] as RequestInit).body as string,
+    ) as Record<string, unknown>
+    expect('bidirectional' in offBody).toBe(false)
+  })
+
   it('surfaces a non-OK status as ApiError, never leaking the raw body', async () => {
     const fetchMock = vi
       .fn()

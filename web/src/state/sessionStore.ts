@@ -30,7 +30,10 @@ import type {
 // the store via updateSessionConfig; Start reads the merged result. Replaces the D.1 configureSession
 // (which had no live caller — D.2 chose the merging action).
 export type SessionConfigPatch = Partial<
-  Pick<UiSessionState, 'label' | 'mode' | 'direction' | 'realtimeModel' | 'translationModel'>
+  Pick<
+    UiSessionState,
+    'label' | 'mode' | 'direction' | 'realtimeModel' | 'translationModel' | 'bidirectional'
+  >
 >
 
 export type SessionStore = {
@@ -49,6 +52,7 @@ export type SessionStore = {
   reset(): void
   // --- Streaming turn actions (D.4a) — driven by the cascade WS client's dispatch ---
   beginTurn(input: { turnId: string; mode: InterpretationMode; direction: LanguageDirection }): void
+  setTurnDirection(direction: LanguageDirection): void
   appendTranscriptSegment(segment: TranscriptSegment): void
   appendLatencyEvent(event: LatencyEvent): void
   setTurnCost(estimate: CostEstimate): void
@@ -84,6 +88,7 @@ function createInitialState(): UiSessionState {
     sessionStatus: 'idle',
     turnStatus: 'ready',
     turnControlMode: 'manual', // Phase I — default preserves the current manual click-Start/Stop flow
+    bidirectional: false, // Phase J — default one-direction (additive; mirrors turnControlMode)
     turns: [],
     errors: [],
   }
@@ -160,6 +165,17 @@ export function createSessionStore(): SessionStore {
         },
         turnStatus: 'recording',
       }),
+
+    // Phase J — update the live turn's direction once the per-utterance source language resolves (cascade:
+    // the backend `{type:"direction"}` message; realtime: the client EN/ES heuristic). No active turn → a
+    // no-op (defensive; direction frames arrive only between begin and complete). Immutable (new ref).
+    setTurnDirection: (direction) => {
+      const turn = state.currentTurn
+      if (!turn) {
+        return
+      }
+      set({ ...state, currentTurn: { ...turn, direction } })
+    },
 
     appendTranscriptSegment: (segment) => {
       const turn = state.currentTurn

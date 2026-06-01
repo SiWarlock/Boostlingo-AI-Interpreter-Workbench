@@ -103,6 +103,9 @@ export function createRecordingController(deps: RecordingDeps): RecordingControl
         // Phase-I (I.3): only in auto mode → the backend auto-finalizes on Deepgram utterance-end. Omitted
         // in manual (the key is absent, not present-false) so the manual frame is byte-identical to pre-062.
         ...(state.turnControlMode === 'auto' ? { autoVad: true } : {}),
+        // Phase J (J.3): only when bidirectional → the backend auto-detects the source language per utterance
+        // + flips direction. Omitted otherwise so the one-direction start frame stays byte-identical (078).
+        ...(state.bidirectional ? { bidirectional: true } : {}),
       })
     } finally {
       inFlight = false
