@@ -2,6 +2,7 @@ using AiInterpreter.Api.Cascade;
 using AiInterpreter.Api.Common;
 using AiInterpreter.Api.Config;
 using AiInterpreter.Api.Cost;
+using AiInterpreter.Api.Dev;
 using AiInterpreter.Api.Evaluation;
 using AiInterpreter.Api.Metrics;
 using AiInterpreter.Api.Providers.Abstractions;
@@ -162,6 +163,11 @@ builder.Services.AddTransient<CascadeStreamingOrchestrator>();
 // orchestrator for pre-recorded STT -> the same translation/TTS, collected into a turn. Transient so it
 // never captures a transient typed-HttpClient provider (captive-dependency); each request resolves fresh.
 builder.Services.AddTransient<CascadeOrchestrator>();
+
+// G.4-BE (dev-only) — synthetic TTS synthesis for the soak-harness. Transient (mirrors the cascade
+// orchestrators) so it never captures the typed-HttpClient ITtsProvider (captive-dependency); each request
+// resolves fresh. The route that exposes it is Development-gated below; the service persists nothing (stateless).
+builder.Services.AddTransient<IDevTtsSynthesisService, DevTtsSynthesisService>();
 builder.Services.AddScoped(sp => new CascadeWebSocketEndpoint(
     sp.GetRequiredService<CascadeStreamingOrchestrator>(),
     sp.GetRequiredService<SessionStore>(),
@@ -233,6 +239,29 @@ app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
 
 // Cascade streaming WS (C.4a, ARCH-009) — the real-provider cascade turn entry point (C.1/C.2/C.3 reachable here).
 app.Map("/api/cascade/stream", (HttpContext ctx, CascadeWebSocketEndpoint endpoint) => endpoint.HandleAsync(ctx));
+
+// G.4-BE (dev-only) — synthetic TTS for the soak-harness (POST /api/dev/tts). Development-gated: the route is
+// NEVER mapped in Production (mirrors the Swagger gating above), so the synth surface stays out of the
+// demo/production build. The browser harness cannot call OpenAI TTS directly (the key is server-side only —
+// invariant #1), so it fetches synthesized audio here, caches it, and reuses it across both modes. Thin
+// (ARCH-008): logic lives in IDevTtsSynthesisService; the handler maps the outcome -> HTTP, sanitizing any
+// failure to a UiError (invariant #4).
+if (app.Environment.IsDevelopment())
+{
+    app.MapPost("/api/dev/tts", async (
+        DevTtsRequest request,
+        IDevTtsSynthesisService synthesis,
+        ErrorSanitizer sanitizer,
+        CancellationToken ct) =>
+    {
+        var outcome = await synthesis.SynthesizeAsync(request.Text, request.Language, ct);
+        return outcome.Status == DevTtsSynthesisStatus.Ok
+            ? Results.File(outcome.Audio!, outcome.ContentType!)
+            : Results.Json(
+                sanitizer.ToUiError(outcome.Error!),
+                statusCode: outcome.Error!.HttpStatusCode ?? StatusCodes.Status502BadGateway);
+    });
+}
 
 app.MapControllers();
 
