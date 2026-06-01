@@ -1,4 +1,6 @@
-# Session 026 — Orchestrator handoff: WHOLESALE CLOSE-OUT (user laptop restart); the live soak run is PENDING — it never ran
+# Session 027 — Orchestrator handoff: WHOLESALE CLOSE-OUT (user laptop restart); the live soak run is PENDING — it never ran
+
+> _(Renumbered 026 → 027: the backend `/session-end` doc landed first as `026` (`5c681d2`); this close-out handoff is `027`, matching the first-committed/chronological convention — same as the prior `024 → 025` precedent.)_
 
 - **Date:** 2026-06-01
 - **Role:** orchestrator (boostlingo-main) — emergency wholesale close-out
