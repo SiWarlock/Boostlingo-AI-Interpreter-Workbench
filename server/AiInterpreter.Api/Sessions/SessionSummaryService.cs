@@ -41,7 +41,7 @@ public sealed class SessionSummaryService
     // interpretation turns only — one filter covers every per-mode field. (SummarizeWer keeps them.)
     private ModeSummary? SummarizeMode(IReadOnlyList<InterpretationTurn> allTurns, InterpretationMode mode)
     {
-        var turns = allTurns.Where(t => t.Mode == mode && !t.IsEvaluation).ToList();
+        var turns = allTurns.Where(t => t.Mode == mode && !t.IsEvaluation && !IsEmptySilence(t)).ToList();
         if (turns.Count == 0)
         {
             return null;
@@ -61,6 +61,13 @@ public sealed class SessionSummaryService
             AvgTranslationFinalMs: Average(perTurnMetrics.Select(m => m.TranslationFinalMs)),
             AvgTtsFirstAudioMs: Average(perTurnMetrics.Select(m => m.TtsFirstAudioMs)));
     }
+
+    // J.6 — a COMPLETED turn that captured NO transcript is an auto-VAD silence/gap (the continuous loop
+    // re-armed on a silent stretch). Exclude it from the per-mode comparison so a phantom silence turn can't
+    // inflate TurnCount/averages. Scoped to Completed on purpose: a FAILED 0-transcript turn (a real early
+    // failure, e.g. an immediate SttFailed) is KEPT so its error still surfaces in ErrorCount.
+    private static bool IsEmptySilence(InterpretationTurn t) =>
+        t.Status == TurnStatus.Completed && t.Transcripts.Count == 0;
 
     // Session-level (both modes). WER is unbounded — never clamp > 1.0 when averaging (lesson §10).
     private static WerSummary? SummarizeWer(IReadOnlyList<InterpretationTurn> turns)

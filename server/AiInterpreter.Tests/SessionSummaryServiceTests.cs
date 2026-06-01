@@ -103,9 +103,16 @@ public class SessionSummaryServiceTests
             errors.Add(new ProviderError("p", "stt", "stt.failed", "msg", false, null));
         }
 
+        // A real interpretation turn carries ≥1 transcript segment; the J.6 0-transcript exclusion keys on
+        // this, so the content-turn fixtures include one (silence/failed-empty variants strip it via `with`).
+        var transcripts = new List<TranscriptSegment>
+        {
+            new("src-0", "source", "content", IsFinal: true, "deepgram", Base, ClockSource.Server),
+        };
+
         return new InterpretationTurn(
             turnId, mode, dir, Base, Base.AddSeconds(2), 2000,
-            new List<TranscriptSegment>(), events, cost, werResult, errors,
+            transcripts, events, cost, werResult, errors,
             TurnStatus.Completed, "gpt-5-nano", "alloy");
     }
 
@@ -328,6 +335,30 @@ public class SessionSummaryServiceTests
         Assert.Equal(2, c.TurnCount);          // the eval turn is not an interpretation turn → not 3
         Assert.Equal(300, c.AvgSttFinalMs);    // (200+400)/2 — NOT (200+400+9999)/3
         Assert.Equal(0, c.ErrorCount);         // the eval turn's 5 errors are excluded too
+    }
+
+    // J.6 — a 0-transcript COMPLETED turn (an auto-VAD silence/gap) is EXCLUDED from the per-mode
+    // ModeSummary (TurnCount/averages) so a phantom silence turn can't inflate the comparison — like §29's
+    // IsEvaluation exclusion. A 0-transcript FAILED turn (a real early failure) is KEPT so its error still
+    // surfaces in ErrorCount (the exclusion is scoped to Completed, NOT a blanket 0-transcript drop).
+    [Fact]
+    public void summarize_mode_excludes_empty_silence_turn_but_keeps_failed_empty()
+    {
+        var content = CascadeTurn("t1", sttFinalMs: 200);                                   // Completed, 1 transcript
+        var silence = CascadeTurn("silence") with { Transcripts = new List<TranscriptSegment>() }; // Completed, 0 transcripts
+        var failedEmpty = CascadeTurn("failed") with                                        // Failed, 0 transcripts, 1 error
+        {
+            Status = TurnStatus.Failed,
+            Transcripts = new List<TranscriptSegment>(),
+            Errors = new List<ProviderError> { new("deepgram", "stt", "stt.unknown", "msg", false, null) },
+        };
+
+        var summary = Service().Compute(Session(content, silence, failedEmpty));
+
+        Assert.Equal(3, summary.TurnCount);   // top-level counts ALL turns (silence + failed-empty included)
+        var c = summary.Cascade!;
+        Assert.Equal(2, c.TurnCount);         // content + failed-empty; the Completed-silence turn is excluded
+        Assert.Equal(1, c.ErrorCount);        // the failed-empty turn's error STILL surfaces (not hidden)
     }
 
     // F.4 — 12: the SAME eval turn that ModeSummary excludes is STILL included in the session-level
