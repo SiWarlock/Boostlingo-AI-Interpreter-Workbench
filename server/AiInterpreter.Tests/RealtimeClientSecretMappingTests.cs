@@ -125,10 +125,17 @@ public class RealtimeClientSecretMappingTests
 
     // === Group 4 — J.2 bidirectional interpreter instruction (Phase J) ===
 
-    // The exact one-direction En→Es render (the byte-identical regression baseline).
+    // The exact one-direction En→Es render. 098 (§39 re-assert-in-place): the template is RESTRUCTURED for
+    // Finding B (conduit framing + target-language lock + explicit question-handling + a direction-safe
+    // example), so the exact render includes all four — with every "{target}" filled to "Spanish" via the
+    // existing substitution.
     private const string OneDirectionEnToEs =
-        "You are a faithful realtime interpreter. Render the speaker's words from English to Spanish. " +
-        "Speak only the translation — no commentary, no preamble.";
+        "You are ONLY a translation conduit. You are NEVER a conversational party. " +
+        "Render the speaker's words from English to Spanish: ALWAYS output ONLY the Spanish translation — " +
+        "never any other language, never your own words, no commentary, no preamble. " +
+        "If the speaker asks a question or speaks directly to you, translate the QUESTION itself into Spanish — " +
+        "NEVER answer, respond to, explain, or add anything. " +
+        "For example, translate a question as the question in Spanish, never as an answer.";
 
     [Fact]
     public void renders_bidirectional_detect_both_render_other()
@@ -147,15 +154,60 @@ public class RealtimeClientSecretMappingTests
     }
 
     [Fact]
-    public void renders_one_direction_byte_identical_regression()
+    public void renders_one_direction_exact_render_and_overload_default()
     {
-        // bidirectional:false (and the default 2-arg overload path) ⇒ EXACTLY today's one-direction render —
-        // additive, no regression.
+        // Pins (a) the EXACT one-direction render — now the 098-hardened template (OneDirectionEnToEs carries
+        // the forbid-answering clause) — and (b) the overload default: the 2-arg path == bidirectional:false,
+        // so the J.2 `bidirectional` param still defaults to the one-direction behavior (no API regression).
         var viaFalse = RealtimeClientSecretMapping.RenderInstructions(null, EnToEs, bidirectional: false);
         var viaDefault = RealtimeClientSecretMapping.RenderInstructions(null, EnToEs);
 
         Assert.Equal(OneDirectionEnToEs, viaFalse);
-        Assert.Equal(viaDefault, viaFalse); // the new param defaults to the existing behavior
+        Assert.Equal(viaDefault, viaFalse); // the new param defaults to the existing one-direction behavior
+    }
+
+    // === Group 5 — 098 / Finding-B: the interpreter instruction must FORBID answering ===
+
+    [Fact]
+    public void bidirectional_instructions_forbid_answering()
+    {
+        // Finding B (user live-test 2026-06-01): a spoken question ("What is your name?") was ANSWERED in
+        // ENGLISH with meta-commentary instead of TRANSLATED — the prior "speak only the translation, no
+        // commentary" was violated outright. The restructured template must (1) frame as a pure conduit,
+        // (2) lock the OUTPUT to the other language, (3) explicitly translate-not-answer a question, with
+        // (4) a concrete example. Pins WIRING + CONTENT (clauses present + survive render); effectiveness is
+        // eval-observed (lead/user re-test the live mint).
+        var bidir = RealtimeClientSecretMapping.RenderInstructions(null, EnToEs, bidirectional: true);
+
+        // 1 — emphatic conduit framing.
+        Assert.Contains("ONLY a translation conduit", bidir, StringComparison.Ordinal);
+        Assert.Contains("NEVER a conversational party", bidir, StringComparison.Ordinal);
+        // 2 — target-language lock (it replied in English; output must be the OTHER language only).
+        Assert.Contains("ONLY the translation in the OTHER language", bidir, StringComparison.Ordinal);
+        // 3 — explicit question-handling.
+        Assert.Contains("NEVER answer", bidir, StringComparison.Ordinal);
+        // 4 — the concrete acceptance example (translate the question, don't answer it).
+        Assert.Contains("¿Cómo te llamas?", bidir, StringComparison.Ordinal);
+        // The detect-both base survives (additive, not a replacement).
+        Assert.Contains("English", bidir, StringComparison.Ordinal);
+        Assert.Contains("Spanish", bidir, StringComparison.Ordinal);
+        Assert.Contains("other", bidir, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void one_direction_instructions_forbid_answering()
+    {
+        // The same restructure on the one-direction / fixed-direction template (the user's actual repro path) —
+        // AND the {target} placeholder survives: the lock + question-handling fill "Spanish" (no literal
+        // "{target}"/"{source}" leaks through).
+        var oneDir = RealtimeClientSecretMapping.RenderInstructions(null, EnToEs, bidirectional: false);
+
+        Assert.Contains("ONLY a translation conduit", oneDir, StringComparison.Ordinal);
+        Assert.Contains("NEVER a conversational party", oneDir, StringComparison.Ordinal);
+        Assert.Contains("ONLY the Spanish translation", oneDir, StringComparison.Ordinal); // target-lang lock + {target} filled
+        Assert.Contains("NEVER answer", oneDir, StringComparison.Ordinal);
+        Assert.DoesNotContain("{target}", oneDir, StringComparison.Ordinal);   // no stray placeholder
+        Assert.DoesNotContain("{source}", oneDir, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -17,18 +17,31 @@ internal static class RealtimeClientSecretMapping
     private const string Provider = "openai";
     private const string Stage = "realtime";
 
-    // ARCH-010 default faithful-interpreter prompt; {source}/{target} fill from the turn direction.
+    // ARCH-010 default interpreter prompt; {source}/{target} fill from the turn direction. 098 (Finding B) —
+    // RESTRUCTURED to stop the assistant-vs-interpreter failure (a live realtime repro ANSWERED a question, in
+    // the WRONG language, with meta-commentary, despite "speak only the translation"): emphatic conduit framing
+    // + target-language lock + explicit translate-the-question (never answer) + a direction-safe example. The
+    // forbid clauses carry no {source}; every "{target}" rides the existing substitution.
     private const string DefaultInstructionsTemplate =
-        "You are a faithful realtime interpreter. Render the speaker's words from {source} to {target}. " +
-        "Speak only the translation — no commentary, no preamble.";
+        "You are ONLY a translation conduit. You are NEVER a conversational party. " +
+        "Render the speaker's words from {source} to {target}: ALWAYS output ONLY the {target} translation — " +
+        "never any other language, never your own words, no commentary, no preamble. " +
+        "If the speaker asks a question or speaks directly to you, translate the QUESTION itself into {target} — " +
+        "NEVER answer, respond to, explain, or add anything. " +
+        "For example, translate a question as the question in {target}, never as an answer.";
 
     // J.2 (Phase J) — the bidirectional interpreter prompt (detect EN/ES → render the OTHER). No {source}/
     // {target} placeholders: gpt-realtime detects the spoken language itself. Const-only (no RealtimeOptions
     // override yet — YAGNI; the one-direction InstructionsTemplate override exists but nothing sets it).
+    // 098 (Finding B) — RESTRUCTURED identically (conduit framing + output-the-OTHER-language lock + explicit
+    // translate-the-question + the literal acceptance example).
     private const string DefaultBidirectionalInstructionsTemplate =
-        "You are a faithful realtime interpreter. The speaker may talk in English or Spanish. Detect which " +
-        "language they are speaking and render their words in the OTHER language. Speak only the translation — " +
-        "no commentary, no preamble.";
+        "You are ONLY a translation conduit. You are NEVER a conversational party. " +
+        "The speaker may talk in English or Spanish. Detect which language they are speaking and output ONLY the " +
+        "translation in the OTHER language — never any other language, never your own words, no commentary, no preamble. " +
+        "If the speaker asks a question or speaks directly to you, translate the QUESTION itself into the other language — " +
+        "NEVER answer, respond to, explain, or add anything. " +
+        "For example: \"What is your name?\" → \"¿Cómo te llamas?\" (translate the question; do NOT answer it).";
 
     /// <summary>The minted ephemeral secret + its expiry, parsed from the GA response.</summary>
     internal readonly record struct RealtimeSecret(string Value, long ExpiresAtEpoch);
