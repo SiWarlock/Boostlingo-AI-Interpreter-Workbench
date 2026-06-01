@@ -37,6 +37,19 @@ public class CascadeStartValidationTests
         Assert.False(CascadeStartValidation.ParseStart(StartJson("linear16")).Params!.AutoVad);
     }
 
+    [Fact]
+    public void start_frame_parses_bidirectional_flag()
+    {
+        // Phase J — the per-turn bidirectional flag is parsed off the start frame; absent ⇒ false (the
+        // one-direction default, mirroring the I.1 autoVad flag). No validation needed (closed bool domain).
+        var on = CascadeStartValidation.ParseStart(
+            """{"type":"start","sessionId":"s1","turnId":"turn_1","direction":{"source":"en","target":"es"},"encoding":"linear16","sampleRate":48000,"translationModel":"gpt-5-nano","ttsVoice":"alloy","bidirectional":true}""");
+
+        Assert.Null(on.Error);
+        Assert.True(on.Params!.Bidirectional);
+        Assert.False(CascadeStartValidation.ParseStart(StartJson("linear16")).Params!.Bidirectional); // absent ⇒ false
+    }
+
     [Theory] // ARCH-019: the orchestrator interpolates Encoding into audio/{encoding} -> an unvalidated value
              // is a header-injection surface at the real provider. Reject anything off the closed set.
     [InlineData("mp3")]

@@ -50,6 +50,30 @@ public class CascadeOrchestratorTests
         }
     }
 
+    // J.1 — recording decorators capturing the LAST request the orchestrator built, so a bidir test can assert
+    // the resolved Source/Target (direction flip) + the empty TTS voice (VoiceByLanguage delegation).
+    private sealed class RecordingTranslationProvider(ITranslationProvider inner) : ITranslationProvider
+    {
+        public TranslationRequest? LastRequest { get; private set; }
+
+        public IAsyncEnumerable<TranslationEvent> TranslateAsync(TranslationRequest request, CancellationToken ct)
+        {
+            LastRequest = request;
+            return inner.TranslateAsync(request, ct);
+        }
+    }
+
+    private sealed class RecordingTtsProvider(ITtsProvider inner) : ITtsProvider
+    {
+        public TtsRequest? LastRequest { get; private set; }
+
+        public IAsyncEnumerable<TtsEvent> SynthesizeAsync(TtsRequest request, CancellationToken ct)
+        {
+            LastRequest = request;
+            return inner.SynthesizeAsync(request, ct);
+        }
+    }
+
     private static async IAsyncEnumerable<AudioFrame> EmptyFrames()
     {
         await Task.CompletedTask;
@@ -90,8 +114,8 @@ public class CascadeOrchestratorTests
         }
     }
 
-    private static CascadeStartParams Params(TimeSpan? sttTimeout = null, bool autoVad = false) =>
-        new("s1", "t1", EnToEs, "linear16", 16000, "gpt-5-nano", "alloy", SttTimeout: sttTimeout, AutoVad: autoVad);
+    private static CascadeStartParams Params(TimeSpan? sttTimeout = null, bool autoVad = false, bool bidirectional = false) =>
+        new("s1", "t1", EnToEs, "linear16", 16000, "gpt-5-nano", "alloy", SttTimeout: sttTimeout, AutoVad: autoVad, Bidirectional: bidirectional);
 
     private static async Task<List<CascadeOutputEvent>> Run(
         ISttProvider stt, ITranslationProvider translation, ITtsProvider tts, CascadeStartParams p)
@@ -107,6 +131,79 @@ public class CascadeOrchestratorTests
         }
 
         return outList;
+    }
+
+    // === J.1 — bidirectional per-utterance direction flip ===
+
+    [Fact]
+    public async Task bidirectional_flips_direction_from_detected_language()
+    {
+        // bidir on; the STT final detects Spanish → the orchestrator translates Es→En (the OTHER language) and
+        // targets the TTS at En, delegating the voice to VoiceByLanguage by passing an EMPTY request voice.
+        var translation = new RecordingTranslationProvider(new FakeTranslationProvider(FakeTranslationBehavior.TokenStreamThenFinal));
+        var tts = new RecordingTtsProvider(new FakeTtsProvider(FakeTtsBehavior.ChunkedThenComplete));
+        var stt = new ScriptedSttProvider(new SttFinal("hola mundo", DateTimeOffset.UtcNow, LanguageCode.Es));
+
+        await Run(stt, translation, tts, Params(bidirectional: true));
+
+        Assert.Equal(LanguageCode.Es, translation.LastRequest!.SourceLanguage); // flipped: detected source
+        Assert.Equal(LanguageCode.En, translation.LastRequest!.TargetLanguage); // the OTHER language
+        Assert.Equal(LanguageCode.En, tts.LastRequest!.TargetLanguage);          // TTS voice resolves to En
+        Assert.Equal(string.Empty, tts.LastRequest!.Voice);                      // empty → VoiceByLanguage[en] drives it
+    }
+
+    [Fact]
+    public async Task bidirectional_emits_direction_event_before_target_transcript()
+    {
+        // A Direction{Es→En} event is emitted per resolved segment, BEFORE the target transcript (so the FE can
+        // stamp the live turn's direction before rendering the translation).
+        var stt = new ScriptedSttProvider(new SttFinal("hola mundo", DateTimeOffset.UtcNow, LanguageCode.Es));
+
+        var events = await Run(
+            stt,
+            new FakeTranslationProvider(FakeTranslationBehavior.TokenStreamThenFinal),
+            new FakeTtsProvider(FakeTtsBehavior.ChunkedThenComplete),
+            Params(bidirectional: true));
+
+        var directionIdx = events.FindIndex(e => e is Direction);
+        var dir = Assert.IsType<Direction>(events[directionIdx]);
+        Assert.Equal(LanguageCode.Es, dir.Resolved.Source);
+        Assert.Equal(LanguageCode.En, dir.Resolved.Target);
+
+        var firstTargetIdx = events.FindIndex(e => e is Transcript t && t.Segment.Role == "target");
+        Assert.InRange(firstTargetIdx, 0, events.Count - 1);
+        Assert.True(directionIdx < firstTargetIdx); // direction precedes the target transcript
+    }
+
+    [Fact]
+    public async Task bidirectional_null_detection_falls_back_to_start_direction()
+    {
+        // bidir on but the final carries NO detected language (null) → fall back to the start-frame direction
+        // (En→Es); no wrong-direction translation.
+        var translation = new RecordingTranslationProvider(new FakeTranslationProvider());
+        var stt = new ScriptedSttProvider(new SttFinal("hello world", DateTimeOffset.UtcNow, DetectedLanguage: null));
+
+        await Run(stt, translation, new FakeTtsProvider(), Params(bidirectional: true));
+
+        Assert.Equal(LanguageCode.En, translation.LastRequest!.SourceLanguage); // start-frame, NOT flipped
+        Assert.Equal(LanguageCode.Es, translation.LastRequest!.TargetLanguage);
+    }
+
+    [Fact]
+    public async Task one_direction_mode_does_not_flip_or_emit_direction()
+    {
+        // bidir OFF (default): even when the final carries a detected language, the orchestrator does NOT flip,
+        // does NOT emit a Direction event, and KEEPS the frame's TTS voice — byte-identical to today.
+        var translation = new RecordingTranslationProvider(new FakeTranslationProvider());
+        var tts = new RecordingTtsProvider(new FakeTtsProvider());
+        var stt = new ScriptedSttProvider(new SttFinal("hola mundo", DateTimeOffset.UtcNow, LanguageCode.Es));
+
+        var events = await Run(stt, translation, tts, Params()); // bidirectional: false
+
+        Assert.DoesNotContain(events, e => e is Direction);
+        Assert.Equal(LanguageCode.En, translation.LastRequest!.SourceLanguage); // p.Direction, not flipped to Es
+        Assert.Equal(LanguageCode.Es, translation.LastRequest!.TargetLanguage);
+        Assert.Equal("alloy", tts.LastRequest!.Voice); // frame voice preserved (not emptied)
     }
 
     [Fact]

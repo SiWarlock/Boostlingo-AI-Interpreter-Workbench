@@ -32,6 +32,8 @@ internal static class CascadeWsMapping
         // ContentType is provider-sourced — clamp it to the audio allowlist before it crosses the wire.
         Audio a => new { type = "audio", contentType = ClampContentType(a.ContentType), seq = a.Seq, base64 = Convert.ToBase64String(a.Bytes) },
         Error e => new { type = "error", error = e.ProviderError },
+        // J.1 — the per-utterance resolved direction (bidir only); the FE stamps the live turn's direction off it.
+        Direction dir => new { type = "direction", direction = dir.Resolved },
         Done d => new { type = "done", turnId, status = d.Status },
         _ => throw new ArgumentOutOfRangeException(nameof(ev), ev.GetType().Name, "Unknown cascade output event."),
     };
@@ -138,6 +140,7 @@ internal static class CascadeWsMapping
         var latency = new List<LatencyEvent>(baseTurn.LatencyEvents);
         var errors = new List<ProviderError>(baseTurn.Errors);
         var status = baseTurn.Status;
+        LanguageDirection? resolvedDirection = null; // J.1 — first resolved Direction event wins (bidir)
 
         foreach (var ev in events)
         {
@@ -146,6 +149,7 @@ internal static class CascadeWsMapping
                 case Transcript t: transcripts.Add(t.Segment); break;
                 case Latency l: latency.Add(l.Event); break;
                 case Error e: errors.Add(e.ProviderError); break;
+                case Direction dir: resolvedDirection ??= dir.Resolved; break;
                 case Done d: status = d.Status; break;
             }
         }
@@ -156,6 +160,9 @@ internal static class CascadeWsMapping
             LatencyEvents = latency,
             Errors = errors,
             Status = status,
+            // J.1 — the per-utterance RESOLVED direction (bidir) overrides the start-frame direction; absent
+            // (one-direction, no Direction event) keeps the base turn's direction (byte-identical to today).
+            Direction = resolvedDirection ?? baseTurn.Direction,
             CostEstimate = cost.IsSuccess ? cost.Value : null,
             CompletedAt = completedAt,
         };

@@ -56,6 +56,19 @@ public class CascadeWebSocketTests
     }
 
     [Fact]
+    public void direction_event_maps_to_direction_message()
+    {
+        // J.1 — the per-utterance resolved direction crosses as {type:"direction", direction:{source,target}}
+        // (emitted only in bidirectional mode; the FE stamps the live turn's direction off it).
+        var root = Serialize(CascadeWsMapping.ToServerMessage(
+            new Direction(new LanguageDirection(LanguageCode.En, LanguageCode.Es)), "turn_1"));
+
+        Assert.Equal("direction", root.GetProperty("type").GetString());
+        Assert.Equal("en", root.GetProperty("direction").GetProperty("source").GetString());
+        Assert.Equal("es", root.GetProperty("direction").GetProperty("target").GetString());
+    }
+
+    [Fact]
     public void done_event_maps_with_turnid_and_status()
     {
         var root = Serialize(CascadeWsMapping.ToServerMessage(new Done(TurnStatus.Completed), "turn_1"));
@@ -180,6 +193,55 @@ public class CascadeWebSocketTests
 
         Assert.Null(turn.CostEstimate); // degrade — no cost on the persisted turn, no crash
         Assert.Equal(TurnStatus.Completed, turn.Status);
+    }
+
+    [Fact]
+    public void turn_assembled_folds_resolved_direction()
+    {
+        // J.1 — a Direction event in the stream (bidir) overrides the base turn's start-frame direction so the
+        // persisted/assembled turn reflects the per-utterance RESOLVED direction (first resolved segment wins).
+        var events = new CascadeOutputEvent[]
+        {
+            new Direction(new LanguageDirection(LanguageCode.Es, LanguageCode.En)),
+            new Done(TurnStatus.Completed),
+        };
+
+        var turn = CascadeWsMapping.AssembleTurn(BaseTurn(), events, Result<CostEstimate>.Failure("n/a"), When);
+
+        // BaseTurn() is En→Es; the fold flips it to the resolved Es→En.
+        Assert.Equal(LanguageCode.Es, turn.Direction.Source);
+        Assert.Equal(LanguageCode.En, turn.Direction.Target);
+    }
+
+    [Fact]
+    public void turn_assembled_first_direction_event_wins()
+    {
+        // A multi-segment bidir turn with two resolved directions: the FIRST resolved wins the turn-level field
+        // (the ??= fold), pinning the documented first-wins policy with MORE THAN ONE Direction event.
+        var events = new CascadeOutputEvent[]
+        {
+            new Direction(new LanguageDirection(LanguageCode.Es, LanguageCode.En)),
+            new Direction(new LanguageDirection(LanguageCode.En, LanguageCode.Es)),
+            new Done(TurnStatus.Completed),
+        };
+
+        var turn = CascadeWsMapping.AssembleTurn(BaseTurn(), events, Result<CostEstimate>.Failure("n/a"), When);
+
+        Assert.Equal(LanguageCode.Es, turn.Direction.Source); // the FIRST event (Es→En), not the second
+        Assert.Equal(LanguageCode.En, turn.Direction.Target);
+    }
+
+    [Fact]
+    public void turn_assembled_keeps_base_direction_without_direction_event()
+    {
+        // One-direction (no Direction event): the assembled turn keeps the base/start-frame direction (En→Es),
+        // byte-identical to today — the fold is additive.
+        var events = new CascadeOutputEvent[] { new Done(TurnStatus.Completed) };
+
+        var turn = CascadeWsMapping.AssembleTurn(BaseTurn(), events, Result<CostEstimate>.Failure("n/a"), When);
+
+        Assert.Equal(LanguageCode.En, turn.Direction.Source);
+        Assert.Equal(LanguageCode.Es, turn.Direction.Target);
     }
 
     // === Group 5 — ContentType clamp (C.4b — provider-sourced content-type hygiene before serialize) ===

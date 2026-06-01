@@ -197,11 +197,24 @@ public sealed class CascadeStreamingOrchestrator(
                     }
 
                     sawNonEmptyFinal = true;
+
+                    // J.1 — resolve the per-utterance direction: bidir + a detected language ⇒ detected → other;
+                    // else the start-frame direction (one-direction, or bidir with null/ambiguous detection →
+                    // fall back, never flip the wrong way). Drives translation + the target-TTS-voice below.
+                    var direction = ResolveDirection(p, final.DetectedLanguage);
+
                     yield return Stamp(LatencyEventNames.SttFinal, LatencyStage.Stt, origin, SttProviderLabel);
                     yield return Seg($"src-{segmentIndex}", RoleSource, final.Text, true, SttProviderLabel, final.Timestamp);
 
+                    // J.1 — announce the resolved direction before translation so the FE stamps the live turn's
+                    // direction (bidir only; one-direction keeps the start-frame direction — no event, backward compatible).
+                    if (p.Bidirectional)
+                    {
+                        yield return new Direction(direction);
+                    }
+
                     var translationOutcome = new StageOutcome();
-                    await foreach (var ev in TranslateSegmentAsync(p, origin, final.Text, segmentIndex, translationOutcome, ct))
+                    await foreach (var ev in TranslateSegmentAsync(p, direction, origin, final.Text, segmentIndex, translationOutcome, ct))
                     {
                         yield return ev;
                     }
@@ -217,7 +230,7 @@ public sealed class CascadeStreamingOrchestrator(
                     if (translationOutcome.FinalText is { } targetText)
                     {
                         var ttsOutcome = new StageOutcome();
-                        await foreach (var ev in SynthesizeSegmentAsync(p, origin, targetText, ttsOutcome, ct))
+                        await foreach (var ev in SynthesizeSegmentAsync(p, direction, origin, targetText, ttsOutcome, ct))
                         {
                             yield return ev;
                         }
@@ -268,14 +281,16 @@ public sealed class CascadeStreamingOrchestrator(
 
     private async IAsyncEnumerable<CascadeOutputEvent> TranslateSegmentAsync(
         CascadeStartParams p,
+        LanguageDirection direction,
         DateTimeOffset origin,
         string sourceText,
         int segmentIndex,
         StageOutcome outcome,
         [EnumeratorCancellation] CancellationToken ct)
     {
+        // J.1 — translate in the RESOLVED direction (detected → other under bidir; the start-frame direction otherwise).
         var request = new TranslationRequest(
-            sourceText, p.Direction.Source, p.Direction.Target, p.TranslationModel, p.SessionId, p.TurnId);
+            sourceText, direction.Source, direction.Target, p.TranslationModel, p.SessionId, p.TurnId);
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(p.TranslationTimeout ?? DefaultTranslationTimeout);
@@ -359,13 +374,18 @@ public sealed class CascadeStreamingOrchestrator(
 
     private async IAsyncEnumerable<CascadeOutputEvent> SynthesizeSegmentAsync(
         CascadeStartParams p,
+        LanguageDirection direction,
         DateTimeOffset origin,
         string targetText,
         StageOutcome outcome,
         [EnumeratorCancellation] CancellationToken ct)
     {
+        // J.1 — in bidir, pass an EMPTY voice so the TTS provider resolves it by the RESOLVED target language
+        // (OpenAiTtsMapping.ResolveVoice → VoiceByLanguage[target]) — the voice matches the spoken-to language.
+        // One-direction keeps the frame/config voice (p.TtsVoice) → byte-identical to today.
+        var voice = p.Bidirectional ? string.Empty : p.TtsVoice;
         var request = new TtsRequest(
-            targetText, p.Direction.Target, p.TtsVoice, p.TtsModel, TtsResponseFormat, null, p.SessionId, p.TurnId);
+            targetText, direction.Target, voice, p.TtsModel, TtsResponseFormat, null, p.SessionId, p.TurnId);
 
         // 075 (supersedes 057c): stamp tts.started at TTS request-INITIATION — a REAL pipeline moment (when we
         // begin synthesis, after translation produced the target text), NOT the provider's first-event arrival.
@@ -488,4 +508,14 @@ public sealed class CascadeStreamingOrchestrator(
 
     private static Transcript Seg(string id, string role, string text, bool isFinal, string provider, DateTimeOffset timestamp) =>
         new(new TranscriptSegment(id, role, text, isFinal, provider, timestamp, ClockSource.Server));
+
+    // J.1 — bidir + a detected source language ⇒ detected → other; otherwise the start-frame direction (one-
+    // direction, or bidir with null/ambiguous detection → fall back, never flip the wrong way).
+    private static LanguageDirection ResolveDirection(CascadeStartParams p, LanguageCode? detected) =>
+        p.Bidirectional && detected is { } source
+            ? new LanguageDirection(source, Other(source))
+            : p.Direction;
+
+    private static LanguageCode Other(LanguageCode language) =>
+        language == LanguageCode.En ? LanguageCode.Es : LanguageCode.En;
 }

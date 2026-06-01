@@ -22,6 +22,14 @@ public sealed record Audio(byte[] Bytes, int Seq, string ContentType) : CascadeO
 /// <summary>A normalized, UI-safe provider/cascade error (ARCH-018).</summary>
 public sealed record Error(ProviderError ProviderError) : CascadeOutputEvent;
 
+/// <summary>
+/// J.1 (Phase J) — the per-utterance RESOLVED translation direction, emitted once per segment in
+/// bidirectional mode (at the STT final, before translation). C.4 maps it to the ARCH-009 wire message
+/// <c>{ type:"direction", direction:{source,target} }</c> and folds it into the assembled turn. NOT emitted
+/// in one-direction mode (backward compatible).
+/// </summary>
+public sealed record Direction(LanguageDirection Resolved) : CascadeOutputEvent;
+
 /// <summary>Terminal event — the turn's final status.</summary>
 public sealed record Done(TurnStatus Status) : CascadeOutputEvent;
 
@@ -47,4 +55,8 @@ public sealed record CascadeStartParams(
     // I.1 (Phase I) — auto-VAD: true ⇒ the orchestrator auto-finalizes the turn on Deepgram's utterance-end
     // (detected silence); false (default) ⇒ finalize on the client `stop` (today's manual behavior). A
     // per-turn WS `start` flag (REVISES ARCH-003's no-VAD decision, auto-VAD additive + manual preserved).
-    bool AutoVad = false);
+    bool AutoVad = false,
+    // J.1 (Phase J) — bidirectional: true ⇒ the orchestrator detects each utterance's source language
+    // (SttFinal.DetectedLanguage) and flips direction (detected → other), emitting a Direction event;
+    // false (default) ⇒ one-direction off the start-frame Direction (today's behavior). Additive per-turn flag.
+    bool Bidirectional = false);
