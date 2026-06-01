@@ -1,7 +1,6 @@
 import { DollarSign, Info } from 'lucide-react'
-import { formatCostPerMinute, formatUsdPerMinute } from '../state/selectors'
+import { formatCostPerMinute, formatUsdPerMinute, selectDisplayTurn } from '../state/selectors'
 import { useSessionState } from '../state/sessionStore'
-import type { TurnViewModel } from '../types/domain'
 
 // Cost panel (ARCH-007 / ARCH-014). Always-qualified "Estimated $X.XX/min" (never a billed figure), the
 // model used, and the estimate's assumptions in a tooltip/disclosure. Per-turn from currentTurn.cost
@@ -13,7 +12,9 @@ import type { TurnViewModel } from '../types/domain'
 
 export default function CostPanel() {
   const state = useSessionState()
-  const turn: TurnViewModel | undefined = state.currentTurn ?? state.turns[state.turns.length - 1]
+  // The last MEANINGFUL turn (skips trailing empty auto-VAD silence turns; Finding C) — the SAME shared
+  // selector MetricsPanel uses, so the two panels never diverge on which turn they display.
+  const turn = selectDisplayTurn(state)
   const cost = turn?.cost
   const assumptions = cost?.assumptions ?? []
   const cascadePerMin = state.summary?.cascade?.estimatedCostPerMinuteUsd

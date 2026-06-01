@@ -8,6 +8,7 @@ import {
   formatCostPerMinute,
   formatUsdPerMinute,
   modeAvailability,
+  selectDisplayTurn,
 } from './selectors'
 import type {
   ConfigResponse,
@@ -164,6 +165,66 @@ function turn(overrides: Partial<TurnViewModel> = {}): TurnViewModel {
     ...overrides,
   }
 }
+
+describe('selectDisplayTurn', () => {
+  // A minimal CostEstimate — its mere PRESENCE (cost != null) makes a turn meaningful even with no
+  // transcripts (the empty-silence predicate is an AND of empty-source + empty-target + null-cost).
+  function costEstimate(): CostEstimate {
+    return {
+      provider: 'cascade',
+      model: 'gpt-5-nano',
+      pricingBasis: 'composite',
+      estimatedUsd: 0.0021,
+      estimatedUsdPerMinute: 0.42,
+      units: {},
+      pricingConfigVersion: '2026-05-28-payg-estimates',
+      assumptions: [],
+    }
+  }
+  // Meaningful = has at least one transcript segment (or a cost). Empty-silence = no transcripts + no cost.
+  const meaningful = (id: string): TurnViewModel =>
+    turn({ turnId: id, sourceTranscript: [{ text: 'hello', isFinal: true }] })
+  const emptySilence = (id: string): TurnViewModel => turn({ turnId: id }) // default fixture: [] / [] / no cost
+
+  it('skips a trailing empty-silence turn → returns the last MEANINGFUL turn (Finding C)', () => {
+    // The core bug: a good turn completes into turns[], then a spurious empty auto-VAD turn lands as the
+    // NEW turns[last]. The raw `currentTurn ?? turns[last]` falls onto the empty turn → all per-turn n/a.
+    const state = { currentTurn: undefined, turns: [meaningful('good'), emptySilence('empty')] }
+    expect(selectDisplayTurn(state)?.turnId).toBe('good')
+  })
+
+  it('prefers a NON-EMPTY current turn (live in-progress display preserved)', () => {
+    // A current turn with content is the live turn the user is speaking — always display it.
+    const state = { currentTurn: meaningful('live'), turns: [meaningful('old')] }
+    expect(selectDisplayTurn(state)?.turnId).toBe('live')
+  })
+
+  it('an EMPTY current turn falls back to the last meaningful turn (no flicker to n/a mid-silence)', () => {
+    // Auto-VAD just re-armed → currentTurn exists but has no content yet. Don't blank the good metrics —
+    // keep showing the last meaningful turn until the new turn actually has content.
+    const state = { currentTurn: emptySilence('rearmed'), turns: [meaningful('good')] }
+    expect(selectDisplayTurn(state)?.turnId).toBe('good')
+  })
+
+  it('a cost-bearing turn with NO transcripts is meaningful (the predicate is AND, not OR)', () => {
+    // cost != null alone keeps a turn out of the empty-silence class — pins that the predicate requires
+    // empty-source AND empty-target AND null-cost (never drops a turn that has a real cost estimate).
+    const costOnly = turn({ turnId: 'priced', cost: costEstimate() })
+    const state = { currentTurn: undefined, turns: [costOnly, emptySilence('empty')] }
+    expect(selectDisplayTurn(state)?.turnId).toBe('priced')
+  })
+
+  it('no meaningful turn anywhere → preserves today behavior (the empty turn / undefined; never crash)', () => {
+    // A genuine first-turn silence (only an empty turn) still renders that turn's empty/in-progress state.
+    expect(
+      selectDisplayTurn({ currentTurn: undefined, turns: [emptySilence('only')] })?.turnId,
+    ).toBe('only')
+    // A brand-new session (nothing at all) → undefined (the panel renders its empty state, never crashes).
+    expect(selectDisplayTurn({ currentTurn: undefined, turns: [] })).toBeUndefined()
+    // An empty current turn with no prior meaningful turn → the current empty turn (today's fallback).
+    expect(selectDisplayTurn({ currentTurn: emptySilence('curr'), turns: [] })?.turnId).toBe('curr')
+  })
+})
 
 describe('deriveTurnMetrics', () => {
   it('computes top-level deltas via absolute-timestamp Between (never relativeMs)', () => {

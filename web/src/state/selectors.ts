@@ -63,6 +63,42 @@ export function canStopRecording(state: Pick<UiSessionState, 'turnStatus'>): boo
   return state.turnStatus === 'recording'
 }
 
+// --- Per-turn DISPLAY selection (Finding C) -------------------------------------------------------
+// Which turn the per-turn panels (MetricsPanel + CostPanel) display. A raw `currentTurn ?? turns[last]`
+// lands on a spurious trailing auto-VAD silence turn (cascade continuous re-arms → records nothing →
+// auto-finalizes a 0-transcript/0-cost turn into turns[]) → the per-turn Latency/Cost cards blank to n/a.
+// This is the FE-display sibling of the backend IsEmptySilence summary exclusion (§39/097): skip trailing
+// empty-silence turns so the panels keep the last MEANINGFUL turn's metrics on screen.
+
+// Empty-silence (FE mirror of the backend IsEmptySilence, on the view-model's fields): no transcripts AND
+// no cost. A turn with EITHER a transcript OR a cost is meaningful — the AND (not OR) is load-bearing: a
+// cost-bearing 0-transcript realtime turn is real evidence and MUST NOT be treated as silence. `cost == null`
+// is the idiomatic null-or-undefined check (cost is optional).
+function isEmptySilenceTurn(turn: TurnViewModel): boolean {
+  return (
+    turn.sourceTranscript.length === 0 && turn.targetTranscript.length === 0 && turn.cost == null
+  )
+}
+
+// The single source of "which turn the per-turn panels display." Prefer a non-empty current turn (live
+// in-progress display); else the most recent MEANINGFUL turn in turns[] (skip trailing empty-silence);
+// else preserve today's behavior (`currentTurn ?? turns[last]`) so a brand-new session / a genuine
+// first-turn silence still renders its empty/in-progress state (never crash, never blank when there's
+// nothing better to show).
+export function selectDisplayTurn(
+  state: Pick<UiSessionState, 'currentTurn' | 'turns'>,
+): TurnViewModel | undefined {
+  if (state.currentTurn && !isEmptySilenceTurn(state.currentTurn)) {
+    return state.currentTurn
+  }
+  for (let i = state.turns.length - 1; i >= 0; i -= 1) {
+    if (!isEmptySilenceTurn(state.turns[i])) {
+      return state.turns[i]
+    }
+  }
+  return state.currentTurn ?? state.turns[state.turns.length - 1]
+}
+
 // --- D.6 metrics derivation (the load-bearing three-source model) ---------------------------------
 // Per-stage latency comes from the store's `stages` map (server-computed relativeMs — passed through,
 // NOT recomputed; lesson §7). Top-level client-timing deltas are computed HERE from the raw event

@@ -1,7 +1,7 @@
 import { Gauge, RefreshCw } from 'lucide-react'
-import { deriveTurnMetrics } from '../state/selectors'
+import { deriveTurnMetrics, selectDisplayTurn } from '../state/selectors'
 import { useSessionState } from '../state/sessionStore'
-import type { InterpretationMode, ModeSummary, TurnViewModel } from '../types/domain'
+import type { InterpretationMode, ModeSummary } from '../types/domain'
 import { latencyCeilingMs, latencyTier } from './latencyTarget'
 
 // Latency panel (ARCH-007 / ARCH-013). Three sources, kept distinct (the D.6 load-bearing model):
@@ -77,7 +77,9 @@ function ModeAverages({ label, mode }: { label: string; mode?: ModeSummary | nul
 
 export default function MetricsPanel({ onRefresh }: { onRefresh?: () => void }) {
   const state = useSessionState()
-  const turn: TurnViewModel | undefined = state.currentTurn ?? state.turns[state.turns.length - 1]
+  // The last MEANINGFUL turn (skips trailing empty auto-VAD silence turns; Finding C). Shared selector —
+  // CostPanel reads the same one so the two panels never diverge on which turn they display.
+  const turn = selectDisplayTurn(state)
   const metrics = turn ? deriveTurnMetrics(turn) : undefined
   const stages = metrics?.stages ?? {}
   const summary = state.summary

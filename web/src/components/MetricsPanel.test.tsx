@@ -138,3 +138,56 @@ describe('MetricsPanel — realtime session-averages stage relabel (074)', () =>
     expect(within(block).queryByText(/single model/i)).toBeNull()
   })
 })
+
+// Finding C: after a GOOD turn, a trailing empty auto-VAD turn must NOT blank the per-turn headline. The
+// panel selects the display turn via selectDisplayTurn (skips trailing empty-silence) — not raw turns[last].
+describe('MetricsPanel — trailing empty auto-VAD turn does not blank the headline (Finding C)', () => {
+  const base = Date.parse('2026-06-01T00:00:00.000Z')
+  const at = (ms: number) => new Date(base + ms).toISOString()
+  const ev = (name: string, ms: number, stage: LatencyStage = 'overall'): LatencyEvent => ({
+    name,
+    stage,
+    timestamp: at(ms),
+    relativeMs: ms,
+    clockSource: 'browser',
+    metadata: {},
+  })
+
+  it('keeps showing the GOOD turn metrics after a spurious empty-silence turn lands as turns[last]', () => {
+    // GOOD cascade turn: a source transcript + responsiveness markers → headline 800 ms; complete it
+    // (moves into turns[], currentTurn cleared).
+    sessionStore.beginTurn({
+      turnId: 'good',
+      mode: 'cascade',
+      direction: { source: 'en', target: 'es' },
+    })
+    sessionStore.appendTranscriptSegment({
+      segmentId: 'good-s',
+      role: 'source',
+      text: 'hello',
+      isFinal: true,
+      provider: 'deepgram',
+      timestamp: '2026-06-01T00:00:00.000Z',
+      clockSource: 'server',
+    })
+    sessionStore.appendLatencyEvent(ev('turn.recording.started', 0))
+    sessionStore.appendLatencyEvent(ev('stt.final', 1000, 'stt'))
+    sessionStore.appendLatencyEvent(ev('tts.first_audio', 1800, 'tts')) // responsiveness = 800 ms
+    sessionStore.appendLatencyEvent(ev('turn.recording.stopped', 4000))
+    sessionStore.completeTurn('good', 'completed')
+
+    // EMPTY auto-VAD turn: no transcript, no cost, no markers → completes as the NEW turns[last].
+    sessionStore.beginTurn({
+      turnId: 'empty',
+      mode: 'cascade',
+      direction: { source: 'en', target: 'es' },
+    })
+    sessionStore.completeTurn('empty', 'completed')
+
+    render(<MetricsPanel />)
+
+    // RED today (turns[last] = empty → n/a); GREEN with selectDisplayTurn skipping the empty turn.
+    const headline = screen.getByLabelText('turn-headline')
+    expect(headline).toHaveTextContent('800 ms')
+  })
+})
