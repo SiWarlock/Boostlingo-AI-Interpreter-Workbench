@@ -1,5 +1,5 @@
 import type { UiError } from '../types/domain'
-import { clampBlobDurationMs, micErrorToUiError, probeRecorderMimeType } from './captureSupport'
+import { MAX_BLOB_DURATION_MS, micErrorToUiError, probeRecorderMimeType } from './captureSupport'
 
 // The audio capture controller (ARCH-030 / ARCH-007). MANUAL-SMOKE shell (ARCH-020): the
 // getUserMedia / AudioContext / AudioWorkletNode / MediaRecorder wiring is browser-realm and exercised
@@ -21,12 +21,18 @@ export type StreamingHandle = {
 
 export type BlobCapture = { blob: Blob; mimeType: string }
 
+// A manual-stop blob recording (096 push-to-talk). startBlobRecording opens the mic + starts the recorder;
+// the caller (the EvaluationPanel) controls the window and calls stop() to end it + receive the blob.
+// stop() resolves the captured BlobCapture, or null if the recorder errored. A safety auto-stop bounds the
+// window (≤ MAX_BLOB_DURATION_MS) so a forgotten recording can't hold the mic open unbounded.
+export type BlobRecordingHandle = { stop: () => Promise<BlobCapture | null> }
+
 export type AudioCaptureController = {
   startStreaming: (handlers: {
     onFrame: CaptureFrameHandler
     onError: CaptureErrorHandler
   }) => Promise<StreamingHandle | null>
-  recordBlob: (durationMs?: number) => Promise<BlobCapture | null>
+  startBlobRecording: () => Promise<BlobRecordingHandle | null>
 }
 
 // Injectable browser seam for the G.4 soak harness (decision 1A) — the synthetic MediaStream is supplied
@@ -85,12 +91,12 @@ export function createAudioCaptureController(deps: AudioCaptureDeps = {}): Audio
     }
   }
 
-  async function recordBlob(durationMs?: number): Promise<BlobCapture | null> {
+  async function startBlobRecording(): Promise<BlobRecordingHandle | null> {
     let mediaStream: MediaStream
     try {
       mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
     } catch {
-      return null
+      return null // mic denied — the caller surfaces a sanitized capture.failed + resets its UI.
     }
 
     const mimeType = probeRecorderMimeType((type) => MediaRecorder.isTypeSupported(type))
@@ -105,26 +111,41 @@ export function createAudioCaptureController(deps: AudioCaptureDeps = {}): Audio
       if (event.data.size > 0) chunks.push(event.data)
     }
 
-    return await new Promise<BlobCapture | null>((resolve) => {
-      const release = () => mediaStream.getTracks().forEach((track) => track.stop())
-      recorder.onstop = () => {
-        release()
-        resolve({ blob: new Blob(chunks, { type: mimeType }), mimeType })
-      }
-      // A recorder error must settle the promise (else the caller awaits forever) + release the mic.
-      recorder.onerror = () => {
-        release()
-        resolve(null)
-      }
-      recorder.start()
-      // Bounded auto-stop (clamped) so a stray/huge duration can't hold the mic open unbounded.
-      setTimeout(() => recorder.stop(), clampBlobDurationMs(durationMs ?? Number.NaN))
+    // The recorder settles its blob ONCE — on stop (user Stop OR the safety auto-stop) or on error. stop()
+    // returns this same promise so the caller awaits the captured blob regardless of which path stopped it.
+    let settle: (value: BlobCapture | null) => void
+    const recording = new Promise<BlobCapture | null>((resolve) => {
+      settle = resolve
     })
+    const release = () => mediaStream.getTracks().forEach((track) => track.stop())
+    recorder.onstop = () => {
+      release()
+      settle({ blob: new Blob(chunks, { type: mimeType }), mimeType })
+    }
+    // A recorder error must settle the promise (else the caller awaits forever) + release the mic.
+    recorder.onerror = () => {
+      release()
+      settle(null)
+    }
+    recorder.start()
+    // Safety backstop: the user's Stop is the normal path, but a forgotten recording can't hold the mic
+    // open unbounded — auto-stop at the max duration (resource guard at the capture boundary).
+    const safety = setTimeout(() => {
+      if (recorder.state !== 'inactive') recorder.stop()
+    }, MAX_BLOB_DURATION_MS)
+
+    return {
+      stop: () => {
+        clearTimeout(safety)
+        if (recorder.state !== 'inactive') recorder.stop()
+        return recording
+      },
+    }
   }
 
-  return { startStreaming, recordBlob }
+  return { startStreaming, startBlobRecording }
 }
 
 // Production singleton — one controller reused across turns (construction touches no device APIs;
-// getUserMedia/AudioContext only fire on startStreaming/recordBlob).
+// getUserMedia/AudioContext only fire on startStreaming/startBlobRecording).
 export const audioCaptureController = createAudioCaptureController()

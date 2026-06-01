@@ -1,5 +1,4 @@
 import { ApiError } from '../api/http'
-import type { AudioCaptureController } from '../audio/audioCaptureController'
 import type { SessionStore } from './sessionStore'
 import type {
   LanguageCode,
@@ -11,18 +10,16 @@ import type {
   WerResult,
 } from '../types/domain'
 
-// The standalone WER evaluation flow (Flow D, ARCH-015 / ARCH-017). DI'd + unit-tested against the real
-// store + mocked api/capture (lesson §7); the panel is a thin render+dispatch caller. Sequence:
-//   record -> transcribe (STT-only) -> create a DEDICATED eval turn -> compute + PERSIST the WER
-// against that turn (so F.3's WerSummary can aggregate it). Errors route to the store (single sink,
-// lesson §2); the result is RETURNED for the panel's local display state (transient, not session state).
+// The standalone WER evaluate-from-blob flow (Flow D, ARCH-015 / ARCH-017). DI'd + unit-tested against the
+// real store + mocked api (lesson §7). The panel owns the push-to-talk recording lifecycle (096:
+// startBlobRecording → user Stop → blob) and hands the captured blob here. Sequence:
+//   zero-byte guard -> transcribe (STT-only) -> NO-SPEECH guard -> create a DEDICATED eval turn ->
+//   compute + PERSIST the WER against that turn (so F.3's WerSummary can aggregate it).
+// Errors route to the store (single sink, lesson §2); the OUTCOME is RETURNED for the panel's local
+// display state (transient, not session state).
 //
 // The eval turn is a backend-only artifact (the WerResult attach point) — the store's interpretation
 // turn machine (currentTurn / turns[]) is intentionally untouched here (no beginTurn / completeTurn).
-
-// Fixed scripted-phrase recording window (clamped by the capture controller to 4s–60s). 6s covers the
-// scripted phrases read at a natural pace; bump at smoke time if a long phrase clips.
-export const EVAL_RECORD_DURATION_MS = 6000
 
 // The minimal api surface the flow needs (structurally satisfied by evaluationApi).
 export type EvaluationApi = {
@@ -34,18 +31,23 @@ export type EvaluationDeps = {
   store: Pick<SessionStore, 'getState' | 'addError'>
   api: EvaluationApi
   createTurn: (sessionId: string) => Promise<{ turnId: string }>
-  capture: Pick<AudioCaptureController, 'recordBlob'>
 }
 
-export type EvaluationOutcome = { hypothesis: string; werResult: WerResult }
+// A discriminated outcome (096): a real WER score, OR a distinct no-speech result when the STT heard
+// nothing. The panel renders these differently — a no-speech capture must NEVER show a confident score
+// (an empty hypothesis scored against a reference = all-deletions = a misleading "100%"). Finding 3.
+export type EvaluationOutcome =
+  | { kind: 'scored'; hypothesis: string; werResult: WerResult }
+  | { kind: 'no-speech' }
 
 // An ApiError already carries a sanitized UiError; anything else gets the fixed fallback (no raw leak).
 function toUiError(error: unknown, fallback: UiError): UiError {
   return error instanceof ApiError ? error.uiError : fallback
 }
 
-export async function runEvaluation(
+export async function evaluateFromBlob(
   deps: EvaluationDeps,
+  blob: Blob,
   input: { phraseId: string; language: LanguageCode },
 ): Promise<EvaluationOutcome | null> {
   const { sessionId } = deps.store.getState()
@@ -53,21 +55,11 @@ export async function runEvaluation(
     return null // the UI gates on an active session; guard the flow too.
   }
 
-  // 1. Record the phrase. recordBlob returns null SILENTLY on mic-denied / unsupported-mime / recorder
-  //    error (no onError on the blob path) — so the flow surfaces its own capture error.
-  const capture = await deps.capture.recordBlob(EVAL_RECORD_DURATION_MS)
-  if (capture === null) {
-    deps.store.addError({
-      code: 'capture.failed',
-      safeMessage: 'Could not record audio. Check microphone access and retry.',
-      retryable: true,
-    })
-    return null
-  }
-  if (capture.blob.size === 0) {
-    // A non-null but ZERO-BYTE blob slips the null guard above → don't POST empty audio to the paid
-    // /transcribe STT endpoint (a wasted round-trip + a confusing downstream result). Surface a distinct,
-    // actionable "nothing was recorded" error and abort before transcribe (060 hardening; extends §20).
+  // 1. Guard a ZERO-BYTE blob → don't POST empty audio to the paid /transcribe STT endpoint (a wasted
+  //    round-trip + a confusing downstream result). Surface a distinct, actionable "nothing was recorded"
+  //    error and abort before transcribe (060 hardening; extends §20). The mic-denied path is handled by
+  //    the panel (startBlobRecording → null → capture.failed); this flow only sees a captured blob.
+  if (blob.size === 0) {
     deps.store.addError({
       code: 'capture.empty',
       safeMessage: 'No audio was captured. Check your microphone and try again.',
@@ -81,7 +73,7 @@ export async function runEvaluation(
   try {
     transcribed = await deps.api.transcribe(
       { sessionId, phraseId: input.phraseId, language: input.language },
-      capture.blob,
+      blob,
     )
   } catch (error) {
     deps.store.addError(
@@ -92,6 +84,15 @@ export async function runEvaluation(
       }),
     )
     return null
+  }
+
+  // 2.5 NO-SPEECH guard (096 / Finding 3): the STT is the judge — an empty/whitespace hypothesis means it
+  //     heard nothing (the user spoke late / not at all). Return a DISTINCT no-speech outcome — do NOT
+  //     create an eval turn or compute a WER. Scoring an empty hypothesis against a reference yields
+  //     all-deletions = a misleading "100%"; degrade honestly to n/a (never a confident score). Not an
+  //     error (a valid result the panel renders); creating no turn also avoids a no-WerResult orphan.
+  if (transcribed.hypothesis.trim() === '') {
+    return { kind: 'no-speech' }
   }
 
   // 3. Create a dedicated eval turn (Q1=a) to attach the WerResult to. A failure aborts before scoring
@@ -141,5 +142,5 @@ export async function runEvaluation(
     deps.store.addError(werResponse.persistenceWarning)
   }
 
-  return { hypothesis: transcribed.hypothesis, werResult: werResponse.result }
+  return { kind: 'scored', hypothesis: transcribed.hypothesis, werResult: werResponse.result }
 }
