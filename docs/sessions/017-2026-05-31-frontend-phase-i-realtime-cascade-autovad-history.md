@@ -4,7 +4,7 @@
 - **Phase:** Phase I (auto-VAD, both transports) + H.3-frontend (session history) + a realtime P0 regression
 - **Area:** frontend (`web/`)
 - **Predecessor:** [015 — frontend metrics / realtime cost / Phase-I slice 1](015-2026-05-31-frontend-metrics-realtime-cost-phase-i-slice1.md)
-- **Successor:** _(next FE session — resumes 071 history drill-in → 073 cost-precision; TBD)_
+- **Successor:** [018 — FE realtime revival (session.type P0) + H.3 drill-in + cost polish + realtime $/min](018-2026-05-31-frontend-realtime-revival-h3-drillin-cost-polish.md)
 
 > Implementer session doc (technical close-out only). `MVP_TASKS.md` / `web/LESSONS.md` / `web/CLAUDE.md` / `ARCHITECTURE.md` are orchestrator-owned + untouched here; the Step-9 items below were hot-routed by the orchestrator during the session.
 
