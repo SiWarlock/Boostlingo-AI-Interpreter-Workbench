@@ -3,7 +3,7 @@
 - **Date:** 2026-06-01
 - **Phase:** G.4 (5-minute synthetic soak-harness, frontend)
 - **Predecessor:** [022 — frontend Phase-J bidirectional/continuous + smoke fixes](022-2026-06-01-frontend-phase-j-bidirectional-continuous-smoke-fixes.md) _(G.4 framing set up by the orch handoff [023](023-2026-06-01-orch-handoff-phase-j-seal-g4-next.md))_
-- **Successor:** _(fresh FE, post-cycle — run-Finding fixes + G.5 write-up support)_
+- **Successor:** [029 — frontend live-Finding fixes (cached-audio cost, push-to-talk WER, display-turn)](029-2026-06-01-frontend-live-finding-fixes-cost-wer-displayturn.md)
 
 ## Why this session existed
 
