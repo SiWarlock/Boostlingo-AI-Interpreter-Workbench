@@ -78,6 +78,18 @@ function incrementingClock(stepMs = 1000): () => string {
   }
 }
 
+// 076: a sequence clock — returns the given ISO timestamps in order (the last repeats once exhausted). The
+// controller's clock() is consumed once per marker() call: #1 = turn.recording.started (in startTurn), #2 =
+// turn.recording.stopped (in stopTurn) — so these two control the recording duration deterministically.
+function clockSeq(...isos: string[]): () => string {
+  let i = 0
+  return () => {
+    const v = isos[Math.min(i, isos.length - 1)]
+    i += 1
+    return v
+  }
+}
+
 function eventTypes(client: ReturnType<typeof setup>['client']): string[] {
   return client.sendClientEvent.mock.calls.map((c) => (c[0] as { type: string }).type)
 }
@@ -245,6 +257,86 @@ describe('createRealtimeTurnController', () => {
     const added = store.getState().errors.find((e) => e.code === 'realtime.complete_failed')
     expect(added).toBeDefined()
     expect(added?.safeMessage).not.toContain('raw-complete-detail')
+  })
+
+  // 076: the realtime $/min denominator. finalizeTurn sends audioDurationMs (recording/source-speech
+  // duration = recording.stopped − recording.started, from the finalized turn's markers) so the backend's
+  // existing Build divides cost by it → estimatedUsdPerMinute (today null, blanking the cost comparison).
+  it('076: finalize sends the recording duration as audioDurationMs (started → stopped)', async () => {
+    const { client, api, controller } = setup(
+      clockSeq('2026-05-29T12:00:00.000+00:00', '2026-05-29T12:00:05.000+00:00'),
+    )
+    await controller.startTurn() // recording.started @ T0
+    controller.stopTurn() // recording.stopped @ T0+5000ms
+
+    client.onServerEvent?.(
+      JSON.stringify({
+        type: 'response.done',
+        response: {
+          usage: {
+            input_token_details: { audio_tokens: 31, cached_tokens: 0 },
+            output_token_details: { audio_tokens: 54 },
+          },
+        },
+      }),
+    )
+
+    expect(api.completeTurn).toHaveBeenCalledTimes(1)
+    const [, , body] = api.completeTurn.mock.calls[0]
+    expect(body.audioDurationMs).toBe(5000)
+  })
+
+  it('076: omits audioDurationMs when the recording.stopped marker is absent (honest-degrade, never 0)', async () => {
+    const { client, api, controller } = setup() // FIXED_TS; NO stopTurn → no recording.stopped marker
+    await controller.startTurn()
+
+    client.onServerEvent?.(JSON.stringify({ type: 'response.done', response: {} }))
+
+    expect(api.completeTurn).toHaveBeenCalledTimes(1)
+    const [, , body] = api.completeTurn.mock.calls[0]
+    expect(body).not.toHaveProperty('audioDurationMs') // omitted → backend keeps perMinute null
+  })
+
+  it('076: omits audioDurationMs when the duration is not positive (stopped ≤ started clock edge)', async () => {
+    const { client, api, controller } = setup(
+      clockSeq('2026-05-29T12:00:05.000+00:00', '2026-05-29T12:00:00.000+00:00'), // started LATER than stopped
+    )
+    await controller.startTurn() // recording.started @ T0+5000
+    controller.stopTurn() // recording.stopped @ T0 → duration = −5000 (≤ 0)
+
+    client.onServerEvent?.(JSON.stringify({ type: 'response.done', response: {} }))
+
+    const [, , body] = api.completeTurn.mock.calls[0]
+    expect(body).not.toHaveProperty('audioDurationMs') // never a 0/negative denominator
+  })
+
+  it('076: preserves the token fields + status alongside audioDurationMs (regression — §26)', async () => {
+    const { client, api, controller } = setup(
+      clockSeq('2026-05-29T12:00:00.000+00:00', '2026-05-29T12:00:03.000+00:00'),
+    )
+    await controller.startTurn()
+    controller.stopTurn()
+
+    client.onServerEvent?.(
+      JSON.stringify({
+        type: 'response.done',
+        response: {
+          usage: {
+            input_token_details: { audio_tokens: 31, cached_tokens: 0 },
+            output_token_details: { audio_tokens: 54 },
+          },
+        },
+      }),
+    )
+
+    const [, , body] = api.completeTurn.mock.calls[0]
+    expect(body).toEqual({
+      status: 'completed',
+      inputAudioTokens: 31,
+      outputAudioTokens: 54,
+      cachedAudioInputTokens: 0,
+      audioDurationMs: 3000,
+    })
   })
 
   it('auto mode: Start sends turn_detection server_vad (+ the 053-B transcription re-assert) (I.2 slice 1)', async () => {

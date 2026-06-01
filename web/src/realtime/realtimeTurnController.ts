@@ -145,6 +145,24 @@ export function createRealtimeTurnController(deps: RealtimeTurnDeps): RealtimeTu
     if (usage?.cachedAudioInputTokens !== undefined) {
       body.cachedAudioInputTokens = usage.cachedAudioInputTokens
     }
+    // 076: supply the realtime $/min DENOMINATOR — the recording (source-speech) duration. The backend's
+    // existing Build divides cost by audioDurationMs → estimatedUsdPerMinute (null today because we never
+    // sent it → the cost comparison blanked). Read THIS finalized turn's recording markers (it's already in
+    // turns[] here, mirroring reportTurnEvents); duration = stopped − started. Send ONLY when both markers
+    // are present AND > 0 — else OMIT (honest-degrade, never a synthesized 0/negative denominator → the
+    // backend keeps perMinute null + discloses-unavailable, web §25/§26). Source-speech basis = cascade-
+    // consistent (lead-confirmed; both modes read "$ per minute of SOURCE speech"). Mode-agnostic: each
+    // auto segment's turn carries its own markers, so turns.find(turnId) reads THIS turn's duration.
+    const finalizedTurn = store.getState().turns.find((t) => t.turnId === turnId)
+    const markers = finalizedTurn?.latencyEvents ?? []
+    const started = markers.find((e) => e.name === 'turn.recording.started')
+    const stopped = markers.find((e) => e.name === 'turn.recording.stopped')
+    if (started && stopped) {
+      const durationMs = Date.parse(stopped.timestamp) - Date.parse(started.timestamp)
+      if (Number.isFinite(durationMs) && durationMs > 0) {
+        body.audioDurationMs = durationMs
+      }
+    }
     void api.completeTurn(sessionId, turnId, body).catch((error: unknown) => {
       store.addError(
         error instanceof ApiError

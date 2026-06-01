@@ -158,6 +158,12 @@ export default function ComparisonSummary() {
           </table>
         )}
       </div>
+
+      {/* 076: disclose the $/min basis right at the mode-vs-mode cost axis — the comparison's
+          apples-to-apples claim depends on BOTH modes dividing by source-speech minutes. */}
+      <p className="cmp-disclaimer bl-sm" style={{ marginTop: 14 }}>
+        $/min = estimated cost ÷ source-speech minutes (same basis for cascade and realtime).
+      </p>
     </section>
   )
 }

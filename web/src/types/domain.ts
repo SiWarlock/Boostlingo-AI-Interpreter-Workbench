@@ -216,10 +216,12 @@ export type SessionListItem = {
 export type CreateTurnResponse = { turnId: string }
 
 // POST /api/sessions/{id}/turns/{turnId}/complete request — the realtime finalize (053-C2b). Full wire
-// mirror of the backend CompleteTurnRequest (Sessions/SessionDtos.cs); the realtime path populates ONLY
-// the audio-token fields (from the DC response.done.usage) + status:'completed'. The *AudioTokens fields
-// (053-C2a) carry the exact DC counts → the backend prices the realtime cost from them exactly (absent →
-// the seconds estimate; outputAudioDurationMs is the superseded E.2b path, never sent here).
+// mirror of the backend CompleteTurnRequest (Sessions/SessionDtos.cs); the realtime path populates the
+// audio-token fields (from the DC response.done.usage) + status:'completed' + audioDurationMs (076 — the
+// recording/source-speech duration, the $/min denominator the backend Build divides cost by; omitted when
+// the recording markers are absent or the duration ≤ 0). The *AudioTokens fields (053-C2a) carry the exact
+// DC counts → the backend prices the realtime cost from them exactly (absent → the seconds estimate;
+// outputAudioDurationMs is the superseded E.2b path, never sent here).
 export type CompleteTurnRequest = {
   audioDurationMs?: number | null
   transcripts?: TranscriptSegment[] | null

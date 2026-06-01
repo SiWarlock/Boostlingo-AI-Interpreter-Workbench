@@ -220,4 +220,20 @@ describe('ComparisonSummary', () => {
     const realtime = await screen.findByLabelText('Realtime-summary')
     expect(within(realtime).getByText(/No turns in this mode\./i)).toBeInTheDocument()
   })
+
+  // 076: the comparison's apples-to-apples cost claim depends on BOTH modes dividing cost by source-speech
+  // minutes — disclose that basis at the cost axis (rendered when the summary view is shown).
+  it('discloses the $/min source-speech-minute basis (same for both modes) — 076', async () => {
+    vi.mocked(loadComparison).mockResolvedValue({
+      summary: summary(),
+      byVariant: [],
+      models: null,
+    } as ComparisonData)
+    sessionStore.sessionStarted(activeSession())
+
+    render(<ComparisonSummary />)
+
+    await screen.findByLabelText('Realtime-summary') // summary view rendered (data loaded)
+    expect(screen.getByText(/source-speech minutes/i)).toBeInTheDocument()
+  })
 })

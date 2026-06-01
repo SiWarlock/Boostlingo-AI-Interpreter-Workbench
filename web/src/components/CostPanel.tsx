@@ -79,7 +79,8 @@ export default function CostPanel() {
       </div>
 
       <p className="cost-disclaimer">
-        All cost figures are estimates from configured PAYG rates — not billed amounts.
+        All cost figures are estimates from configured PAYG rates — not billed amounts. $/min ={' '}
+        estimated cost ÷ source-speech minutes (same basis for cascade and realtime).
       </p>
     </section>
   )
