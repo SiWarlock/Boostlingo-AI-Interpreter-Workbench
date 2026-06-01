@@ -372,6 +372,82 @@ describe('cascade continuous-listening (J.5)', () => {
   })
 })
 
+// --- J.6: cascade continuous end-path hygiene (no phantom/orphan re-armed turn) ----------------------
+// Finding-1 FE half: the J.5 re-arm POSTed createTurn THEN checked userEnded/liveness — so an end racing
+// the async createTurn left an orphan backend turn. Fix: pre-check userEnded/liveness BEFORE the POST
+// (no orphan on a clean end) + finalize a race-created orphan cleanly via client.stop() (no hang/error).
+// Pairs with BE-083 (an unavoidable empty auto-VAD turn → Completed-silence, excluded from the comparison).
+describe('cascade continuous end-path hygiene (J.6)', () => {
+  function autoLiveCompleted() {
+    return baseState({ turnControlMode: 'auto', sessionStatus: 'active', turnStatus: 'completed' })
+  }
+
+  it('no createTurn (no orphan) when the user already ended before the terminal', async () => {
+    const { deps } = setup(
+      baseState({ turnControlMode: 'auto', sessionStatus: 'active', turnStatus: 'recording' }),
+    )
+    const controller = createRecordingController(deps)
+    await controller.startRecording() // createTurn #1 (turn 1)
+
+    controller.stopRecording() // user ends the conversation (userEnded = true)
+    deps.store.getState().turnStatus = 'completed' // the in-flight turn's done arrives afterward
+    controller.onCascadeTerminal()
+    await flush()
+
+    expect(deps.createTurn).toHaveBeenCalledTimes(1) // NO orphan turn POSTed after the user ended
+    expect(deps.client.start).toHaveBeenCalledTimes(1) // no re-arm WS
+  })
+
+  it('orphan left cleanly when an end RACES the createTurn — no 2nd WS, mic stopped, no error, no no-op stop', async () => {
+    const { deps, state, captureStop } = setup(autoLiveCompleted())
+    let n = 0
+    deps.createTurn.mockImplementation(async () => ({ turnId: `turn_${++n}` }))
+    const controller = createRecordingController(deps)
+    await controller.startRecording() // turn_1
+
+    controller.onCascadeTerminal() // re-arm begins → createTurn (turn_2) is now pending
+    state.sessionStatus = 'ended' // the session ends DURING the async createTurn (the ≈184 race window)
+    await flush()
+
+    expect(deps.createTurn).toHaveBeenCalledTimes(2) // the in-flight POST can't be unsent — the orphan exists
+    expect(deps.client.start).toHaveBeenCalledTimes(1) // …but NO 2nd WS — the re-arm aborts on the post-check
+    expect(captureStop).toHaveBeenCalledTimes(1) // mic stopped
+    expect(deps.store.addError).not.toHaveBeenCalled() // a clean end surfaces NO error
+    // NO no-op client.stop: the orphan was never client.start-ed, so client.stop() would target the prior
+    // turn's closed socket (a no-op masquerading as a finalize). The never-started orphan is finalized
+    // BE-side on session /end (Step-9 Carry-forward). The FE just aborts the re-arm cleanly.
+    expect(deps.client.stop).not.toHaveBeenCalled()
+  })
+
+  it('a waiting (speechless) re-armed turn ends cleanly — client.stop, mic stopped, no error', async () => {
+    const { deps, captureStop } = setup(
+      baseState({ turnControlMode: 'auto', sessionStatus: 'active', turnStatus: 'recording' }),
+    )
+    const controller = createRecordingController(deps)
+    await controller.startRecording() // a turn is started + waiting for speech
+
+    controller.stopRecording() // the user ends while the turn waits (no speech yet)
+
+    expect(deps.client.stop).toHaveBeenCalledTimes(1) // finalize the waiting turn (BE-083 → Completed-silence)
+    expect(captureStop).toHaveBeenCalledTimes(1) // mic stopped
+    expect(deps.store.addError).not.toHaveBeenCalled() // no surfaced error
+  })
+
+  it('normal re-arm loop is UNCHANGED — speech → finalize → re-arm still begins the next turn (regression)', async () => {
+    const { deps } = setup(autoLiveCompleted())
+    let n = 0
+    deps.createTurn.mockImplementation(async () => ({ turnId: `turn_${++n}` }))
+    const controller = createRecordingController(deps)
+    await controller.startRecording()
+
+    controller.onCascadeTerminal() // a normal completed terminal (no end racing)
+    await flush()
+
+    expect(deps.createTurn).toHaveBeenCalledTimes(2) // re-arm still creates the next turn
+    expect(deps.client.start).toHaveBeenCalledTimes(2) // …and opens its WS
+  })
+})
+
 // --- D.6: the client-clock recording markers the top-level latency deltas need ----------------
 // turn.recording.started / turn.recording.stopped are browser-clock LatencyEvents stamped via the
 // store; deriveTurnMetrics reads their absolute timestamps to compute speechEnd→* + totalTurn.
