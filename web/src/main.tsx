@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
+import SoakPanel from './soak/SoakPanel'
 import { setAudioSink, setOnTerminal } from './cascade/cascadeStreamClient'
 import { playbackController } from './audio/playbackController'
 import { recordingController } from './state/recordingActions'
@@ -17,8 +18,11 @@ setAudioSink((chunk) => playbackController.enqueue(chunk))
 // The client owns the `done`/terminal dispatch; recordingController owns the capture handle — wire them.
 setOnTerminal(() => recordingController.onCascadeTerminal())
 
+// Dev-only `?soak=1` entry (G.4 089b): mount the soak harness panel INSTEAD of the app — gated on
+// `import.meta.env.DEV` so it can never reach the production/demo build (ARCH-007 clean-separation).
+const isSoakEntry =
+  import.meta.env.DEV && new URLSearchParams(window.location.search).get('soak') === '1'
+
 createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
+  <StrictMode>{isSoakEntry ? <SoakPanel /> : <App />}</StrictMode>,
 )

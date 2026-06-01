@@ -19,6 +19,7 @@ function baseInputs(): SoakReportInputs {
     skewSlope: 0.001,
     heapLeak: { slopeBytesPerSample: 2, thresholdBytesPerSample: 5, sampleCount: 60, pass: true },
     werSummary: { meanWer: 0.1, medianWer: 0.08, count: 24 },
+    overlapMeasured: true,
   }
 }
 
@@ -61,5 +62,15 @@ describe('assembleSoakReport', () => {
       },
     })
     expect(report.arch020.noLeak).toBe(false)
+  })
+
+  // overlapMeasured DISCLOSES whether overlap was actually checked — with no per-turn output-audio
+  // duration every playbackEndMs is null, detectOverlaps returns [], and noDriftOverlap would otherwise
+  // silently read as "checked, none found". The report must tell the truth (honest-degrade posture).
+  it('carries the overlapMeasured disclosure through', () => {
+    expect(assembleSoakReport(baseInputs()).overlapMeasured).toBe(true)
+    expect(assembleSoakReport({ ...baseInputs(), overlapMeasured: false }).overlapMeasured).toBe(
+      false,
+    )
   })
 })

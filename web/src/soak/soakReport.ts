@@ -21,6 +21,10 @@ export type SoakReportInputs = {
   disconnectCount: number
   latency: DriftVerdict
   overlaps: Overlap[]
+  // Whether overlap was actually MEASURED (any turn carried a playback-end stamp). With no per-turn
+  // output-audio duration every playbackEndMs is null and detectOverlaps returns [] — so this discloses
+  // "unmeasured" rather than letting noDriftOverlap read as a silent "checked, none found" (honest-degrade).
+  overlapMeasured: boolean
   skewSlope: number
   heapLeak: LeakVerdict
   werSummary: SoakWerSummary
@@ -33,6 +37,7 @@ export type SoakReport = {
   disconnectCount: number
   latency: DriftVerdict
   overlaps: Overlap[]
+  overlapMeasured: boolean
   skewSlope: number
   heapLeak: LeakVerdict
   werSummary: SoakWerSummary

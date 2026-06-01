@@ -403,7 +403,11 @@ export type TranscribeResponse = {
 export type WerRequest = {
   sessionId: string
   turnId?: string
-  phraseId: string
+  // 090: phraseId is now OPTIONAL and `reference?` was added — the additive explicit-reference path
+  // (`{sessionId, reference, hypothesis}`, no phraseId/turnId) lets the soak score its committed script
+  // text without seeding backend phrases. The phraseId path (eval panel) still works.
+  phraseId?: string
+  reference?: string
   hypothesis: string
 }
 

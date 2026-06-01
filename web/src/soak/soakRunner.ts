@@ -89,6 +89,11 @@ export function createSoakRunner(deps: SoakRunnerDeps): SoakRunner {
       .filter((v): v is number => v !== null && Number.isFinite(v))
     // NaN for a missing playback-end stamp — detectOverlaps skips non-finite (that turn isn't checked).
     const playbackEndsMs = turns.map((t) => t.playbackEndMs ?? Number.NaN)
+    // Overlap is only MEASURED if at least one turn carried a finite playback-end stamp — else disclose
+    // unmeasured (no per-turn output-audio duration → every stamp null → detectOverlaps trivially []).
+    const overlapMeasured = turns.some(
+      (t) => t.playbackEndMs !== null && Number.isFinite(t.playbackEndMs),
+    )
 
     // WER-via-script: pair each turn's source transcript (hypothesis) with its script utterance
     // (reference) by index — the hypothesis is the REAL pipeline STT (Finding-3 sidestep).
@@ -112,6 +117,7 @@ export function createSoakRunner(deps: SoakRunnerDeps): SoakRunner {
       disconnectCount: deps.drive.disconnectCount(),
       latency: driftVerdict(latencySeries, deps.config.driftThresholdMsPerTurn),
       overlaps: detectOverlaps(deps.schedule, playbackEndsMs),
+      overlapMeasured,
       skewSlope: playbackSkewSlope(skewSamples),
       heapLeak: leakVerdict(
         deps.heapSampler.samples(),

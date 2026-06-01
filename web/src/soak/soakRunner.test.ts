@@ -126,6 +126,18 @@ describe('createSoakRunner', () => {
     expect(report.durationSec).toBe(1)
     expect(report.arch020).toEqual({ noDisconnect: true, noDriftOverlap: true, noLeak: true })
     expect(report.werSummary.count).toBe(3)
+    expect(report.overlapMeasured).toBe(true) // finite playback-end stamps → overlap WAS checked
+  })
+
+  it('discloses overlapMeasured=false when no turn carries a playback-end stamp', async () => {
+    vi.useFakeTimers()
+    const deps = makeDeps()
+    deps.store.getCompletedTurns.mockReturnValue([
+      { index: 0, endToEndLatencyMs: 500, playbackEndMs: null, sourceTranscript: 'a' },
+    ])
+    const report = await runWithTimers(deps, 'cascade')
+    // No playback-end stamp → detectOverlaps can't run → disclose unmeasured, not a silent clean pass.
+    expect(report.overlapMeasured).toBe(false)
   })
 
   it('tears down cleanly at the end of the run (stream, drive, sampler, session)', async () => {
