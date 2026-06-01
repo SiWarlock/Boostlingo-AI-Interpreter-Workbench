@@ -691,6 +691,69 @@ public class SessionsControllerTests : IDisposable
         Assert.DoesNotContain("stack", body, StringComparison.OrdinalIgnoreCase);
     }
 
+    // ===== 077 — auto-derived session label at end-persist =====
+
+    // D1 — a session ended with a BLANK label + a source-final transcript gets a label derived from the
+    // first source utterance (flows to the /end response's session + the persisted file + GET /api/sessions).
+    [Fact]
+    public async Task end_derives_label_for_blank_session_from_source_transcript()
+    {
+        var dir = TempDir();
+        using var factory = Factory(dir);
+        var client = factory.CreateClient();
+        var created = await client.PostAsJsonAsync("/api/sessions",
+            SampleRequest() with { Label = null }, JsonDefaults.Options);
+        var id = JsonDocument.Parse(await created.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("sessionId").GetString()!;
+        var turnId = await CreateTurn(client, id);
+        var transcripts = new List<TranscriptSegment>
+        {
+            new("seg1", "source", "Hola desde la demo", true, "deepgram", T, ClockSource.Server),
+        };
+        await client.PostAsJsonAsync($"/api/sessions/{id}/turns/{turnId}/complete",
+            new CompleteTurnRequest(2000, transcripts, null), JsonDefaults.Options);
+
+        var resp = await client.PostAsync($"/api/sessions/{id}/end", null);
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        const string derived = "Hola desde la demo";
+        using (var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync()))
+        {
+            Assert.Equal(derived, doc.RootElement.GetProperty("session").GetProperty("label").GetString());
+        }
+
+        // The derived label is on ALL surfaces the AC names: the persisted file, GET /{id}, and the list.
+        // Parse the file (not a substring scan — the source transcript text equals the label string here).
+        var file = Assert.Single(Directory.GetFiles(dir, "*.json"));
+        using (var persisted = JsonDocument.Parse(await File.ReadAllTextAsync(file)))
+        {
+            Assert.Equal(derived, persisted.RootElement.GetProperty("label").GetString());
+        }
+
+        using var byId = JsonDocument.Parse(
+            await (await client.GetAsync($"/api/sessions/{id}")).Content.ReadAsStringAsync());
+        Assert.Equal(derived, byId.RootElement.GetProperty("label").GetString());
+
+        using var list = JsonDocument.Parse(
+            await (await client.GetAsync("/api/sessions")).Content.ReadAsStringAsync());
+        var item = list.RootElement.EnumerateArray().Single(e => e.GetProperty("sessionId").GetString() == id);
+        Assert.Equal(derived, item.GetProperty("label").GetString());
+    }
+
+    // D2 — a user-typed label is preserved through /end (regression guard — only blank labels are derived).
+    [Fact]
+    public async Task end_preserves_user_typed_label()
+    {
+        using var factory = Factory(TempDir());
+        var (client, id) = await CreatedSession(factory); // SampleRequest Label = "Demo run 1"
+
+        var resp = await client.PostAsync($"/api/sessions/{id}/end", null);
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        Assert.Equal("Demo run 1", doc.RootElement.GetProperty("session").GetProperty("label").GetString());
+    }
+
     // L4 — the list item is a LIGHTWEIGHT summary (Q1=B payload hygiene): it carries sessionId/label/
     // startedAt/endedAt/turnCount/modes and does NOT embed the full turns/latencyEvents/transcripts; the
     // read-side sentinel holds (no sk-/ek_/raw-audio in the response).

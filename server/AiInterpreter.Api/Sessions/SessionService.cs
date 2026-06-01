@@ -168,6 +168,16 @@ public sealed class SessionService : ISessionService
         // file. Acceptable for the single-node MVP.)
         var summary = _summaryService.Compute(ended);
         var finalSession = _store.SetSummary(sessionId, summary)!;
+
+        // 077 — auto-derive a label for a blank-label session at end-persist (the canonical finalize where all
+        // transcripts exist), so the history list shows the opening utterance instead of the raw id. A user-typed
+        // label wins (DeriveSessionLabel returns it unchanged). Set it in the store (non-null — same precedent as
+        // SetSummary) so GET /{id} and the persisted file agree.
+        if (string.IsNullOrWhiteSpace(finalSession.Label))
+        {
+            finalSession = _store.SetLabel(sessionId, SessionLabelDeriver.DeriveSessionLabel(finalSession))!;
+        }
+
         var persist = await _writer.WriteAsync(finalSession, cancellationToken);
 
         return new EndSessionOutcome(finalSession, persist);

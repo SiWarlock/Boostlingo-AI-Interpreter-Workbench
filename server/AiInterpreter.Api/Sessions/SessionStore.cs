@@ -233,6 +233,18 @@ public sealed class SessionStore
         }
     }
 
+    /// <summary>Sets the session <c>Label</c> (077 — the end-persist auto-derived label) so a later
+    /// <see cref="Get"/> + the persisted JSON reflect it; returns the updated session, or null if unknown.</summary>
+    public InterpretationSession? SetLabel(string sessionId, string label)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var entry)) return null;
+        lock (entry.Gate)
+        {
+            entry.Session = entry.Session with { Label = label };
+            return entry.Session;
+        }
+    }
+
     // session_<short-id>: the short-id is a lowercase-hex GUID segment, so the full id matches the
     // path-traversal allowlist ^[A-Za-z0-9_-]+$ (ARCH-016 / ARCH-019).
     private static string GenerateSessionId() => "session_" + Guid.NewGuid().ToString("N")[..8];
