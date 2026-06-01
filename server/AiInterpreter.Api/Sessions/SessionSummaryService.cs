@@ -66,8 +66,13 @@ public sealed class SessionSummaryService
     // re-armed on a silent stretch). Exclude it from the per-mode comparison so a phantom silence turn can't
     // inflate TurnCount/averages. Scoped to Completed on purpose: a FAILED 0-transcript turn (a real early
     // failure, e.g. an immediate SttFailed) is KEPT so its error still surfaces in ErrorCount.
+    // 097 (refines §39) — ALSO require CostEstimate==null: a cost-bearing turn produced billable work, so it
+    // is real evidence, NOT silence. Every realtime turn persists with 0 transcripts (realtime transcripts
+    // live FE-store-side, not on the turn) but a real cost — without this clause the §39 rule excluded EVERY
+    // realtime turn, blanking the realtime per-mode Cost/min (Finding A). Genuine cascade silence is cost-null
+    // (no STT final → no composite cost), so it still matches and stays excluded.
     private static bool IsEmptySilence(InterpretationTurn t) =>
-        t.Status == TurnStatus.Completed && t.Transcripts.Count == 0;
+        t.Status == TurnStatus.Completed && t.Transcripts.Count == 0 && t.CostEstimate is null;
 
     // Session-level (both modes). WER is unbounded — never clamp > 1.0 when averaging (lesson §10).
     private static WerSummary? SummarizeWer(IReadOnlyList<InterpretationTurn> turns)

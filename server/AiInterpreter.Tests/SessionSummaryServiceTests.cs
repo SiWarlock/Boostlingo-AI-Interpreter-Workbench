@@ -341,11 +341,13 @@ public class SessionSummaryServiceTests
     // ModeSummary (TurnCount/averages) so a phantom silence turn can't inflate the comparison — like §29's
     // IsEvaluation exclusion. A 0-transcript FAILED turn (a real early failure) is KEPT so its error still
     // surfaces in ErrorCount (the exclusion is scoped to Completed, NOT a blanket 0-transcript drop).
+    // 097 refinement: the cascade-silence turn here is also COST-NULL (genuine silence prices to nothing) —
+    // which is why it stays excluded under the refined `&& CostEstimate==null` predicate.
     [Fact]
     public void summarize_mode_excludes_empty_silence_turn_but_keeps_failed_empty()
     {
         var content = CascadeTurn("t1", sttFinalMs: 200);                                   // Completed, 1 transcript
-        var silence = CascadeTurn("silence") with { Transcripts = new List<TranscriptSegment>() }; // Completed, 0 transcripts
+        var silence = CascadeTurn("silence") with { Transcripts = new List<TranscriptSegment>() }; // Completed, 0 transcripts, cost null
         var failedEmpty = CascadeTurn("failed") with                                        // Failed, 0 transcripts, 1 error
         {
             Status = TurnStatus.Failed,
@@ -359,6 +361,48 @@ public class SessionSummaryServiceTests
         var c = summary.Cascade!;
         Assert.Equal(2, c.TurnCount);         // content + failed-empty; the Completed-silence turn is excluded
         Assert.Equal(1, c.ErrorCount);        // the failed-empty turn's error STILL surfaces (not hidden)
+    }
+
+    // 097 / Finding-A — a COMPLETED realtime turn legitimately persists with 0 transcripts (realtime
+    // transcripts live FE-store-side, not on the turn) but a REAL CostEstimate (billed audio tokens). It
+    // must be INCLUDED in the ModeSummary so its cost feeds the per-mode Cost/min — the §39 0-transcript
+    // silence exclusion must NOT swallow it. Refines §39: a cost-bearing turn is real evidence, not silence.
+    // Mirrors the user's live session shape (session_20260601T170454Z_*: completed realtime turns, 0
+    // transcripts, real cost — previously blanking realtime.estimatedCostPerMinuteUsd).
+    [Fact]
+    public void summarize_includes_completed_realtime_turn_with_cost_and_no_transcripts()
+    {
+        var realtimeCostTurn = RealtimeTurn(
+            "rt", speechEndToFirstAudioMs: 400, speechEndToPlaybackMs: 600, costPerMin: 0.30m)
+            with
+        { Transcripts = new List<TranscriptSegment>() };
+
+        var summary = Service().Compute(Session(realtimeCostTurn));
+
+        var r = summary.Realtime;
+        Assert.NotNull(r);
+        Assert.Equal(1, r!.TurnCount);
+        Assert.Equal(0.30m, r.EstimatedCostPerMinuteUsd); // the turn's cost feeds the per-mode Cost/min
+        Assert.Equal(400, r.AvgSpeechEndToFirstAudioMs);  // latency aggregates too (it's a real turn)
+        Assert.Equal(1, summary.TurnCount);
+    }
+
+    // 097 — the discriminator is COST, not MODE: a COMPLETED 0-transcript turn carrying a real CostEstimate
+    // is INCLUDED regardless of mode (billed work is real evidence, never silence). Pins the cost-null rule
+    // against the mode-scoping alternative (`Mode != Realtime`), which would wrongly exclude this turn.
+    [Fact]
+    public void summarize_includes_cost_bearing_zero_transcript_turn_regardless_of_mode()
+    {
+        var cascadeCostNoTranscripts = CascadeTurn("c-cost", costPerMin: 0.05m)
+            with
+        { Transcripts = new List<TranscriptSegment>() };
+
+        var summary = Service().Compute(Session(cascadeCostNoTranscripts));
+
+        var c = summary.Cascade;
+        Assert.NotNull(c);
+        Assert.Equal(1, c!.TurnCount);
+        Assert.Equal(0.05m, c.EstimatedCostPerMinuteUsd);
     }
 
     // F.4 — 12: the SAME eval turn that ModeSummary excludes is STILL included in the session-level
