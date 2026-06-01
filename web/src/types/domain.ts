@@ -64,6 +64,10 @@ export type TurnViewModel = {
   startedAt: string
   completedAt?: string
   audioDurationMs?: number
+  // Realtime per-turn OUTPUT-audio-token count from response.done.usage (053-C2b parses it; the sink
+  // surfaces it here). Undefined for cascade + when usage is absent (honest-omit). The G.4 soak harness
+  // (093) derives the realtime output-audio duration from it (tokens ÷ tokens-per-second). (092)
+  outputAudioTokens?: number
   sourceTranscript: { text: string; isFinal: boolean }[]
   targetTranscript: { text: string; isFinal: boolean }[]
   latency: {

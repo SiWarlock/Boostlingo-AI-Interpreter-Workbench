@@ -334,6 +334,25 @@ describe('sessionStore streaming actions (D.4a)', () => {
     expect(turn?.cost).toEqual(estimate)
   })
 
+  it('setTurnOutputAudioTokens records the realtime output-audio-token count; it survives completeTurn (the 093 seam)', () => {
+    const store = createSessionStore()
+    store.beginTurn({ turnId: 't', mode: 'realtime', direction: { source: 'en', target: 'es' } })
+
+    store.setTurnOutputAudioTokens(73)
+    expect(store.getState().currentTurn?.outputAudioTokens).toBe(73)
+
+    // It rides into turns[] on completeTurn — 093 reads it from the FINALIZED turn to derive the realtime
+    // output-audio duration (output-tokens ÷ tokens-per-second).
+    store.completeTurn('t', 'completed')
+    expect(store.getState().turns[0].outputAudioTokens).toBe(73)
+  })
+
+  it('setTurnOutputAudioTokens is a no-op when there is no current turn', () => {
+    const store = createSessionStore()
+    expect(() => store.setTurnOutputAudioTokens(73)).not.toThrow()
+    expect(store.getState().currentTurn).toBeUndefined()
+  })
+
   it('failTurn records the error + marks failed; completeTurn finalizes currentTurn into turns[]', () => {
     const store = createSessionStore()
     store.beginTurn({

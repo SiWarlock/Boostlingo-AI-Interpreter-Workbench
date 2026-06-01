@@ -13,7 +13,12 @@ export type RealtimeEventSink = {
 // reused verbatim from cascade). The sink takes ONLY what it calls; there is NO audio sink (invariant #3).
 type RealtimeStore = Pick<
   SessionStore,
-  'getState' | 'appendTranscriptSegment' | 'appendLatencyEvent' | 'failTurn' | 'completeTurn'
+  | 'getState'
+  | 'appendTranscriptSegment'
+  | 'appendLatencyEvent'
+  | 'failTurn'
+  | 'completeTurn'
+  | 'setTurnOutputAudioTokens'
 >
 
 const REALTIME_PROVIDER = 'openai-realtime'
@@ -127,6 +132,13 @@ export function createRealtimeEventSink(deps: {
         }
         const turnId = store.getState().currentTurn?.turnId
         if (turnId) {
+          // Surface the OUTPUT-audio-token count onto the turn BEFORE completeTurn so it rides into turns[]
+          // (the seam 093 reads to derive the realtime output-audio duration). Same `response.done.usage`
+          // the controller forwards to /complete for cost (053-C2b) — one parse, two consumers. Absent →
+          // omitted (honest-degrade, web §25), never a synthetic 0.
+          if (event.usage?.outputAudioTokens !== undefined) {
+            store.setTurnOutputAudioTokens(event.usage.outputAudioTokens)
+          }
           store.completeTurn(turnId, 'completed')
         }
         break

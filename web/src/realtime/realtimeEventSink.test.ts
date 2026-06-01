@@ -170,7 +170,7 @@ describe('createRealtimeEventSink', () => {
     const store = setupTurn()
     const sink = createRealtimeEventSink({ store, clock: fixedClock })
 
-    sink.handle({ kind: 'responseDone', usage: null }) // usage is controller-only; the sink ignores it
+    sink.handle({ kind: 'responseDone', usage: null }) // null usage → no output-token surface (present-usage surface tested below)
 
     const state = store.getState()
     expect(state.currentTurn).toBeUndefined()
@@ -185,13 +185,35 @@ describe('createRealtimeEventSink', () => {
     expect(state.turns[0].targetTranscript).toEqual([])
   })
 
+  it('surfaces the output-audio-token count onto the completed turn from responseDone.usage (the 093 seam)', () => {
+    const store = setupTurn()
+    const sink = createRealtimeEventSink({ store, clock: fixedClock })
+
+    sink.handle({
+      kind: 'responseDone',
+      usage: { inputAudioTokens: 85, outputAudioTokens: 73, cachedAudioInputTokens: 0 },
+    })
+
+    // 093 derives the realtime output-audio duration from the per-turn output-token count.
+    expect(store.getState().turns[0].outputAudioTokens).toBe(73)
+  })
+
+  it('omits the output-audio-token count when responseDone carries no usage (honest-degrade)', () => {
+    const store = setupTurn()
+    const sink = createRealtimeEventSink({ store, clock: fixedClock })
+
+    sink.handle({ kind: 'responseDone', usage: null })
+
+    expect(store.getState().turns[0].outputAudioTokens).toBeUndefined()
+  })
+
   it('finalizes the running target partial on responseDone (single final segment) before completing', () => {
     const store = setupTurn()
     const sink = createRealtimeEventSink({ store, clock: fixedClock })
 
     sink.handle({ kind: 'targetTranscriptDelta', text: 'ho' })
     sink.handle({ kind: 'targetTranscriptDelta', text: 'la' })
-    sink.handle({ kind: 'responseDone', usage: null }) // usage is controller-only; the sink ignores it
+    sink.handle({ kind: 'responseDone', usage: null }) // null usage → no output-token surface (present-usage surface tested below)
 
     // response.done is the target-final signal (E.3 handoff): the accumulated target rides into turns[]
     // as a SINGLE final segment (finalize-target THEN completeTurn).

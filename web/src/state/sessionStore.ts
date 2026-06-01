@@ -56,6 +56,7 @@ export type SessionStore = {
   appendTranscriptSegment(segment: TranscriptSegment): void
   appendLatencyEvent(event: LatencyEvent): void
   setTurnCost(estimate: CostEstimate): void
+  setTurnOutputAudioTokens(count: number): void
   failTurn(error: UiError): void
   completeTurn(turnId: string, status: TurnStatus): void
 }
@@ -229,6 +230,16 @@ export function createSessionStore(): SessionStore {
           cost: estimate, // full estimate for the CostPanel (model + the assumptions tooltip), D.6
         },
       })
+    },
+
+    // Surface the realtime per-turn output-audio-token count onto currentTurn (set BEFORE completeTurn so
+    // it rides into turns[]). Mirrors setTurnCost; the soak harness (093) reads it off the finalized turn.
+    setTurnOutputAudioTokens: (count) => {
+      const turn = state.currentTurn
+      if (!turn) {
+        return
+      }
+      set({ ...state, currentTurn: { ...turn, outputAudioTokens: count } })
     },
 
     failTurn: (error) =>

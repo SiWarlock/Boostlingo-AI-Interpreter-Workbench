@@ -52,6 +52,7 @@ export type RealtimeTurnDeps = {
     | 'addError'
     | 'setTurnStatus'
     | 'setTurnDirection'
+    | 'setTurnOutputAudioTokens'
   >
   client: Pick<RealtimeWebRtcClient, 'sendClientEvent' | 'onServerEvent'>
   // Persistent connect is delegated here (E.5a) — the manager holds one pc across turns (idempotent).
