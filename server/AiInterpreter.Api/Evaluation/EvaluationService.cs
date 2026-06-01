@@ -84,15 +84,60 @@ public sealed class EvaluationService
             return EvaluationWerOutcome.Invalid();
         }
 
-        var phrase = string.IsNullOrEmpty(request.PhraseId) ? null : _phrases.GetById(request.PhraseId);
-        if (phrase is null)
+        // No identifier at all (neither an explicit reference nor a phraseId) is an invalid request, not a
+        // "phrase not found" — preserve the pre-090 no-identifier→400 contract now that PhraseId is optional.
+        if (request.Reference is null && string.IsNullOrEmpty(request.PhraseId))
         {
-            return EvaluationWerOutcome.PhraseNotFound();
+            return EvaluationWerOutcome.Invalid();
         }
 
-        // Reference is sourced from the STORE by phraseId (never from the request); arg order is
-        // (phraseId, reference, hypothesis) — ADD-1 pins both.
-        var wer = _compute(request.PhraseId, phrase.ReferenceText, request.Hypothesis ?? string.Empty);
+        string reference;
+        string phraseIdForResult;
+
+        if (request.Reference is not null)
+        {
+            // G.4 (090) explicit-reference path (the measurement-workbench/soak use case) — reference-wins
+            // over phraseId, bypassing the store. SECURITY (ARCH-019, §27 extended): the reference is now an
+            // EXTERNAL input — the n-dimension of the n×m DP matrix that §27 capped only on m (hypothesis) —
+            // so it MUST be bounded (cap) + non-empty (the calculator throws on an empty normalized
+            // reference) BEFORE the allocation. Both rejects → the same evaluation.invalid_phrase 400.
+            if (string.IsNullOrWhiteSpace(request.Reference) || request.Reference.Length > MaxHypothesisChars)
+            {
+                return EvaluationWerOutcome.Invalid();
+            }
+
+            reference = request.Reference;
+            phraseIdForResult = request.PhraseId ?? string.Empty;
+        }
+        else
+        {
+            // Default path (unchanged): the reference is sourced from the STORE by phraseId, never from the
+            // request (the neither-identifier guard above guarantees PhraseId is non-empty here).
+            var phrase = _phrases.GetById(request.PhraseId!);
+            if (phrase is null)
+            {
+                return EvaluationWerOutcome.PhraseNotFound();
+            }
+
+            reference = phrase.ReferenceText;
+            phraseIdForResult = request.PhraseId!;
+        }
+
+        // Arg order is (phraseId, reference, hypothesis) — ADD-1 pins both.
+        WerResult wer;
+        try
+        {
+            wer = _compute(phraseIdForResult, reference, request.Hypothesis ?? string.Empty);
+        }
+        catch (ArgumentException)
+        {
+            // A reference that normalizes to EMPTY (e.g. punctuation-only "..." — WerCalculator strips \p{P})
+            // is a degenerate CALLER input, not a server fault: the calculator throws its empty-reference
+            // precondition (ARCH-015). Convert it to the same evaluation.invalid_phrase 400 as the
+            // whitespace/cap rejects — never a 500. The reference is already capped, so the throw precedes the
+            // n×m DP allocation (no DoS). (security-reviewer 090: client-input must not surface as a 500.)
+            return EvaluationWerOutcome.Invalid();
+        }
 
         if (string.IsNullOrEmpty(request.TurnId))
         {

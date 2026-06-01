@@ -306,6 +306,204 @@ public sealed class EvaluationServiceTests
         Assert.False(stored.IsEvaluation);   // F.4: the marker is set ONLY on the turnId attach path, not on bare compute
     }
 
+    // ---- G.4 (090) — additive explicit-reference path {reference, hypothesis} ----
+
+    // #1 — an explicit reference is scored by the canonical WerCalculator (NOT sourced from the store); the
+    // asymmetric reference != hypothesis != store-text pins the arg order (reference is _compute arg #2).
+    [Fact]
+    public async Task explicit_reference_computes_against_supplied_reference()
+    {
+        var clock = new FixedClock();
+        string? capturedPhraseId = null, capturedReference = null, capturedHypothesis = null;
+        var service = Service(
+            PhraseStore(Phrase("en-001", "stored reference text")), new SessionStore(clock),
+            new SessionPersistenceWriter(NewTempDir()),
+            compute: (phraseId, reference, hypothesis) =>
+            {
+                capturedPhraseId = phraseId;
+                capturedReference = reference;
+                capturedHypothesis = hypothesis;
+                return new WerResult(phraseId, reference, hypothesis, reference, hypothesis, 1, 0, 0, 2, 0.5);
+            });
+
+        var outcome = await service.ComputeWerAsync(
+            new WerRequest("session_x", null, null, "hello word", "hello world"), default);
+
+        Assert.Equal(EvaluationWerStatus.Computed, outcome.Status);
+        Assert.Equal("hello world", capturedReference);   // the supplied reference (arg #2), not the store text
+        Assert.Equal("hello word", capturedHypothesis);   // arg #3
+        Assert.Equal(string.Empty, capturedPhraseId);     // no phraseId on the explicit path
+        Assert.Equal("hello world", outcome.Result!.Reference);
+    }
+
+    // #2 (SECURITY) — an over-cap reference (the n-dimension of the n×m DP matrix) is rejected BEFORE compute.
+    // §27 only capped the hypothesis (m); the external reference reopens the n-dimension DoS, so it is bounded too.
+    [Fact]
+    public async Task explicit_reference_over_cap_rejected_before_compute()
+    {
+        var clock = new FixedClock();
+        var calls = 0;
+        var service = Service(
+            PhraseStore(Phrase("en-001", "hello world")), new SessionStore(clock),
+            new SessionPersistenceWriter(NewTempDir()), compute: SpyCompute(() => calls++));
+
+        var oversized = new string('a', EvaluationService.MaxHypothesisChars + 1);
+        var outcome = await service.ComputeWerAsync(
+            new WerRequest("session_x", null, null, "hi", oversized), default);
+
+        Assert.Equal(EvaluationWerStatus.Invalid, outcome.Status);
+        Assert.Equal(0, calls); // the n-dimension never reached the DP allocation
+    }
+
+    // #3 — a whitespace/empty reference on the explicit branch is rejected 400 BEFORE compute (never the
+    // calculator's ArgumentException on an empty normalized reference, ARCH-015).
+    [Fact]
+    public async Task explicit_reference_empty_rejected_before_compute()
+    {
+        var clock = new FixedClock();
+        var calls = 0;
+        var service = Service(
+            PhraseStore(Phrase("en-001", "hello world")), new SessionStore(clock),
+            new SessionPersistenceWriter(NewTempDir()), compute: SpyCompute(() => calls++));
+
+        var outcome = await service.ComputeWerAsync(
+            new WerRequest("session_x", null, null, "hello", "   "), default);
+
+        Assert.Equal(EvaluationWerStatus.Invalid, outcome.Status);
+        Assert.Equal(0, calls);
+    }
+
+    // #4 — the hypothesis cap (the m-dimension, §27) still applies on the explicit path (checked first).
+    [Fact]
+    public async Task hypothesis_cap_still_applies_on_explicit_path()
+    {
+        var clock = new FixedClock();
+        var calls = 0;
+        var service = Service(
+            PhraseStore(Phrase("en-001", "hello world")), new SessionStore(clock),
+            new SessionPersistenceWriter(NewTempDir()), compute: SpyCompute(() => calls++));
+
+        var oversizedHyp = new string('a', EvaluationService.MaxHypothesisChars + 1);
+        var outcome = await service.ComputeWerAsync(
+            new WerRequest("session_x", null, null, oversizedHyp, "a valid reference"), default);
+
+        Assert.Equal(EvaluationWerStatus.Invalid, outcome.Status);
+        Assert.Equal(0, calls);
+    }
+
+    // #5 — strictly additive: with NO Reference (default null), the store-by-phraseId path is byte-identical
+    // (reference sourced from the store, not the request).
+    [Fact]
+    public async Task phraseid_path_unchanged_when_no_reference()
+    {
+        var clock = new FixedClock();
+        var store = PhraseStore(Phrase("en-001", "the quick brown fox"));
+        var service = Service(store, new SessionStore(clock), new SessionPersistenceWriter(NewTempDir()));
+
+        var outcome = await service.ComputeWerAsync(
+            new WerRequest("session_x", null, "en-001", "the quick fox"), default);
+
+        Assert.Equal(EvaluationWerStatus.Computed, outcome.Status);
+        Assert.Equal("the quick brown fox", outcome.Result!.Reference); // from the store
+        Assert.True(outcome.Result.Wer > 0.0);
+    }
+
+    // #6 (⭐ soak-correctness) — explicit reference + NO turnId: compute-and-return only. The session's REAL
+    // turn stays un-attached + NOT marked IsEvaluation (else it would be excluded from the per-mode
+    // comparison, §29/§39). This is the soak path — its measured turns must remain IN the comparison.
+    [Fact]
+    public async Task explicit_reference_no_turn_id_no_attach_no_eval_marking()
+    {
+        var clock = new FixedClock();
+        var store = new SessionStore(clock);
+        var session = store.Create(SampleConfig(), "v-test");
+        var turn = store.CreateTurn(session.SessionId)!;
+        var service = Service(PhraseStore(Phrase("en-001", "hello world")), store,
+            new SessionPersistenceWriter(NewTempDir()));
+
+        var outcome = await service.ComputeWerAsync(
+            new WerRequest(session.SessionId, null, null, "hello word", "hello world"), default);
+
+        Assert.Equal(EvaluationWerStatus.Computed, outcome.Status);
+        Assert.Null(outcome.Persist);
+        var stored = store.Get(session.SessionId)!.Turns.Single(t => t.TurnId == turn.TurnId);
+        Assert.Null(stored.WerResult);
+        Assert.False(stored.IsEvaluation);
+    }
+
+    // #7 — the optional turnId-attach still works on the explicit branch (orthogonal, unchanged behavior).
+    [Fact]
+    public async Task explicit_reference_with_turn_id_attaches_and_marks_eval()
+    {
+        var clock = new FixedClock();
+        var store = new SessionStore(clock);
+        var session = store.Create(SampleConfig(), "v-test");
+        var turn = store.CreateTurn(session.SessionId)!;
+        var service = Service(PhraseStore(Phrase("en-001", "hello world")), store,
+            new SessionPersistenceWriter(NewTempDir()));
+
+        var outcome = await service.ComputeWerAsync(
+            new WerRequest(session.SessionId, turn.TurnId, null, "hello world", "hello world"), default);
+
+        Assert.Equal(EvaluationWerStatus.Computed, outcome.Status);
+        var stored = store.Get(session.SessionId)!.Turns.Single(t => t.TurnId == turn.TurnId);
+        Assert.NotNull(stored.WerResult);
+        Assert.True(stored.IsEvaluation);
+    }
+
+    // #8 — precedence (Q1 = reference-wins): when BOTH a valid phraseId and an explicit reference are present,
+    // the explicit reference is scored (the store is NOT consulted).
+    [Fact]
+    public async Task both_phraseid_and_reference_reference_wins()
+    {
+        var clock = new FixedClock();
+        var store = PhraseStore(Phrase("en-001", "stored reference text"));
+        var service = Service(store, new SessionStore(clock), new SessionPersistenceWriter(NewTempDir()));
+
+        var outcome = await service.ComputeWerAsync(
+            new WerRequest("session_x", null, "en-001", "explicit hyp", "explicit reference"), default);
+
+        Assert.Equal(EvaluationWerStatus.Computed, outcome.Status);
+        Assert.Equal("explicit reference", outcome.Result!.Reference); // reference-wins
+    }
+
+    // #9 — neither phraseId nor reference supplied → Invalid (400), NOT PhraseNotFound (404). Preserves the
+    // pre-slice "no identifier → 400" contract once PhraseId is relaxed to optional (strictly-additive honesty;
+    // 404 "phrase not found" is semantically wrong for "you didn't specify one").
+    [Fact]
+    public async Task neither_phraseid_nor_reference_invalid_400()
+    {
+        var clock = new FixedClock();
+        var calls = 0;
+        var service = Service(
+            PhraseStore(Phrase("en-001", "hello world")), new SessionStore(clock),
+            new SessionPersistenceWriter(NewTempDir()), compute: SpyCompute(() => calls++));
+
+        var outcome = await service.ComputeWerAsync(
+            new WerRequest("session_x", null, null, "hello"), default); // no phraseId, no reference
+
+        Assert.Equal(EvaluationWerStatus.Invalid, outcome.Status);
+        Assert.Equal(0, calls);
+    }
+
+    // #10 (security-reviewer 090) — a punctuation-only reference normalizes to empty (WerCalculator strips
+    // \p{P}), which the calculator rejects via ArgumentException; the service converts it to the same 400 as
+    // whitespace/cap, NEVER a 500. Uses the REAL WerCalculator (the throw can't be reproduced with the spy).
+    [Fact]
+    public async Task explicit_reference_punctuation_only_invalid_400()
+    {
+        var clock = new FixedClock();
+        var service = Service(
+            PhraseStore(Phrase("en-001", "hello world")), new SessionStore(clock),
+            new SessionPersistenceWriter(NewTempDir())); // real WerCalculator (no compute override)
+
+        var outcome = await service.ComputeWerAsync(
+            new WerRequest("session_x", null, null, "hello", "..."), default);
+
+        Assert.Equal(EvaluationWerStatus.Invalid, outcome.Status);
+        Assert.Null(outcome.Result);
+    }
+
     // ---- Feature B: transcribe (STT-only) ----
 
     // #11 — a successful STT yields the hypothesis from its final + provider/model identity + latency.

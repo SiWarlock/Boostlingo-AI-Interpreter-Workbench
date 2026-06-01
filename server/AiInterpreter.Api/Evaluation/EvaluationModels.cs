@@ -17,20 +17,28 @@ namespace AiInterpreter.Api.Evaluation;
 /// computed <see cref="WerResult"/> is attached to that turn + best-effort persisted (ARCH-016); when
 /// absent it is compute-and-return only.
 ///
-/// <para>Boundary caps (ARCH-019 / lesson §16): the lookup/store-key strings carry <c>[MaxLength]</c>
-/// so MVC auto-rejects an oversized id before the service. <see cref="Hypothesis"/> is DELIBERATELY
-/// uncapped here — its length cap lives in <see cref="EvaluationService"/> (the single WER chokepoint),
-/// which returns the domain <c>evaluation.invalid_phrase</c> 400 (a <c>[MaxLength]</c> would instead emit
-/// a generic ProblemDetails AND bypass the service-side DoS guard). It is <c>string?</c> (not
-/// <c>[Required]</c>): a missing/empty hypothesis is a VALID evaluation case (STT produced nothing →
-/// WER ≈ 1.0), and System.Text.Json may bind an absent field to null on a non-nullable ref type.
-/// DataAnnotations target the record PARAMETER, not the property (lesson §16).</para>
+/// <para>Reference source (090, G.4): <see cref="PhraseId"/> resolves the reference from the scripted
+/// store (the DEFAULT phrase flow), OR an explicit <see cref="Reference"/> is supplied directly (the
+/// measurement-workbench/soak path — scored by the SAME canonical <see cref="WerCalculator"/>, no client
+/// reimplementation). When both are present, <see cref="Reference"/> wins; <see cref="PhraseId"/> is
+/// therefore optional. The soak posts <c>{reference, hypothesis}</c> with NO <c>TurnId</c> so its REAL
+/// interpretation turns stay un-attached + unmarked (and thus IN the per-mode comparison).</para>
+///
+/// <para>Boundary caps (ARCH-019 / lesson §16/§27): the lookup/store-key strings carry <c>[MaxLength]</c>
+/// so MVC auto-rejects an oversized id before the service. <see cref="Hypothesis"/> AND <see cref="Reference"/>
+/// are DELIBERATELY uncapped here — their length caps live in <see cref="EvaluationService"/> (the single WER
+/// chokepoint, bounding BOTH n×m DP dimensions), which returns the domain <c>evaluation.invalid_phrase</c> 400
+/// (a <c>[MaxLength]</c> would instead emit a generic ProblemDetails AND bypass the service-side DoS guard).
+/// <see cref="Hypothesis"/> is <c>string?</c> (not <c>[Required]</c>): a missing/empty hypothesis is a VALID
+/// evaluation case (STT produced nothing → WER ≈ 1.0), and System.Text.Json may bind an absent field to null
+/// on a non-nullable ref type. DataAnnotations target the record PARAMETER, not the property (lesson §16).</para>
 /// </summary>
 public sealed record WerRequest(
     [Required, MaxLength(256)] string SessionId,
     [MaxLength(256)] string? TurnId,
-    [Required, MaxLength(256)] string PhraseId,
-    string? Hypothesis);
+    [MaxLength(256)] string? PhraseId,
+    string? Hypothesis,
+    string? Reference = null);
 
 /// <summary>
 /// <c>POST /api/evaluation/wer</c> response: the full <see cref="WerResult"/> + an optional

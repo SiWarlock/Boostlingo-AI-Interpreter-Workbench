@@ -139,6 +139,54 @@ public sealed class EvaluationEndpointTests : IClassFixture<WebApplicationFactor
         Assert.Equal("turn.not_found", body.GetProperty("code").GetString());
     }
 
+    // ---- G.4 (090) — explicit-reference path wire {reference, hypothesis} (no phraseId) ----
+
+    [Fact]
+    public async Task wer_explicit_reference_returns_200_scored_against_supplied_reference()
+    {
+        using var client = CreateClient();
+
+        var response = await client.PostAsJsonAsync("/api/evaluation/wer", new
+        {
+            sessionId = "session_x",
+            reference = "hello world",
+            hypothesis = "hello word",
+        });
+
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("hello world", body.GetProperty("result").GetProperty("reference").GetString());
+        Assert.True(body.GetProperty("result").GetProperty("wer").GetDouble() > 0.0); // 1 sub / 2 words
+    }
+
+    [Fact]
+    public async Task wer_explicit_reference_empty_or_over_cap_returns_400_sanitized()
+    {
+        using var client = CreateClient();
+
+        var empty = await client.PostAsJsonAsync("/api/evaluation/wer", new
+        {
+            sessionId = "session_x",
+            reference = "   ",
+            hypothesis = "hello",
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, empty.StatusCode);
+        Assert.Equal(
+            "evaluation.invalid_phrase",
+            (await empty.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+
+        var overCap = await client.PostAsJsonAsync("/api/evaluation/wer", new
+        {
+            sessionId = "session_x",
+            reference = new string('a', 2001),
+            hypothesis = "hello",
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, overCap.StatusCode);
+        Assert.Equal(
+            "evaluation.invalid_phrase",
+            (await overCap.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+    }
+
     // ---- Feature B: POST /transcribe wire (multipart) ----
 
     private static MultipartFormDataContent TranscribeForm(
