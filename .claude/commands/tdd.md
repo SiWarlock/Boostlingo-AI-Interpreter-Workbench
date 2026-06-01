@@ -147,9 +147,15 @@ npm run typecheck && npm run lint                    # React frontend (web/)
 
 Both must pass. If they don't, fix before saying done.
 
-<!-- If the project installed the optional starter subagents, parallel-fan-out
-     code-quality-reviewer + security-reviewer here (mandatory if invariant_touching);
-     their findings feed Step-9 categorization. -->
+<!-- PER-SLICE REVIEWER FAN-OUT DISABLED (user directive, 2026-06-01 — token economy).
+     Do NOT auto-dispatch code-quality-reviewer or security-reviewer here every slice.
+     PRIMARY SAFETY GATE REMAINS: the 5 "Key safety rules" invariants are enforced by their
+     TESTS (SessionPersistenceTests sentinel, ErrorSanitizerTests, the cascade upload-validation
+     test) — unaffected by this change. code-quality-reviewer is OFF by default.
+     EXCEPTION (on-demand, not every-slice): for an INVARIANT-TOUCHING slice (one touching a
+     root CLAUDE.md "Key safety rules" surface — provider keys, ephemeral secret, raw audio,
+     error sanitization, session-path/upload validation), the orchestrator MAY request a single
+     security-reviewer pass for that slice. Otherwise no reviewer subagents run. -->
 
 ### Step 9 — Summarize + surface slice-level flags
 
