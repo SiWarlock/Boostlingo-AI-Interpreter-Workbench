@@ -4,7 +4,7 @@
 - **Phase:** Finding-2c (mode-switch) + G.2b (.env) + G.4 (cost-correctness arc) + 053-C2a (realtime cost) + Phase I (auto-VAD, cascade half)
 - **Area:** backend (`server/`)
 - **Predecessor:** [013 — Real-key-smoke backend bug-fix cycle (G.4)](013-2026-05-31-smoke-bugfix-backend.md)
-- **Successor:** _(next BE session — picks up H.3-backend or the (B) turn-control-mode persistence; TBD)_
+- **Successor:** [019 — Backend: H.3 persistence read-tier + cascade metrics/cost correctness](019-2026-05-31-backend-h3-read-tier-and-cascade-correctness.md)
 
 > Implementer session doc (technical close-out only). `MVP_TASKS.md` / `server/LESSONS.md` / `server/CLAUDE.md` / `ARCHITECTURE.md` are orchestrator-owned and untouched here. Cross-doc + lesson items are **surfaced** below for `/orchestrate-end` (the orchestrator is hot-routing them — `ARCHITECTURE.md`/`server/CLAUDE.md`/`server/LESSONS.md` show as modified in the working tree). Round-seal `a0b09c3` already routed the earlier slices (050/055); the 057/059/062 round is still OPEN.
 
