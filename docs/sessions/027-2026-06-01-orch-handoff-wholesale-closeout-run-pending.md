@@ -6,7 +6,7 @@
 - **Role:** orchestrator (boostlingo-main) — emergency wholesale close-out
 - **Trigger:** USER-ON-DEMAND wholesale close-out — the user's laptop has a hardware issue + must restart NOW. Priority was getting everything to disk before the sessions die. The whole team (orch + FE + BE) is re-spawned fresh post-restart (current sids die on restart).
 - **Predecessor orch handoff:** doc `024` (G.4 code-round seal → "the live run + G.5 next"). This handoff supersedes 024's "immediate plan" with the **post-restart resume plan** below.
-- **Successor:** the fresh orchestrator (re-spawned post-restart) — reads this on `/orchestrate-start`, alongside `MVP_TASKS.md` "Currently in progress" + handoff 024 + FE session doc 025.
+- **Successor:** the fresh orchestrator (re-spawned post-restart) — reads this on `/orchestrate-start`, alongside `MVP_TASKS.md` "Currently in progress" + handoff 024 + FE session doc 025. _(BE implementer session for the resumed round: [028 — cost-accuracy + Finding-B instruction hardening](028-2026-06-01-backend-cost-accuracy-and-finding-b-instruction-hardening.md).)_
 
 ---
 
