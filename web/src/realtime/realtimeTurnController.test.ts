@@ -256,7 +256,11 @@ describe('createRealtimeTurnController', () => {
         type: 'response.done',
         response: {
           usage: {
-            input_token_details: { audio_tokens: 31, cached_tokens: 0 },
+            input_token_details: {
+              audio_tokens: 31,
+              cached_tokens: 0,
+              cached_tokens_details: { audio_tokens: 0 },
+            },
             output_token_details: { audio_tokens: 54 },
           },
         },
@@ -325,7 +329,11 @@ describe('createRealtimeTurnController', () => {
         type: 'response.done',
         response: {
           usage: {
-            input_token_details: { audio_tokens: 31, cached_tokens: 0 },
+            input_token_details: {
+              audio_tokens: 31,
+              cached_tokens: 0,
+              cached_tokens_details: { audio_tokens: 0 },
+            },
             output_token_details: { audio_tokens: 54 },
           },
         },
@@ -373,7 +381,11 @@ describe('createRealtimeTurnController', () => {
         type: 'response.done',
         response: {
           usage: {
-            input_token_details: { audio_tokens: 31, cached_tokens: 0 },
+            input_token_details: {
+              audio_tokens: 31,
+              cached_tokens: 0,
+              cached_tokens_details: { audio_tokens: 0 },
+            },
             output_token_details: { audio_tokens: 54 },
           },
         },

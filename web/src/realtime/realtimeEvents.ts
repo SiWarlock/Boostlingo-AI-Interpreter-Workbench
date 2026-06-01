@@ -8,7 +8,9 @@
 
 // The exact realtime audio-token counts the FE forwards to /complete (053-C2b) — mapped from the DC
 // response.done.usage. Each field is OPTIONAL + independently guarded; a real `cachedAudioInputTokens: 0`
-// is distinct from absent (omitted) — never fabricate a 0 (web §25). Frontend-internal (not a wire mirror).
+// is distinct from absent (omitted) — never fabricate a 0 (web §26). `cachedAudioInputTokens` carries the
+// cached input-AUDIO subset (cached_tokens_details.audio_tokens), NOT the aggregate cached_tokens (095).
+// Frontend-internal (not a wire mirror).
 export type RealtimeUsageTokens = {
   inputAudioTokens?: number
   outputAudioTokens?: number
@@ -71,7 +73,7 @@ function finiteNumber(value: unknown): number | undefined {
 // load-bearing call: a wrong path ⇒ usage always null ⇒ realtime cost silently stays n/a). Guard every
 // path independently (each may be absent/non-number); cached=0 is a REAL value (kept) vs absent (omitted).
 // Returns null when usage is absent/malformed OR yields no token field (→ the controller still finalizes
-// /complete, just without token fields — the honest-degrade path, web §25). Never throws (§9).
+// /complete, just without token fields — the honest-degrade path, web §26). Never throws (§9).
 function extractRealtimeUsage(event: Record<string, unknown>): RealtimeUsageTokens | null {
   // GA nests usage under response.usage; tolerate a top-level usage too (dual-read — see the doc comment).
   const usage = asObject(asObject(event.response)?.usage) ?? asObject(event.usage)
@@ -83,13 +85,15 @@ function extractRealtimeUsage(event: Record<string, unknown>): RealtimeUsageToke
   const tokens: RealtimeUsageTokens = {}
   const inputAudio = finiteNumber(inputDetails?.audio_tokens)
   const outputAudio = finiteNumber(outputDetails?.audio_tokens)
-  // Q5 (053-C2b): the BE-confirmed path is input_token_details.cached_tokens (the contract 2977f7f priced
-  // from) — FE/BE must agree on one path. The audio-specific cached_tokens_details.audio_tokens nuance is a
-  // Step-9 note (immaterial while cached=0).
-  const cached = finiteNumber(inputDetails?.cached_tokens)
+  // 095 (CF76 live shape): cached audio = input_token_details.cached_tokens_details.audio_tokens — the
+  // cached input-AUDIO subset, NOT the aggregate cached_tokens (which also counts cached TEXT). The live
+  // soak falsified the earlier "cached≈0, immaterial" simplification (cached is ~75% of input on mid/late
+  // turns); the BE (paired slice 094) discounts only this audio subset at the cached-audio rate, so reading
+  // the aggregate would over-subtract. Guarded independently; a present 0 is kept, an absent breakdown omits.
+  const cachedAudio = finiteNumber(asObject(inputDetails?.cached_tokens_details)?.audio_tokens)
   if (inputAudio !== undefined) tokens.inputAudioTokens = inputAudio
   if (outputAudio !== undefined) tokens.outputAudioTokens = outputAudio
-  if (cached !== undefined) tokens.cachedAudioInputTokens = cached
+  if (cachedAudio !== undefined) tokens.cachedAudioInputTokens = cachedAudio
   return Object.keys(tokens).length > 0 ? tokens : null
 }
 

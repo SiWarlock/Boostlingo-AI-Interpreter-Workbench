@@ -67,8 +67,9 @@ describe('normalizeRealtimeEvent', () => {
 
   it('extracts exact audio-token usage from response.done (053-C2b — the fixture frame)', () => {
     // GA response.done nests usage under `response.usage`. inputAudio←input_token_details.audio_tokens,
-    // outputAudio←output_token_details.audio_tokens, cached←input_token_details.cached_tokens (BE-confirmed
-    // path, 053-C2a). The fixture (runbook event #20): input audio 31, output audio 54, cached 0.
+    // outputAudio←output_token_details.audio_tokens, cached←input_token_details.cached_tokens_details
+    // .audio_tokens (095 — the cached AUDIO subset, NOT the aggregate cached_tokens which also counts text).
+    // The fixture (runbook event #20): input audio 31, output audio 54, cached audio 0.
     const frame = {
       type: 'response.done',
       response: {
@@ -76,9 +77,56 @@ describe('normalizeRealtimeEvent', () => {
         usage: {
           total_tokens: 139,
           input_tokens: 68,
-          input_token_details: { text_tokens: 37, audio_tokens: 31, cached_tokens: 0 },
+          input_token_details: {
+            text_tokens: 37,
+            audio_tokens: 31,
+            cached_tokens: 0,
+            cached_tokens_details: { text_tokens: 0, audio_tokens: 0 },
+          },
           output_tokens: 71,
           output_token_details: { text_tokens: 17, audio_tokens: 54 },
+        },
+      },
+    }
+    expect(normalizeRealtimeEvent(frame)).toEqual({
+      kind: 'responseDone',
+      usage: { inputAudioTokens: 31, outputAudioTokens: 54, cachedAudioInputTokens: 0 },
+    })
+  })
+
+  it('reads cached audio from cached_tokens_details.audio_tokens, NOT the aggregate cached_tokens (095)', () => {
+    // CF76 live shape: input_token_details carries BOTH cached_tokens (total = text+audio) AND
+    // cached_tokens_details:{text_tokens, audio_tokens} (the modality breakdown). cachedAudioInputTokens must
+    // carry the AUDIO subset (320), never the aggregate (512 = 192 text + 320 audio) — so the BE (paired
+    // slice 094) discounts only the cached AUDIO at the cached-audio rate, not the text too. web §26.
+    const frame = {
+      type: 'response.done',
+      response: {
+        usage: {
+          input_token_details: {
+            audio_tokens: 498,
+            cached_tokens: 512,
+            cached_tokens_details: { text_tokens: 192, audio_tokens: 320 },
+          },
+          output_token_details: { audio_tokens: 71 },
+        },
+      },
+    }
+    expect(normalizeRealtimeEvent(frame)).toEqual({
+      kind: 'responseDone',
+      usage: { inputAudioTokens: 498, outputAudioTokens: 71, cachedAudioInputTokens: 320 },
+    })
+  })
+
+  it('keeps a real cached_tokens_details.audio_tokens 0 (present) as 0 — real-0 ≠ absent (095, web §26)', () => {
+    // The cached-audio subset present and genuinely 0 is forwarded as 0 (distinct from an absent breakdown,
+    // which omits the field — the companion test below). Early-conversation turns carry cached audio 0.
+    const frame = {
+      type: 'response.done',
+      response: {
+        usage: {
+          input_token_details: { audio_tokens: 31, cached_tokens_details: { audio_tokens: 0 } },
+          output_token_details: { audio_tokens: 54 },
         },
       },
     }
@@ -96,7 +144,11 @@ describe('normalizeRealtimeEvent', () => {
       type: 'response.done',
       status: 'completed',
       usage: {
-        input_token_details: { audio_tokens: 31, cached_tokens: 0 },
+        input_token_details: {
+          audio_tokens: 31,
+          cached_tokens: 0,
+          cached_tokens_details: { audio_tokens: 0 },
+        },
         output_token_details: { audio_tokens: 54 },
       },
     }
@@ -137,13 +189,16 @@ describe('normalizeRealtimeEvent', () => {
     })
   })
 
-  it('distinguishes a real cached 0 (present) from an absent cached field (omitted)', () => {
-    // cached_tokens absent → cachedAudioInputTokens OMITTED (the honest-degrade pin; A1 covers cached=0 present).
+  it('does NOT fall back to the aggregate cached_tokens when cached_tokens_details is absent → omitted (095)', () => {
+    // The aggregate cached_tokens (text+audio) is present but the cached_tokens_details breakdown is absent.
+    // The old code read the aggregate into cachedAudioInputTokens; 095 reads ONLY the audio subset, so with
+    // no breakdown the field is OMITTED (absent ≠ 0; never the aggregate; web §23/§26). Pins the Q3 decision
+    // to drop the cached_tokens read entirely.
     const frame = {
       type: 'response.done',
       response: {
         usage: {
-          input_token_details: { audio_tokens: 31 },
+          input_token_details: { audio_tokens: 31, cached_tokens: 50 },
           output_token_details: { audio_tokens: 54 },
         },
       },
