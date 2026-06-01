@@ -58,3 +58,39 @@ describe('TranscriptPanel — source unavailable (PRD must-have 6)', () => {
     expect(screen.getByLabelText('target-transcript')).toHaveTextContent('hola')
   })
 })
+
+describe('TranscriptPanel — chronological turn-card stream (Phase J / J.4)', () => {
+  // Complete a finished turn into turns[] (so the stream has prior cards), then leave a fresh in-progress
+  // turn as currentTurn. The store appends completed turns oldest→newest; currentTurn is the newest.
+  function completeTurn(id: string, dir: { source: 'en' | 'es'; target: 'en' | 'es' }, sourceText: string) {
+    sessionStore.beginTurn({ turnId: id, mode: 'cascade', direction: dir })
+    sessionStore.appendTranscriptSegment({ ...seg('source', sourceText, true), segmentId: `${id}-s` })
+    sessionStore.completeTurn(id, 'completed')
+  }
+
+  it('renders all turns in a single chronological stream (oldest→newest), current turn last', () => {
+    completeTurn('t1', { source: 'en', target: 'es' }, 'first')
+    completeTurn('t2', { source: 'en', target: 'es' }, 'second')
+    sessionStore.beginTurn({ turnId: 't3', mode: 'cascade', direction: { source: 'en', target: 'es' } })
+    sessionStore.appendTranscriptSegment({ ...seg('source', 'third', false), segmentId: 't3-s' })
+
+    render(<TranscriptPanel />)
+
+    // turns[t1,t2] then the in-progress currentTurn t3 — one card each, in order.
+    const sources = screen.getAllByLabelText('source-transcript').map((el) => el.textContent)
+    expect(sources).toEqual(['first', 'second', 'third'])
+    // the in-progress (current) turn's partial still streams within its own card (no regression)
+    expect(screen.getByText('third')).toHaveAttribute('data-final', 'false')
+  })
+
+  it('bidirectional: renders distinct per-turn direction badges as direction alternates', () => {
+    completeTurn('t1', { source: 'en', target: 'es' }, 'hello')
+    sessionStore.beginTurn({ turnId: 't2', mode: 'cascade', direction: { source: 'es', target: 'en' } })
+    sessionStore.appendTranscriptSegment({ ...seg('source', 'hola', false), segmentId: 't2-s' })
+
+    render(<TranscriptPanel />)
+
+    const badges = screen.getAllByLabelText('direction-badge').map((el) => el.textContent)
+    expect(badges).toEqual(['EN → ES', 'ES → EN'])
+  })
+})

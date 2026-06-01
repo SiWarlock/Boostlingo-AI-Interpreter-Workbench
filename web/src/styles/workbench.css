@@ -391,6 +391,35 @@ button {
   height: 240px;
   text-align: center;
 }
+/* J.4 — the chronological turn-card stream: each turn is a card (a direction badge above its
+   source/target columns); the stream scrolls as turns accumulate. */
+.tx-stream {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: 520px;
+  overflow-y: auto;
+}
+.tx-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tx-card-hd {
+  display: flex;
+  align-items: center;
+}
+.dir-badge {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  color: var(--fg-2);
+  border: 1px solid var(--border);
+}
 .cursor {
   display: inline-block;
   width: 2px;
