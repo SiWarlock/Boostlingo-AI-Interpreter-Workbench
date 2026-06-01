@@ -196,7 +196,9 @@ describe('SessionDetail — Phase-J display fixes (J.7 / 2a)', () => {
     // The real session JSON corrected the premise: completed cascade turns DO carry a per-turn
     // estimatedUsdPerMinute → display it directly, NOT the session-summary rate. The fixture pins the
     // distinction: per-turn 0.6 vs summary.cascade 0.42. (No completed-turn cost bug → no session fallback.)
-    const costKv = within(rows(sessionWith({}))[0]).getByText('Cost').closest('.kv')
+    const costKv = within(rows(sessionWith({}))[0])
+      .getByText('Cost')
+      .closest('.kv')
     expect(costKv).toHaveTextContent(/0\.60/) // the PER-TURN value
     expect(costKv).not.toHaveTextContent(/0\.42/) // NOT the session-average
   })
@@ -205,7 +207,9 @@ describe('SessionDetail — Phase-J display fixes (J.7 / 2a)', () => {
     // turns[3] in the real session = a FAILED cascade turn with costEstimate:null → honest n/a (correct).
     // The cascade Cost=n/a the lead saw was THIS failed turn, not a completed-turn display bug.
     const turn = { ...cascadeTurn, status: 'failed', costEstimate: null }
-    const costKv = within(rows(sessionWith({ turns: [turn] }))[0]).getByText('Cost').closest('.kv')
+    const costKv = within(rows(sessionWith({ turns: [turn] }))[0])
+      .getByText('Cost')
+      .closest('.kv')
     expect(costKv).toHaveTextContent(/n\/a/i)
   })
 })

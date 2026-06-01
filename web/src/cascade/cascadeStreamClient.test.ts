@@ -100,7 +100,9 @@ describe('buildStartFrame', () => {
     // Phase J: when the bidirectional toggle is on the backend auto-detects the source language per
     // utterance + flips direction. Omit-when-falsy keeps the one-direction frame byte-identical (the
     // exact-frame test above pins that — the key must be absent, not present-false; mirrors autoVad).
-    expect(buildStartFrame({ ...params, bidirectional: true })).toMatchObject({ bidirectional: true })
+    expect(buildStartFrame({ ...params, bidirectional: true })).toMatchObject({
+      bidirectional: true,
+    })
     expect('bidirectional' in buildStartFrame({ ...params, bidirectional: false })).toBe(false)
     expect('bidirectional' in buildStartFrame(params)).toBe(false)
   })
