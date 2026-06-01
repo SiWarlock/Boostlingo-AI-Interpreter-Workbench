@@ -3,7 +3,7 @@
 **Date:** 2026-06-01
 **Track:** `boostlingo-main`
 **Predecessor handoff:** `006-2026-06-01-lead-compaction-preharness.md`
-**Successor handoff:** _(filled in when the next /team-end runs)_
+**Successor handoff:** `008-2026-06-01-eod-live-run-g5-findings-sealed.md`
 **Round-seal commit at handoff:** `90acf5f` (orch `/orchestrate-end` seal) · lead config commit `bd10933` (HEAD)
 
 ## Why this handoff exists
