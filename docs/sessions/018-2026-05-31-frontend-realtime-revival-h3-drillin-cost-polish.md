@@ -4,7 +4,7 @@
 **Phase:** Phase G/H/I metrics-cost-accuracy + UI round (FE half) — the realtime/cascade live-smoke bug-fix arc + H.3 + the G.5 cost-axis work.
 **Role:** frontend implementer (`web/`).
 **Predecessor:** [017-2026-05-31-frontend-phase-i-realtime-cascade-autovad-history.md](017-2026-05-31-frontend-phase-i-realtime-cascade-autovad-history.md)
-**Successor:** _(fresh FE — to be respawned by the lead for the bidirectional FE build; link on spawn)_
+**Successor:** [022-2026-06-01-frontend-phase-j-bidirectional-continuous-smoke-fixes.md](022-2026-06-01-frontend-phase-j-bidirectional-continuous-smoke-fixes.md)
 
 ---
 
