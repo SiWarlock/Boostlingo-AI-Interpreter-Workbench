@@ -1,0 +1,33 @@
+{
+  "_note": "Corrected realtime soak run on the 094-fixed backend (cached audio priced at cached rate). Stability + latency valid. COST is the purpose of this re-run (read from the persisted session). WER 1.04/median 1.0 is a MEASUREMENT ARTIFACT, not a regression: a spurious leading 'Hello' utterance at session start shifted the reference<->hypothesis pairing by one, so every turn compared against the wrong reference. Individual transcripts were all clean/correct (verified in oai-events). Use the FIRST run's realtime WER (0.174 mean / 0 median, docs/soak-runs/2026-06-01-realtime.json) as the valid quality number for G.5; this run is for cost.",
+  "mode": "realtime",
+  "durationSec": 300,
+  "turnCount": 24,
+  "disconnectCount": 0,
+  "latency": {
+    "slopeMsPerTurn": 7.207509881422925,
+    "thresholdMsPerTurn": 50,
+    "pass": true
+  },
+  "overlaps": [],
+  "overlapMeasured": true,
+  "overlapBasis": "token-derived",
+  "skewSlope": 0,
+  "heapLeak": {
+    "slopeBytesPerSample": 2276.404932693522,
+    "thresholdBytesPerSample": 200000,
+    "sampleCount": 297,
+    "pass": true
+  },
+  "werSummary": {
+    "meanWer": 1.0414580588493632,
+    "medianWer": 1,
+    "count": 23,
+    "_artifact": "alignment shift from spurious leading 'Hello' — NOT real quality; see _note"
+  },
+  "arch020": {
+    "noDisconnect": true,
+    "noDriftOverlap": true,
+    "noLeak": true
+  }
+}

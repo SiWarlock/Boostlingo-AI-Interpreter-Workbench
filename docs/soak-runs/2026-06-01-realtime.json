@@ -1,0 +1,31 @@
+{
+  "mode": "realtime",
+  "durationSec": 300,
+  "turnCount": 25,
+  "disconnectCount": 0,
+  "latency": {
+    "slopeMsPerTurn": 37.758893280632414,
+    "thresholdMsPerTurn": 50,
+    "pass": true
+  },
+  "overlaps": [],
+  "overlapMeasured": true,
+  "overlapBasis": "token-derived",
+  "skewSlope": 0,
+  "heapLeak": {
+    "slopeBytesPerSample": 2377.7838040117,
+    "thresholdBytesPerSample": 200000,
+    "sampleCount": 298,
+    "pass": true
+  },
+  "werSummary": {
+    "meanWer": 0.17391304347826086,
+    "medianWer": 0,
+    "count": 23
+  },
+  "arch020": {
+    "noDisconnect": true,
+    "noDriftOverlap": true,
+    "noLeak": true
+  }
+}

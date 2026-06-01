@@ -1,0 +1,31 @@
+{
+  "mode": "cascade",
+  "durationSec": 300,
+  "turnCount": 24,
+  "disconnectCount": 0,
+  "latency": {
+    "slopeMsPerTurn": 3.4817391304347827,
+    "thresholdMsPerTurn": 50,
+    "pass": true
+  },
+  "overlaps": [],
+  "overlapMeasured": true,
+  "overlapBasis": "char-estimate",
+  "skewSlope": 0,
+  "heapLeak": {
+    "slopeBytesPerSample": 6967.993256526812,
+    "thresholdBytesPerSample": 200000,
+    "sampleCount": 297,
+    "pass": true
+  },
+  "werSummary": {
+    "meanWer": 0.024999999999999998,
+    "medianWer": 0,
+    "count": 24
+  },
+  "arch020": {
+    "noDisconnect": true,
+    "noDriftOverlap": true,
+    "noLeak": true
+  }
+}
