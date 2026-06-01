@@ -28,11 +28,71 @@ internal static class DeepgramSttMapping
     /// </summary>
     public static SttEvent ToSttEvent(WsResultResponse result, DateTimeOffset timestamp)
     {
-        var transcript = result.Channel?.Alternatives?.FirstOrDefault()?.Transcript;
+        var alternative = result.Channel?.Alternatives?.FirstOrDefault();
+        var transcript = alternative?.Transcript;
 
+        // J.1 — a final carries the per-utterance detected source language (nova-3 `multi`); a partial does not
+        // (the orchestrator resolves direction only at the final).
         return result.IsFinal == true
-            ? new SttFinal(NormalizeFinal(transcript), timestamp)
+            ? new SttFinal(NormalizeFinal(transcript), timestamp, ResolveDetectedLanguage(alternative))
             : new SttPartial(transcript ?? string.Empty, timestamp);
+    }
+
+    /// <summary>
+    /// Resolves the dominant per-utterance source language (J.1) from Deepgram nova-3 <c>multi</c>'s typed
+    /// detection signal — exposed on the live-WS path (lesson §19: <see cref="Alternative.Languages"/> /
+    /// <see cref="Word.Language"/>), populated ONLY under <c>language=multi</c> (the cascade already requests it).
+    /// Prefers the alternative's own utterance pick (<c>languages[0]</c>); if that yields no recognized EN/ES
+    /// code, falls back to the MODE of the per-word <c>language</c> tags; else <c>null</c> (out-of-scope or no
+    /// signal — null-tolerant, the orchestrator then keeps the start-frame direction). Maps <c>en*</c>→En, <c>es*</c>→Es.
+    /// </summary>
+    private static LanguageCode? ResolveDetectedLanguage(Alternative? alternative)
+    {
+        if (alternative is null)
+        {
+            return null;
+        }
+
+        // 1) The alternative's own utterance-level pick — Deepgram's `languages[]` is a single dominant entry
+        // for an utterance under nova-3 multi (SDK shape verified by reflection, lesson §19), so the first
+        // element is the utterance language (a hypothetical multi-element array prefers the first).
+        var fromUtterance = NormalizeLanguage(alternative.Languages?.FirstOrDefault());
+        if (fromUtterance is not null)
+        {
+            return fromUtterance;
+        }
+
+        // 2) Fallback: the MODE of the per-word language tags — only recognized EN/ES tags vote. A genuine
+        // top-count TIE (no strict majority) is ambiguous → null, so the orchestrator keeps the start-frame
+        // direction (the brief's "pick dominant; ambiguous → fall back" rule) rather than a coin-flip pick.
+        var votes = alternative.Words?
+            .Select(w => NormalizeLanguage(w.Language))
+            .Where(c => c is not null)
+            .GroupBy(c => c!.Value)
+            .Select(g => (Language: (LanguageCode?)g.Key, Count: g.Count()))
+            .OrderByDescending(v => v.Count)
+            .ToList();
+
+        if (votes is null || votes.Count == 0)
+        {
+            return null;
+        }
+
+        return votes.Count > 1 && votes[0].Count == votes[1].Count ? null : votes[0].Language;
+    }
+
+    // en* -> En, es* -> Es (covers "en"/"en-US"/"es"/"es-419"); anything else / blank -> null (null-tolerant).
+    private static LanguageCode? NormalizeLanguage(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        var code = raw.Trim().ToLowerInvariant();
+        return code.StartsWith("en", StringComparison.Ordinal) ? LanguageCode.En
+            : code.StartsWith("es", StringComparison.Ordinal) ? LanguageCode.Es
+            : null;
     }
 
     /// <summary>

@@ -10,6 +10,7 @@ using WsResult = Deepgram.Models.Listen.v2.WebSocket.ResultResponse;
 using WsUtteranceEnd = Deepgram.Models.Listen.v2.WebSocket.UtteranceEndResponse;
 using WsChannel = Deepgram.Models.Listen.v2.WebSocket.Channel;
 using WsAlt = Deepgram.Models.Listen.v2.WebSocket.Alternative;
+using WsWord = Deepgram.Models.Listen.v2.WebSocket.Word;
 using RestSync = Deepgram.Models.Listen.v1.REST.SyncResponse;
 using RestResults = Deepgram.Models.Listen.v1.REST.Results;
 using RestChannel = Deepgram.Models.Listen.v1.REST.Channel;
@@ -195,6 +196,57 @@ public class DeepgramSttProviderTests
         Assert.True(schema.VadEvents == true); // I.1 — vad_events enables the endpointing/UtteranceEnd path
     }
 
+    // === Group 5 — J.1 per-utterance language detection (nova-3 multi → SttFinal.DetectedLanguage) ===
+
+    [Fact]
+    public void final_detected_language_from_alternative_languages()
+    {
+        // Deepgram's own utterance-level pick (Alternative.languages, populated under language=multi) is the
+        // dominant source — ["es"] ⇒ Es. Rides the SDK's typed signal (lesson §19 — exposed, not hidden).
+        var ev = DeepgramSttMapping.ToSttEvent(WsFinalWith("hola mundo", languages: new[] { "es" }), Now);
+
+        Assert.Equal(LanguageCode.Es, Assert.IsType<SttFinal>(ev).DetectedLanguage);
+    }
+
+    [Fact]
+    public void final_detected_language_falls_back_to_word_language_mode()
+    {
+        // No utterance-level languages → fall back to the MODE of the per-word language tags ([es,es,en] ⇒ es).
+        var ev = DeepgramSttMapping.ToSttEvent(
+            WsFinalWith("hola mundo", languages: null, wordLanguages: new[] { "es", "es", "en" }), Now);
+
+        Assert.Equal(LanguageCode.Es, Assert.IsType<SttFinal>(ev).DetectedLanguage);
+    }
+
+    [Fact]
+    public void final_detected_language_unknown_or_absent_is_null()
+    {
+        // Null-tolerant: an out-of-scope language (fr) with no usable word tags ⇒ null (orchestrator falls
+        // back to the start-frame direction); a final with no language signal at all ⇒ null too.
+        Assert.Null(Assert.IsType<SttFinal>(
+            DeepgramSttMapping.ToSttEvent(WsFinalWith("bonjour", languages: new[] { "fr" }), Now)).DetectedLanguage);
+        Assert.Null(Assert.IsType<SttFinal>(
+            DeepgramSttMapping.ToSttEvent(WsResultOf("hello", isFinal: true), Now)).DetectedLanguage);
+    }
+
+    [Fact]
+    public void final_detected_language_word_mode_tie_is_null()
+    {
+        // A genuine 50/50 word-language tie (no utterance-level pick) is ambiguous → null (deterministic, NOT
+        // a LINQ-order coin-flip) → the orchestrator keeps the start-frame direction ("ambiguous → fall back").
+        var ev = DeepgramSttMapping.ToSttEvent(
+            WsFinalWith("hola hello", languages: null, wordLanguages: new[] { "es", "en" }), Now);
+
+        Assert.Null(Assert.IsType<SttFinal>(ev).DetectedLanguage);
+    }
+
+    [Fact]
+    public void sttfinal_default_detected_language_is_null()
+    {
+        // Back-compat: the existing 2-arg SttFinal construction leaves DetectedLanguage null (trailing default).
+        Assert.Null(new SttFinal("hi", Now).DetectedLanguage);
+    }
+
     // === synthetic SDK-DTO builders ===
 
     private static async IAsyncEnumerable<AudioFrame> NoFrames()
@@ -211,6 +263,27 @@ public class DeepgramSttProviderTests
         {
             IsFinal = isFinal,
             Channel = new WsChannel { Alternatives = new List<WsAlt> { new() { Transcript = transcript } } },
+        };
+
+    // A final result carrying the multi-language detection signal (J.1): the alternative's `languages[]`
+    // (Deepgram's utterance pick) and/or per-word `language` tags (the fallback signal).
+    private static WsResult WsFinalWith(
+        string transcript, IReadOnlyList<string>? languages = null, IReadOnlyList<string>? wordLanguages = null) =>
+        new()
+        {
+            IsFinal = true,
+            Channel = new WsChannel
+            {
+                Alternatives = new List<WsAlt>
+                {
+                    new()
+                    {
+                        Transcript = transcript,
+                        Languages = languages,
+                        Words = wordLanguages?.Select(l => new WsWord { Language = l }).ToList(),
+                    },
+                },
+            },
         };
 
     private static RestSync RestSyncOf(string? transcript) =>

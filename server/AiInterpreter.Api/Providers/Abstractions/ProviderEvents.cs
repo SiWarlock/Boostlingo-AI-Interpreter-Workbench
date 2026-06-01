@@ -1,3 +1,5 @@
+using AiInterpreter.Api.Sessions;
+
 namespace AiInterpreter.Api.Providers.Abstractions;
 
 // Normalized streaming provider event hierarchies (ARCH-012). Each is an `abstract record` base
@@ -11,7 +13,11 @@ public sealed record SttStarted(DateTimeOffset Timestamp) : SttEvent(Timestamp);
 
 public sealed record SttPartial(string Text, DateTimeOffset Timestamp) : SttEvent(Timestamp);
 
-public sealed record SttFinal(string Text, DateTimeOffset Timestamp) : SttEvent(Timestamp);
+// J.1 (Phase J) — DetectedLanguage carries the per-utterance source language Deepgram nova-3 `multi`
+// detected (dominant of the alternative's languages[]/per-word language tags; null when undetected,
+// out-of-EN/ES-scope, or one-direction). The bidirectional orchestrator flips translation direction off
+// it (detected → other). Trailing-defaulted so existing 2-arg construction stays unchanged (back-compat).
+public sealed record SttFinal(string Text, DateTimeOffset Timestamp, LanguageCode? DetectedLanguage = null) : SttEvent(Timestamp);
 
 public sealed record SttFailed(ProviderError Error, DateTimeOffset Timestamp) : SttEvent(Timestamp);
 
