@@ -43,6 +43,13 @@ export type AudioCaptureDeps = {
   getUserMedia?: (constraints: MediaStreamConstraints) => Promise<MediaStream>
 }
 
+// The cascade capture worklet ships as a STATIC asset (web/public/pcm-worklet.js), served verbatim at this
+// root-absolute path in BOTH dev and the production build — so addModule() always fetches a real file.
+// (A prior `new URL('./pcmWorklet.ts', import.meta.url)` was an import-bearing module → Vite bundled it into
+// the main chunk instead of emitting a standalone asset → that URL 404'd in the deployed build → a spurious
+// mic.unavailable. See web/public/pcm-worklet.js.)
+const PCM_WORKLET_URL = '/pcm-worklet.js'
+
 export function createAudioCaptureController(deps: AudioCaptureDeps = {}): AudioCaptureController {
   const getUserMedia =
     deps.getUserMedia ?? ((constraints) => navigator.mediaDevices.getUserMedia(constraints))
@@ -68,7 +75,7 @@ export function createAudioCaptureController(deps: AudioCaptureDeps = {}): Audio
     try {
       stream = await getUserMedia({ audio: true })
       context = new AudioContext()
-      await context.audioWorklet.addModule(new URL('./pcmWorklet.ts', import.meta.url))
+      await context.audioWorklet.addModule(PCM_WORKLET_URL)
       const source = context.createMediaStreamSource(stream)
       const node = new AudioWorkletNode(context, 'pcm-frame-processor')
       node.port.onmessage = (event: MessageEvent<ArrayBuffer>) => handlers.onFrame(event.data)
