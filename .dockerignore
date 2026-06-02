@@ -1,0 +1,32 @@
+# Keep the build context small + NEVER ship secrets or build cruft into the image.
+
+# Secrets — must never enter the image (the app uses Railway env vars in prod).
+.env
+.env.*
+!.env.example
+
+# Node + .NET build artifacts (rebuilt inside the image)
+**/node_modules
+**/dist
+**/bin
+**/obj
+
+# Local/transient data (sessions are written at runtime; never bake them in)
+data/sessions/*.json
+docs/soak-runs
+
+# VCS + tooling + docs not needed for the build
+.git
+.gitignore
+.claude
+.agents
+.codex
+.vscode
+.idea
+docs
+*.md
+!README.md
+
+# OS noise
+.DS_Store
+**/.DS_Store

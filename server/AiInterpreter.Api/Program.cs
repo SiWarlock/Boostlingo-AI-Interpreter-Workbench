@@ -230,6 +230,22 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+// Serve the built SPA for the single-service (same-origin) Railway deploy: when wwwroot/index.html is
+// present (the Docker image copies the Vite build there), serve the static assets and fall back unmatched
+// non-API routes to index.html (below, after MapControllers). SELF-GATES on the file's presence, so the
+// test host and local dev (Vite serves the SPA on :5173, the API stays API-only) are unaffected — behavior
+// is byte-identical when no SPA build is present. The SPA fallback is mapped AFTER the API so /api/* and
+// the cascade WS always win.
+var spaIndexPath = Path.Combine(
+    app.Environment.WebRootPath ?? Path.Combine(AppContext.BaseDirectory, "wwwroot"),
+    "index.html");
+var serveSpa = File.Exists(spaIndexPath);
+if (serveSpa)
+{
+    app.UseDefaultFiles();
+    app.UseStaticFiles();
+}
+
 // WebSocket support. NOTE: a WS upgrade bypasses the CORS middleware, so the cascade handshake's Origin
 // validation is C.4b's job (the endpoint validates it itself); C.4a wires the core protocol.
 app.UseWebSockets();
@@ -264,6 +280,14 @@ if (app.Environment.IsDevelopment())
 }
 
 app.MapControllers();
+
+// SPA client-side fallback (same-origin deploy) — only when a built SPA is present (see the gate above).
+// Mapped AFTER the controllers + minimal-API routes so it never shadows /api/* or the cascade WS; it
+// catches only routes the API didn't handle (e.g. a deep-link refresh) and returns index.html.
+if (serveSpa)
+{
+    app.MapFallbackToFile("index.html");
+}
 
 app.Run();
 
